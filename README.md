@@ -18,7 +18,7 @@
 
 用户已选择自编固件主线。ShellCrash、Mihomo、OpenClash 等前期候选与比较结论保留在历史报告中。
 
-已有配置管理、LuCI 页面和透明转发包源码；完整网页、真实订阅、实际出口及脱离 Rock 的独立运行正在集成验收。当前能打开基础 LuCI 不代表代理扩展已经验收。Rock 仅承担开发、构建与操作职责。
+已有配置管理、LuCI 页面和透明转发包源码。实机已完成真实订阅导入 38 个 VMess 节点、选择应用、LAN DNS、透明 HTTPS、故障阻断与恢复、规则阻断及配置回退；最终集成镜像、升级后自动恢复和负载仍在验收。Rock 仅承担开发、构建与操作职责。
 
 ## 文档入口
 
@@ -32,6 +32,7 @@
 | 设备 | [小米 4A 设备与网络记录](docs/devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
 | 当前设备 | [首刷与基础实机结果](docs/reports/2026-10-23-first-flash-review.md) | OpenWrt 首刷、实际空间、网络及重启 |
 | 集成审查 | [管理扩展核查](docs/reports/2026-10-23-manager-integration-audit.md) | 运行时、权限、配置事务及故障边界 |
+| 扩展构建 | [管理扩展构建记录](docs/reports/2026-10-23-manager-build.md) | 签名包、完整镜像、载荷校验及被拒绝的候选 |
 | 构建历史 | [管理入口、备份与路线验证](docs/reports/2026-10-22-4a-baseline-and-route-validation.md) | 原厂基线、备份、核心测试和基础候选构建 |
 | 验证历史 | [降级、root 与 SSH 管理入口记录](docs/reports/2026-10-22-4a-root-ssh-verification.md) | 前次执行报告；SSH 安全配置、备份及重启状态已由后续报告更新 |
 | 调查 | 本地环境资料 | 离线资源核算、组件缺口和待验证条件；设备状态以最新报告为准 |
@@ -66,7 +67,9 @@ AlwayRoute/
 
 截至 2026-10-23（Asia/Shanghai），4A 已运行自编 OpenWrt 25.12.6／Linux 6.12.112，SSH 122、公钥认证、WAN DHCP、HTTPS 上网和一次持久化重启通过。原 Wi-Fi 名称／密码已恢复，LuCI 登录认证已验证并仅向 LAN／回环开放。基础候选首启可写空间为 1500KiB（约 1.465MiB），低于此前 1.5MiB 规划目标；完整组件和更新峰值仍须实测。
 
-三个自有包已实现初版：`alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding`。当前进行真实订阅、目标运行时与透明代理联调；尚未完成全部首版验收，也未证明 200Mbps 代理吞吐。
+三个自有包已实现并部署初版：`alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding`。真实订阅、目标 RPC、实际节点及透明 HTTPS、保护恢复、规则与回退已经通过实测；当前 APK 覆盖安装且保存配置后 overlay 剩约 1368 KiB，核心 RSS 一次采样约 30 MiB。最终集成镜像与升级恢复仍待验收，未证明 200Mbps 代理吞吐；当前 Rock 到 4A 的物理链路为 100Mbps。
+
+节点失败时不自动改走直连；核心整体故障时保守阻断公网 TCP/UDP，也会影响公网 direct 规则，LAN 管理仍保留。首版不支持把全部 Clash 功能或无限规则库直接搬入这台 16MB Flash／约 124MB RAM 的设备，实际边界见集成报告。
 
 早期 XMiR-Patcher 中断及取消的验证属于历史记录；前次降级／root 操作另有报告。本轮通过现有密钥登录，没有重复漏洞利用。早期中断不能独自证明 2.28.91 完整利用链失效。
 
