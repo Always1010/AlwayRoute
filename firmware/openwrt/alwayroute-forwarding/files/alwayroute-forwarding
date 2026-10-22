@@ -1,0 +1,224 @@
+#!/bin/sh
+# Own only the alwayroute nft table, routing table 20231 and priority 10231.
+# No DNS/UCI files or upstream network settings are modified.
+set -eu
+umask 077
+
+STATE_DIR=/tmp/alwayroute
+RUNTIME=/tmp/alwayroute/runtime.json
+TABLE=20231
+PRIORITY=10231
+MARK=0x41000000/0xff000000
+OWNER="$STATE_DIR/forwarding.owner"
+RULES="$STATE_DIR/forwarding.nft"
+GUARD="$STATE_DIR/forwarding.guard"
+
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+
+priority_rules() { ip -4 rule show | awk -v key="$PRIORITY:" '$1 == key'; }
+owned_rule() {
+    lines=$(priority_rules)
+    [ "$(printf '%s\n' "$lines" | grep -c .)" -eq 1 ] || return 1
+    printf '%s\n' "$lines" | grep -Eq "^$PRIORITY:[[:space:]]+from all fwmark 0x41000000/0xff000000 lookup $TABLE$"
+}
+table_routes() { ip -4 route show table "$TABLE" 2>/dev/null || true; }
+owned_route() {
+    lines=$(table_routes)
+    [ "$(printf '%s\n' "$lines" | grep -c .)" -eq 1 ] || return 1
+    printf '%s\n' "$lines" | grep -Eq '^local (default|0\.0\.0\.0/0) dev lo scope host([[:space:]]|$)'
+}
+
+read_context() {
+    [ -r "$RUNTIME" ] || fail 'Configuration is not prepared'
+    MODE=$(jsonfilter -i "$RUNTIME" -e '@.experimental.clash_api.default_mode')
+    case "$MODE" in Rule|Global|Direct) ;; *) fail 'Invalid routing mode';; esac
+    LAN=$(ubus call network.interface.lan status | jsonfilter -e '@.l3_device')
+    case "$LAN" in ''|*[!A-Za-z0-9_.:-]*) fail 'Invalid LAN device';; esac
+    [ "${#LAN}" -le 15 ] || fail 'LAN device name is too long'
+}
+
+check_ownership() {
+    if nft list table inet alwayroute >/dev/null 2>&1 && [ ! -f "$OWNER" ]; then
+        fail 'An unowned alwayroute nft table already exists'
+    fi
+    rules=$(priority_rules)
+    if [ -n "$rules" ]; then
+        [ -f "$OWNER" ] && owned_rule || fail 'Routing priority 10231 is already in use or changed'
+    fi
+    routes=$(table_routes)
+    if [ -n "$routes" ]; then
+        [ -f "$OWNER" ] && owned_route || fail 'Routing table 20231 is already in use or changed'
+    fi
+    # Existing flow offload can bypass a newly added interception hook.
+    if nft list ruleset 2>/dev/null | grep -q 'flow add'; then
+        fail 'Disable flow offloading before enabling transparent forwarding'
+    fi
+}
+
+render() {
+    cat <<EOF
+table inet alwayroute {
+    set bypass4 {
+        type ipv4_addr
+        flags interval
+        elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 }
+    }
+    chain lan_prerouting {
+        type filter hook prerouting priority -151; policy accept;
+        iifname != "$LAN" return
+        meta nfproto != ipv4 return
+        meta l4proto { tcp, udp } th dport 53 meta mark set (meta mark & 0x00ffffff) | 0x41000000 tproxy ip to 127.0.0.1:7893 accept
+        ip daddr @bypass4 return
+        fib daddr type local return
+        meta l4proto { tcp, udp } meta mark set (meta mark & 0x00ffffff) | 0x41000000 tproxy ip to 127.0.0.1:7893 accept
+    }
+    chain protect_input {
+        type filter hook input priority -5; policy accept;
+        iifname "$LAN" meta nfproto ipv6 meta l4proto { tcp, udp } th dport 53 reject
+        iifname != "lo" meta l4proto { tcp, udp } th dport 7893 meta mark & 0xff000000 != 0x41000000 reject
+    }
+    chain ipv6_scope {
+        type filter hook forward priority -5; policy accept;
+        iifname "$LAN" meta nfproto ipv6 reject with icmpv6 type admin-prohibited
+    }
+}
+EOF
+}
+
+render_guard() {
+    cat <<EOF
+table inet alwayroute {
+    set bypass4 {
+        type ipv4_addr
+        flags interval
+        elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 }
+    }
+    chain guard_input {
+        type filter hook input priority -5; policy accept;
+        iifname "$LAN" meta l4proto { tcp, udp } th dport { 53, 7893 } reject
+    }
+    chain guard_forward {
+        type filter hook forward priority -5; policy accept;
+        iifname != "$LAN" return
+        meta nfproto ipv6 reject with icmpv6 type admin-prohibited
+        meta l4proto { tcp, udp } th dport 53 reject
+        ip daddr @bypass4 return
+        meta l4proto { tcp, udp } reject
+    }
+}
+EOF
+}
+
+guard() {
+    for tool in nft ip ubus jsonfilter; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+    read_context
+    if [ "$MODE" = Direct ]; then stop; return; fi
+    check_ownership
+    mkdir -p "$STATE_DIR"
+    if nft list table inet alwayroute >/dev/null 2>&1; then
+        { printf 'delete table inet alwayroute\n'; render_guard; } > "$RULES"
+    else
+        render_guard > "$RULES"
+    fi
+    nft --check --file "$RULES" || fail 'Cannot validate fail-closed guard'
+    : > "$OWNER"
+    nft --file "$RULES" || fail 'Cannot establish fail-closed guard'
+    : > "$GUARD"
+    # Traffic is now guarded; retire only our exact interception policy route.
+    if owned_rule; then ip -4 rule del priority "$PRIORITY" fwmark "$MARK" lookup "$TABLE"; fi
+    if owned_route; then ip -4 route del local 0.0.0.0/0 dev lo table "$TABLE"; fi
+}
+
+prepare() {
+    for tool in nft ip ubus jsonfilter; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+    read_context
+    [ "$MODE" = Direct ] && return 0
+    check_ownership
+    # nft --check uses the kernel transaction validator; it does not commit rules.
+    if nft list table inet alwayroute >/dev/null 2>&1; then
+        { printf 'delete table inet alwayroute\n'; render; } | nft --check --file -
+    else
+        render | nft --check --file -
+    fi
+}
+
+stop() {
+    if [ -f "$OWNER" ]; then
+        failed=0
+        if nft list table inet alwayroute >/dev/null 2>&1; then
+            nft delete table inet alwayroute || failed=1
+        fi
+        if [ -n "$(priority_rules)" ]; then
+            if owned_rule; then
+                ip -4 rule del priority "$PRIORITY" fwmark "$MARK" lookup "$TABLE" || failed=1
+            else
+                failed=1
+                printf '%s\n' 'Refusing to delete a changed policy rule' >&2
+            fi
+        fi
+        if [ -n "$(table_routes)" ]; then
+            if owned_route; then
+                ip -4 route del local 0.0.0.0/0 dev lo table "$TABLE" || failed=1
+            else
+                failed=1
+                printf '%s\n' 'Refusing to delete a changed routing table' >&2
+            fi
+        fi
+        if [ "$failed" -eq 0 ]; then rm -f "$OWNER" "$RULES" "$GUARD"; else return 1; fi
+    fi
+}
+
+activation_failed() {
+    # A failed atomic replacement leaves the previous table intact. Never tear
+    # down an existing guard (or interception table) merely because retry failed.
+    if nft list table inet alwayroute >/dev/null 2>&1; then
+        if [ -f "$GUARD" ]; then
+            if owned_rule; then ip -4 rule del priority "$PRIORITY" fwmark "$MARK" lookup "$TABLE" || true; fi
+            if owned_route; then ip -4 route del local 0.0.0.0/0 dev lo table "$TABLE" || true; fi
+        else
+            (guard) || true
+        fi
+    else
+        stop || true
+    fi
+    fail "$1"
+}
+
+activate() {
+    prepare
+    if [ "$MODE" = Direct ]; then stop; return 0; fi
+    mkdir -p "$STATE_DIR"
+    if nft list table inet alwayroute >/dev/null 2>&1; then
+        { printf 'delete table inet alwayroute\n'; render; } > "$RULES"
+    else
+        render > "$RULES"
+    fi
+    # Mark ownership before a multi-command activation so a partial failure can
+    # still be removed. The manager serializes prepare/activate/stop calls.
+    : > "$OWNER"
+    if ! ip -4 route replace local 0.0.0.0/0 dev lo table "$TABLE"; then activation_failed 'Cannot create local routing entry'; fi
+    if ! owned_rule; then
+        if ! ip -4 rule add priority "$PRIORITY" fwmark "$MARK" lookup "$TABLE"; then activation_failed 'Cannot create policy rule'; fi
+    fi
+    if ! nft --file "$RULES"; then activation_failed 'Cannot activate nft rules'; fi
+    rm -f "$GUARD"
+}
+
+status() {
+    if [ -f "$OWNER" ] && [ -f "$GUARD" ] && nft list table inet alwayroute >/dev/null 2>&1; then
+        printf '%s\n' '{"available":true,"running":false,"guarded":true,"scope":"guarded; proxy unavailable; public TCP/UDP and LAN DNS blocked","verification":"unverified"}'
+    elif [ -f "$OWNER" ] && nft list table inet alwayroute >/dev/null 2>&1 && owned_rule && owned_route; then
+        printf '%s\n' '{"available":true,"running":true,"scope":"LAN IPv4 TCP/UDP and DNS; forwarded IPv6 blocked","verification":"unverified","routerOriginated":"direct"}'
+    else
+        printf '%s\n' '{"available":true,"running":false,"scope":"inactive; base routing","verification":"unverified"}'
+    fi
+}
+
+case "${1:-}" in
+    prepare) prepare;;
+    activate) activate;;
+    guard) guard;;
+    stop) stop;;
+    status) status;;
+    *) printf '%s\n' 'Usage: alwayroute-forwarding {prepare|activate|guard|stop|status}' >&2; exit 2;;
+esac
