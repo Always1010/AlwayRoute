@@ -32,7 +32,7 @@ function restoreMetadata(pending,good,service) {
  write(DATA+'/service.json',service);system('/bin/sync');
  if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','恢复提交标志无法清除');system('/bin/sync');
 }
-function state() {let m=model(),runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null};}
+function state(m) {m=m ?? model();let runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null};}
 function jobStatus() {
  let job=read(TMP+'/job.json',null);
  if(job?.status=='running' && (job.pid?!fs.access('/proc/'+job.pid):time()-job.started>10)) {
@@ -52,20 +52,21 @@ function jobStatus() {
  return {ok:true,busy:job?.status=='running',job};
 };
 function event(message,level) {let entries=read(TMP+'/events.json',[]);push(entries,{time:time(),level:level ?? 'info',message});while(length(entries)>20)shift(entries);write(TMP+'/events.json',entries);}
-function result() {
- let m=model(),updates=read(DATA+'/subscription-status.json',{});
+function result(m) {
+ m=m ?? model();let updates=read(DATA+'/subscription-status.json',{});
  for(let s in m.subscriptions)if(updates[s.id])s.lastError=updates[s.id].ok?null:'订阅更新失败：'+updates[s.id].code;
- return {ok:true,model:m,state:state()};
+ return {ok:true,model:m,state:state(m)};
 };
 function expected(args,m) {if(type(args.expectedRevision)!='int' || args.expectedRevision!=m.revision)fail('REVISION_CONFLICT','配置已由其他操作更新，请重新加载');}
-function saved(m) {validate(m);write(DATA+'/current.json',m);system('/bin/sync');event('配置已保存');return result();}
+function saved(m) {validate(m);write(DATA+'/current.json',m);system('/bin/sync');event('配置已保存');return result(m);}
 function command(cmd) {return system(cmd+' >/dev/null 2>&1')==0;}
 function running() {return command('/etc/init.d/alwayroute running');}
-function fetchJson(path, stream) {
+function fetchJson(path, stream, limit) {
+ limit=limit ?? 65536;
  let command='/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 -O - '+"'http://127.0.0.1:9090"+path+"' 2>/dev/null";
  if(stream)command+=' | /bin/busybox head -n 1';
  let p=fs.popen(command,'r');if(!p)return null;
- let s=p.read(65536);p.close();if(!s)return null;
+ let s=p.read(limit+1);p.close();if(!s || length(s)>limit)return null;
  try{return json(trim(s));}catch(e){return null;}
 };
 function forwarding(action) {
@@ -73,7 +74,12 @@ function forwarding(action) {
  if(action=='status') {let p=fs.popen('/usr/libexec/alwayroute-forwarding status 2>/dev/null','r');if(!p)return {available:false,scope:'unverified'};let s=p.read(8192);p.close();try{return json(s);}catch(e){return {available:false,scope:'unverified'};}}
  return command('/usr/libexec/alwayroute-forwarding '+action);
 };
-function coreStatus() {let p=fetchJson('/proxies');return p?.proxies?{available:true,groups:p.proxies}:{available:false,groups:{}};}
+function coreStatus() {
+ let p=fetchJson('/proxies',false,262144),groups={};
+ if(!p?.proxies)return {available:false,groups};
+ for(let tag,proxy in p.proxies)if(proxy?.type=='Selector' && type(proxy.now)=='string')groups[tag]={now:proxy.now};
+ return {available:true,groups};
+}
 function checkConfig(m) {
  write(TMP+'/runtime.json',generate(m));
  if(!command('/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json'))fail('CORE_CHECK_FAILED','核心拒绝配置，原应用保持可恢复');
@@ -133,7 +139,7 @@ function applyModel(m,commitCurrent) {
   die(e.message);
  }
  try {event('核心加载已确认；出口与终端接管仍须实测');}catch(logError){}
- return {ok:true,state:state()};
+ return {ok:true,state:state(m)};
 };
 function configureCandidate(next) {
  validate(next);
@@ -142,7 +148,7 @@ function configureCandidate(next) {
  // A stopped service validates the next start without changing its enabled state.
  checkConfig(next);write(DATA+'/current.json',next);system('/bin/sync');
  try {event('配置已确认，将用于下次启动');}catch(logError){}
- return {ok:true,state:state()};
+ return {ok:true,state:state(next)};
 }
 function refresh(args,m) {
  let s=null;for(let candidate in m.subscriptions)if(candidate.id==args.subscriptionId)s=candidate;
@@ -165,7 +171,7 @@ function execute(method,args) {
  if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
- if(method=='status')return {ok:true,state:state(),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};
+ if(method=='status') {let current=model();return {ok:true,state:state(current),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};}
  if(method=='traffic') {let t=fetchJson('/traffic',true);return {ok:true,available:type(t?.up)=='int' && type(t?.down)=='int',upload:t?.up ?? null,download:t?.down ?? null,unit:'bytes/s',reason:t?null:'核心流量流不可用'};}
  if(method=='logs') {let entries=read(TMP+'/events.json',[]),limit=int(args.limit ?? 20);if(limit<1 || limit>20)limit=20;return {ok:true,entries:slice(entries,-limit)};}
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
@@ -179,13 +185,13 @@ function execute(method,args) {
  }
  let m=model();
  if(method=='check') {
-  let current=state();
+  let current=state(m);
   if(current.savedRevision!==current.appliedRevision)fail('NOT_APPLIED','请先应用已保存配置，再检查节点');
   let n=null;for(let item in effective(m))if(item.id==args.nodeId)n=item;
   if(!n)fail('INVALID_NODE','节点不存在或已停用');
   let r=fetchJson('/proxies/'+n.id+'/delay?timeout=2000&url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204');
   let healthy=r==null?'unverified':type(r?.delay)=='int'?'passed':'failed';
-  let outcome={ok:true,nodeId:n.id,available:r!=null,delay:r?.delay ?? null,healthy,checkedRevision:state().appliedRevision,time:time()},checks=read(TMP+'/checks.json',{});
+  let outcome={ok:true,nodeId:n.id,available:r!=null,delay:r?.delay ?? null,healthy,checkedRevision:current.appliedRevision,time:time()},checks=read(TMP+'/checks.json',{});
   checks[n.id]=outcome;for(let key in keys(checks))if(!length(filter(m.nodes,item=>item.id==key)))delete checks[key];write(TMP+'/checks.json',checks);
   return outcome;
  }
@@ -194,7 +200,7 @@ function execute(method,args) {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
    if(!command('/etc/init.d/alwayroute stop') || running())fail('CORE_STOP_FAILED','核心停止失败，启动设置保持不变');
    if(interrupted)restoreMetadata(interrupted,lastGood(),{enabled:false});
-   write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state()};
+   write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state(m)};
   }
   if(args.action=='start') {
    return applyModel(m);
@@ -229,7 +235,7 @@ function execute(method,args) {
   let good=lastGood(),previous=normalized(read(DATA+'/previous.json',null));
   let target=(good && good.revision!=m.revision)?good:previous;
   if(!target)fail('NO_ROLLBACK','没有可恢复的历史配置');
-  target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target,true);return result();
+  target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target,true);return result(target);
  }
  fail('UNSUPPORTED','该方法尚未支持');
 };

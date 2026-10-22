@@ -3,11 +3,11 @@ import { sha256 } from 'digest';
 
 // In-memory adapters exercise the actual store transaction code. No host paths,
 // networking, process execution, or persistent files are accessed by this suite.
-let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null;
-let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped';
+let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,currentReads=0;
+let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0;
 let fs={
  mkdir:()=>true,chmod:()=>true,
- readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';return files[path] ?? null;},
+ readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
  access:function(path){return path=='/proc/123' || (path=='/usr/libexec/alwayroute-forwarding' && helperAvailable);},
  rename:function(from,to){if(to==failRename){failRename=null;return false;}files[to]=files[from];delete files[from];return true;},
  unlink:function(path){if(path==failUnlink){failUnlink=null;return false;}delete files[path];return true;},
@@ -23,8 +23,8 @@ let fs={
  popen:function(command){
   let body='{}';
   if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';}
-  else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)if(o.type=='selector')proxies[o.tag]={now:o.default,all:o.outbounds};body=sprintf('%J',{proxies});}
-  return {read:()=>body,close:()=>0};
+  else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:o.default,all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);}
+  return {read:function(limit){if(index(command,'/proxies')>=0)lastProxyReadLimit=limit;return substr(body,0,limit);},close:()=>0};
  }
 };
 function system(command){
@@ -64,7 +64,7 @@ call('job_status',{});work();observedJob=call('job_status',{});
 check(!observedJob.busy && observedJob.job.status=='failed' && observedJob.job.error.code=='JOB_INTERRUPTED' && files['/etc/alwayroute/current.json']==savedCurrent && !active && !files['/tmp/alwayroute/job.request.json'],'late worker cannot take over or commit a job already declared interrupted');
 if(savedJob==null)delete files['/tmp/alwayroute/job.json'];else files['/tmp/alwayroute/job.json']=savedJob;
 if(savedRequest==null)delete files['/tmp/alwayroute/job.request.json'];else files['/tmp/alwayroute/job.request.json']=savedRequest;
-let r=call('get',{});check(r.ok && r.model.revision==0,'initial state');
+currentReads=0;let r=call('get',{});check(r.ok && r.model.revision==0 && currentReads==1,'initial get loads and validates the current model once');
 let oversized='x';while(length(oversized)<=131072)oversized+=oversized;
 r=call('configure',{expectedRevision:0,model:{padding:oversized}});
 check(r.error?.code=='INPUT_LIMIT' && !files['/tmp/alwayroute/job.request.json'],'oversized configure is rejected before writing a background request');
@@ -83,6 +83,13 @@ r=call('apply',{expectedRevision:1});check(r.ok && r.job.status=='running' && !a
 check(call('save',{expectedRevision:1,model:r.model}).error.code=='BUSY','queued mutation excluded');
 work();r=call('job_status',{});check(!r.busy && r.job.status=='succeeded' && active,'worker completes and releases transaction lock');
 check(call('get',{}).state.appliedRevision==1,'applied distinct from saved');
+let normalRuntime=files['/tmp/alwayroute/runtime.json'],largeRuntime={outbounds:[]},largeChoices=[];
+for(let i=0;i<128;i++){let tag=sprintf('n%03d_',i);while(length(tag)<64)tag+='x';push(largeChoices,tag);push(largeRuntime.outbounds,{type:'vmess',tag});}
+for(let i=0;i<16;i++)push(largeRuntime.outbounds,{type:'selector',tag:'group_'+i,outbounds:largeChoices,default:largeChoices[i]});
+files['/tmp/alwayroute/runtime.json']=sprintf('%J',largeRuntime);currentReads=0;let largeStatus=call('status',{});
+check(currentReads==1 && lastProxyBodyLength>65536 && lastProxyReadLimit==262145 && largeStatus.core.available && length(keys(largeStatus.core.groups))==16,'maximum node and group status loads the model once and reads the bounded response beyond the old 64KiB cutoff');
+check(largeStatus.core.groups.group_15.now==largeChoices[15] && length(keys(largeStatus.core.groups.group_15))==1 && largeStatus.core.groups[largeChoices[0]]==null,'core status retains only selector choices needed for runtime confirmation');
+files['/tmp/alwayroute/runtime.json']=normalRuntime;
 call('check',{nodeId:'n1'});work();let checked=call('job_status',{}).job;
 check(checked.status=='succeeded' && checked.result.checkedRevision==1 && checked.result.delay==9,'node check uses matching applied revision');
 draft=call('get',{}).model;draft.nodes[0].name='Renamed';r=call('save',{expectedRevision:1,model:draft});
