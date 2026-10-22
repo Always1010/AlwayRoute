@@ -32,6 +32,7 @@ return view.extend({
 		this.busy = false;
 		this.tab = 'overview';
 		this.runtime = data[0].runtime || null;
+		this.lastStatusAttempt = null;
 		this.traffic = null;
 		this.logs = [];
 		this.checks = {};
@@ -61,7 +62,7 @@ return view.extend({
 		// LuCI mounts the returned Node after render resolves. Start after mounting,
 		// so the first visit has data immediately and detach cleanup can observe it.
 		window.setTimeout(function() {
-			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(); }
+			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(true); }
 		}, 0);
 		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') }), this.root]);
 	},
@@ -265,15 +266,17 @@ return view.extend({
 
 	changed: function() { this.dirty = true; this.message = null; this.paint(); },
 
-	refreshRuntime: function(afterMutation) {
+	refreshRuntime: function(forceStatus) {
 		var self = this;
 		if (this.busy || document.hidden || !this.root.isConnected) return Promise.resolve();
 		if (this.tab !== 'overview' && this.tab !== 'logs') return Promise.resolve();
 		this.pendingPolls = this.pendingPolls || {};
-		if (this.pendingPolls[this.tab]) return afterMutation ? this.pendingPolls[this.tab].then(function() { return self.refreshRuntime(); }) : Promise.resolve();
+		if (this.pendingPolls[this.tab]) return forceStatus ? this.pendingPolls[this.tab].then(function() { return self.refreshRuntime(true); }) : Promise.resolve();
 		this.polling = true;
 		var generation = this.operationGeneration || 0, tab = this.tab;
-		var requests = tab === 'logs' ? [this.request('logs', [20])] : [this.request('status'), this.request('traffic')];
+		var requestStatus = tab === 'overview' && (forceStatus || this.lastStatusAttempt == null || Date.now() - this.lastStatusAttempt >= 15000);
+		if (requestStatus) this.lastStatusAttempt = Date.now(); // Throttle attempts after both successful and failed status requests.
+		var requests = tab === 'logs' ? [this.request('logs', [20])] : requestStatus ? [this.request('status'), this.request('traffic')] : [this.request('traffic')];
 		var operation = Promise.allSettled(requests).then(function(results) {
 			if (!self.root.isConnected || self.busy || self.tab !== tab || generation !== (self.operationGeneration || 0)) return;
 			if (tab === 'logs') {
@@ -281,8 +284,10 @@ return view.extend({
 				self.logsError = results[0].status === 'rejected' ? results[0].reason.message : null;
 				self.updateLive(); return;
 			}
-			if (results[0].status === 'fulfilled') {
-				self.runtime = results[0].value;
+			var status = requestStatus ? results[0] : null;
+			var traffic = results[requestStatus ? 1 : 0];
+			if (status && status.status === 'fulfilled') {
+				self.runtime = status.value;
 				var remote = self.runtime.state || {};
 				if (self.readonly) self.revision = remote.savedRevision;
 				else if (remote.savedRevision !== self.revision) self.conflict = true;
@@ -290,8 +295,8 @@ return view.extend({
 				self.keepChecks(self.runtime.checks);
 				self.runtimeError = null;
 			}
-			else { self.runtime = null; self.runtimeError = results[0].reason.message; }
-			self.traffic = results[1].status === 'fulfilled' ? results[1].value : { available: false, reason: results[1].reason.message };
+			else if (status) { self.runtime = null; self.runtimeError = status.reason.message; }
+			self.traffic = traffic.status === 'fulfilled' ? traffic.value : { available: false, reason: traffic.reason.message };
 			self.updateLive();
 		}).finally(function() {
 			delete self.pendingPolls[tab]; self.polling = Object.keys(self.pendingPolls).length > 0;
@@ -375,7 +380,7 @@ return view.extend({
 		content.push(this.live.lastError);
 		content.push(E('ul', { 'class': 'cbi-tabmenu', 'aria-label': 'AlwayRoute 页面' }, tabs.map(function(tab) {
 			return E('li', { 'class': tab[0] === self.tab ? 'cbi-tab' : 'cbi-tab-disabled' }, [E('a', { href: '#', 'aria-current': tab[0] === self.tab ? 'page' : undefined,
-				click: function(event) { event.preventDefault(); self.tab = tab[0]; self.paint(); self.refreshRuntime(); }
+				click: function(event) { event.preventDefault(); self.tab = tab[0]; self.paint(); self.refreshRuntime(tab[0] === 'overview'); }
 			}, [tab[1]])]);
 		})));
 		content.push(this['render_' + this.tab]());
@@ -392,7 +397,7 @@ return view.extend({
 		if (this.readonly) return this.refreshRuntime(true);
 		if (this.dirty && !window.confirm('重新读取将丢弃尚未保存的编辑。继续？')) return;
 		this.checks = {};
-		return this.mutate('get', [], '已重新读取持久配置。').then(function() { return self.refreshRuntime(); });
+		return this.mutate('get', [], '已重新读取持久配置。').then(function() { return self.refreshRuntime(true); });
 	},
 
 	lastErrorLabel: function() {

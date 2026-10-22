@@ -225,17 +225,17 @@ test('runtime refresh preserves strategy controls and never promotes draft choic
   const { view } = harness(async method => method === 'status' ? { state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified', lastError }, service: { running: true }, core: { available: true, groups: { Proxy: { now: actual } } } } : { available: true, upload: 1, download: 2 });
   view.draft.nodes.push(node()); view.paint();
   const control = find(view.root, n => n.attrs['aria-label'] === '代理的出口');
-  await view.refreshRuntime();
+  await view.refreshRuntime(true);
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口'), control);
   view.draft.groups[0].selected = 'n1';
   assert.equal(view.dirty, undefined); assert.equal(view.actualChoice('Proxy'), 'direct');
   assert.equal(view.groupStatus(view.draft.groups[0]), '核心当前选择：直连');
-  await view.refreshRuntime(); assert.equal(view.draft.groups[0].selected, 'n1');
-  actual = 'n1'; await view.refreshRuntime();
+  await view.refreshRuntime(true); assert.equal(view.draft.groups[0].selected, 'n1');
+  actual = 'n1'; await view.refreshRuntime(true);
   assert.equal(view.groupStatus(view.draft.groups[0]), '');
-  lastError = { message: '转发失败' }; await view.refreshRuntime();
+  lastError = { message: '转发失败' }; await view.refreshRuntime(true);
   assert.equal(view.live.lastError.hidden, false); assert.match(view.live.lastError.textContent, /转发失败/);
-  lastError = null; await view.refreshRuntime(); assert.equal(view.live.lastError.hidden, true);
+  lastError = null; await view.refreshRuntime(true); assert.equal(view.live.lastError.hidden, true);
   view.runtime.core = { available: false, groups: {} };
   assert.equal(view.groupStatus(view.draft.groups[0]), '实际出口未获取');
   view.runtime.service.running = false;
@@ -294,6 +294,24 @@ test('polling pauses on hidden/non-overview pages and stale responses cannot ove
   view.operationGeneration = 1;
   pending.forEach(([method, resolve]) => resolve(method === 'status' ? { state: { savedRevision: 99 } } : method === 'logs' ? { entries: [] } : { available: false }));
   await operation; assert.equal(view.conflict, undefined); assert.equal(view.revision, 0);
+});
+
+test('overview throttles status while traffic continues and forced refresh bypasses the interval', async () => {
+  const calls = []; let statusAttempts = 0;
+  const { view } = harness(async method => {
+    calls.push(method);
+    if (method === 'status' && ++statusAttempts === 1) throw new Error('temporary status failure');
+    if (method === 'status') return { state: { savedRevision: 0, appliedRevision: 0 }, service: { running: true } };
+    return { available: true, upload: calls.length, download: 0 };
+  });
+  await view.refreshRuntime();
+  const cachedRuntime = { service: { running: false } };
+  view.runtime = cachedRuntime;
+  await view.refreshRuntime();
+  assert.equal(view.runtime, cachedRuntime);
+  assert.equal(view.traffic.upload, 3);
+  await view.refreshRuntime(true);
+  assert.deepEqual(calls, ['status', 'traffic', 'traffic', 'status', 'traffic']);
 });
 
 test('new node editor omits empty optional TLS and websocket fields', () => {
@@ -379,12 +397,12 @@ test('status restores only node checks belonging to the currently applied revisi
     checks: { n1: { nodeId: 'n1', delay: 42, healthy: 'passed', checkedRevision: 2 }, old: { healthy: 'passed', checkedRevision: 1 }, unknown: { healthy: 'passed' } }
   } : method === 'logs' ? { ok: true, entries: [] } : { ok: true, available: false });
   view.revision = 3; view.draft.nodes.push(node());
-  await view.refreshRuntime();
+  await view.refreshRuntime(true);
   assert.deepEqual(Object.keys(view.checks), ['n1']);
   view.tab = 'nodes'; view.paint();
   assert.match(text(view.root), /42 ms/); assert.equal(view.state.healthy, 'unverified');
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '检查此节点').disabled, true);
-  applied = 3; view.tab = 'overview'; await view.refreshRuntime();
+  applied = 3; view.tab = 'overview'; await view.refreshRuntime(true);
   assert.deepEqual(view.checks, {});
 });
 
