@@ -13,9 +13,12 @@ return view.extend({
 
 	load: function() {
 		var self = this;
-		return api.call('job_status').then(function(progress) {
-			var saved = progress.busy && progress.job && progress.job.status === 'running' ? self.waitJob(progress.job) : api.call('get');
-			return Promise.all([saved, api.call('capabilities')]);
+		if (!L.hasViewPermission()) return Promise.all([this.request('status').then(function(runtime) {
+			return { model: { revision: runtime.state.savedRevision, nodes: [], groups: [], subscriptions: [], overrides: {}, rules: [] }, state: runtime.state, runtime: runtime };
+		}), this.request('capabilities')]);
+		return this.request('job_status').then(function(progress) {
+			var saved = progress.busy && progress.job && progress.job.status === 'running' ? self.waitJob(progress.job) : self.request('get');
+			return Promise.all([saved, self.request('capabilities')]);
 		});
 	},
 
@@ -28,7 +31,7 @@ return view.extend({
 		this.readonly = !L.hasViewPermission();
 		this.busy = false;
 		this.tab = 'overview';
-		this.runtime = null;
+		this.runtime = data[0].runtime || null;
 		this.traffic = null;
 		this.logs = [];
 		this.checks = {};
@@ -69,7 +72,7 @@ return view.extend({
 		return E('button', {
 			type: 'button', title: label, 'aria-label': label,
 			'class': 'btn cbi-button ar-button ' + (options.primary ? 'cbi-button-action ' : '') + (options.style || '') + (options.text ? '' : ' ar-icon'),
-			disabled: options.disabled || this.busy || (this.readonly && !options.readonly) || undefined,
+			disabled: options.disabled || this.busy || (this.uncertain && !options.recovery) || (this.readonly && !options.readonly) || undefined,
 			click: function(event) {
 				event.preventDefault();
 				try { Promise.resolve(action()).catch(function(error) { self.error(error); }); }
@@ -108,51 +111,156 @@ return view.extend({
 			check.delay != null ? check.delay + ' ms' : model.stateLabel(check.healthy);
 	},
 
-	mutate: function(method, args, success) {
+	request: function(method, args) {
+		var timer;
+		return Promise.race([api.call(method, args), new Promise(function(_resolve, reject) {
+			timer = window.setTimeout(function() { var error = new Error('请求超时，操作结果尚未确认'); error.code = 'OPERATION_TIMEOUT'; reject(error); }, 15000);
+		})]).finally(function() { window.clearTimeout(timer); });
+	},
+	mutate: function(method, args, success, verify) {
 		var self = this;
+		if (this.readonly) return Promise.reject(new Error('当前账户仅有读取权限'));
 		if (this.busy) return Promise.reject(new Error('另一项操作正在执行'));
+		if (this.uncertain) return Promise.reject(new Error('上次操作结果尚未确认，请先重新检查状态'));
 		this.busy = true;
 		this.operationMethod = method;
 		this.operationGeneration = (this.operationGeneration || 0) + 1;
 		this.message = null;
 		this.paint();
-		return api.call(method, args).then(function(result) {
+		return this.request(method, args).then(function(result) {
 			if (result.job && result.job.status === 'running') return self.waitJob(result.job);
 			return result;
-		}).then(function(result) {
+		}).then(async function(result) {
+			if (verify) await verify(result);
 			self.accept(result);
-			self.message = { type: 'success', text: success };
+			self.message = { type: 'success', text: typeof success === 'function' ? success(result) : success };
 			return result;
-		}).catch(function(error) {
+		}).catch(async function(error) {
+			if (error.code === 'OPERATION_TIMEOUT' || error.code === 'STATE_UNCONFIRMED') self.uncertain = true;
+			else if (method === 'configure' || method === 'service') {
+				try { self.runtime = await self.request('status'); self.updateState(self.runtime.state || self.state); }
+				catch (_error) { self.runtime = null; self.uncertain = true; }
+			}
 			self.error(error);
 			throw error;
-		}).finally(function() { self.busy = false; self.paint(); });
+		}).finally(function() { self.busy = false; self.pendingModel = null; self.pendingGroup = null; self.paint(); });
 	},
 
 	waitJob: function(job) {
 		var self = this, started = Date.now();
 		this.activeJob = job;
+		this.pendingJob = job;
 		this.paint();
 		async function next() {
 			for (;;) {
 				await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
-				if (document.hidden) { started = Date.now(); continue; }
-				var result = await api.call('job_status');
+				if (Date.now() - started >= 120000) { var timeout = new Error('等待超时，操作结果尚未确认，请重新检查'); timeout.code = 'OPERATION_TIMEOUT'; throw timeout; }
+				var result = await self.request('job_status');
 				var current = result.job;
-				if (!current || current.id !== job.id) throw new Error('后台任务记录已变化，请重新读取配置和运行状态');
+				if (!current || current.id !== job.id) { var changed = new Error('后台任务记录已变化，请重新检查实际状态'); changed.code = 'STATE_UNCONFIRMED'; throw changed; }
 				self.activeJob = current;
 				if (current.status === 'running') {
-					if (Date.now() - started > 180000) throw new Error('后台任务仍在运行，界面等待已超时。请重新读取状态，勿重复提交');
 					continue;
 				}
 				if (current.status !== 'succeeded') {
+					self.pendingJob = null;
 					var detail = current.error || {}, error = new Error(detail.message || '后台任务失败');
 					error.code = detail.code || 'JOB_FAILED'; throw error;
 				}
-				return api.call('get').then(function(saved) { return Object.assign({}, current.result || {}, saved); });
+				self.pendingJob = null;
+				return self.request('get').then(function(saved) { return Object.assign({}, current.result || {}, saved); });
 			}
 		}
 		return next().finally(function() { self.activeJob = null; });
+	},
+	confirmRuntime: async function(result, expectedRunning) {
+		var runtime;
+		try { runtime = await this.request('status'); }
+		catch (_error) { var unavailable = new Error('操作已返回，但无法确认实际状态，请重新检查'); unavailable.code = 'STATE_UNCONFIRMED'; throw unavailable; }
+		this.runtime = runtime;
+		var running = this.serviceRunning(), candidate = result.model;
+		var valid = typeof running === 'boolean' && (expectedRunning == null || running === expectedRunning);
+		if (candidate && running) {
+			valid = valid && runtime.state && runtime.state.appliedRevision === candidate.revision;
+			candidate.groups.forEach(function(group) {
+				if (group.id === 'Other' && group.selected === 'block') return;
+				if (this.actualChoice(group.id) !== group.selected) valid = false;
+			}, this);
+		}
+		if (!valid) { var error = new Error('实际状态尚未确认，请重新检查后再操作'); error.code = 'STATE_UNCONFIRMED'; throw error; }
+		result.state = runtime.state || result.state;
+		return runtime;
+	},
+	configureModel: function(candidate, success) {
+		var self = this, wasRunning = this.serviceRunning();
+		if (this.busy || this.uncertain) return Promise.reject(new Error('请先等待当前操作或重新检查状态'));
+		if (this.conflict) return Promise.reject(new Error('配置已由其他会话更新，请先重新读取'));
+		this.pendingModel = candidate;
+		return this.mutate('configure', [this.revision, candidate], function() {
+			return self.serviceRunning() === false ? '已更新，下次启动使用。' : success || '已切换。';
+		}, function(result) { return self.confirmRuntime(result, typeof wasRunning === 'boolean' ? wasRunning : null); });
+	},
+	changeConfig: function(edit, success) {
+		var candidate = model.clone(this.draft);
+		edit(candidate);
+		return this.configureModel(candidate, success);
+	},
+	activateMutation: function(method, args, success) {
+		var self = this, wasRunning = this.serviceRunning();
+		return this.mutate(method, args, function() { return self.serviceRunning() === false ? '已更新，下次启动使用。' : success; }, function(result) {
+			return self.confirmRuntime(result, typeof wasRunning === 'boolean' ? wasRunning : null);
+		});
+	},
+	changeMode: function(value) {
+		if (this.busy || this.uncertain || this.conflict) return Promise.reject(new Error('请先等待当前操作或重新检查状态'));
+		if (value === this.draft.mode) return Promise.resolve();
+		if (value !== 'direct' && !this.proxyReady()) {
+			var choices = this.outbounds({ nodesOnly: true });
+			this.paint();
+			if (!choices.length) return Promise.reject(new Error('请先在节点或订阅页面添加可用节点，再切换代理模式'));
+			var selection = this.select('', [['', '请选择节点']].concat(choices));
+			this.modal('选择代理节点', [this.field('代理节点', selection)], function(next) {
+				if (!choices.some(function(choice) { return choice[0] === selection.value; })) throw new Error('请选择代理节点');
+				next.mode = value; next.groups.find(function(group) { return group.id === 'Proxy'; }).selected = selection.value;
+			});
+			return Promise.resolve();
+		}
+		return this.changeConfig(function(next) { next.mode = value; }, '运行模式已切换。');
+	},
+	proxyReady: function() {
+		var primary = this.draft.groups.find(function(group) { return group.id === 'Proxy'; });
+		return !!primary && this.outbounds({ nodesOnly: true }).some(function(choice) { return choice[0] === primary.selected; });
+	},
+	toggleService: function() {
+		var self = this, running = this.serviceRunning();
+		if (this.uncertain || typeof running !== 'boolean') return this.reconcile();
+		this.serviceTarget = !running;
+		return this.mutate('service', [running ? 'stop' : 'start'], running ? '服务已停止。' : '服务已启动。', function(result) {
+			return self.confirmRuntime(result, !running);
+		});
+	},
+	reconcile: async function() {
+		if (this.busy) return;
+		this.operationGeneration = (this.operationGeneration || 0) + 1;
+		this.busy = true; this.operationMethod = 'verify'; this.paint();
+		try {
+			var progress = await this.request('job_status');
+			if (progress.busy || progress.job && progress.job.status === 'running') {
+				this.uncertain = true; this.message = { type: 'error', text: '后台操作仍在执行，请稍后重新检查。' }; return;
+			}
+			var saved = await this.request('get'), runtime = await this.request('status');
+			if (!runtime.service || typeof runtime.service.running !== 'boolean') throw new Error('仍无法确认服务状态');
+			if (!runtime.state || runtime.state.savedRevision !== saved.model.revision) throw new Error('读取期间配置再次变化，请重新检查');
+			this.accept(saved); this.runtime = runtime; this.updateState(runtime.state || saved.state);
+			if (runtime.service.running && (runtime.state.appliedRevision !== saved.model.revision || saved.model.groups.some(function(group) {
+				return this.actualChoice(group.id) !== (group.id === 'Other' && group.selected === 'block' ? 'direct' : group.selected);
+			}, this))) {
+				this.uncertain = true; this.message = { type: 'error', text: '服务运行，但配置加载仍未确认，请稍后重新检查。' }; return;
+			}
+			this.uncertain = false; this.pendingJob = null;
+			this.message = progress.job && progress.job.status === 'failed' ? { type: 'error', text: '上次操作失败：' + (progress.job.error && progress.job.error.message || '请检查运行状态') } : { type: 'success', text: '已重新读取实际状态。' };
+		} catch (error) { this.uncertain = true; this.error(error); }
+		finally { this.busy = false; this.paint(); }
 	},
 
 	changed: function() { this.dirty = true; this.message = null; this.paint(); },
@@ -165,7 +273,7 @@ return view.extend({
 		if (this.pendingPolls[this.tab]) return afterMutation ? this.pendingPolls[this.tab].then(function() { return self.refreshRuntime(); }) : Promise.resolve();
 		this.polling = true;
 		var generation = this.operationGeneration || 0, tab = this.tab;
-		var requests = tab === 'logs' ? [api.call('logs', [20])] : [api.call('status'), api.call('traffic')];
+		var requests = tab === 'logs' ? [this.request('logs', [20])] : [this.request('status'), this.request('traffic')];
 		var operation = Promise.allSettled(requests).then(function(results) {
 			if (!self.root.isConnected || self.busy || self.tab !== tab || generation !== (self.operationGeneration || 0)) return;
 			if (tab === 'logs') {
@@ -176,7 +284,8 @@ return view.extend({
 			if (results[0].status === 'fulfilled') {
 				self.runtime = results[0].value;
 				var remote = self.runtime.state || {};
-				if (remote.savedRevision !== self.revision) self.conflict = true;
+				if (self.readonly) self.revision = remote.savedRevision;
+				else if (remote.savedRevision !== self.revision) self.conflict = true;
 				self.updateState(remote);
 				self.keepChecks(self.runtime.checks);
 				self.runtimeError = null;
@@ -192,7 +301,9 @@ return view.extend({
 	},
 
 	configurationLabel: function() {
-		if (this.busy || this.activeJob) return ({ save: '正在保存配置…', apply: '正在应用配置…', refresh: '正在更新订阅…', check: '正在检查节点…', service: '正在切换服务…', rollback: '正在恢复配置…', import: '正在导入节点…' })[this.activeJob ? this.activeJob.method : this.operationMethod] || '正在执行，请稍候…';
+		if (this.busy || this.activeJob) return ({ configure: '正在更新配置…', verify: '正在确认状态…', save: '正在保存配置…', apply: '正在应用配置…', refresh: '正在更新订阅…', check: '正在检查节点…', service: '正在切换服务…', rollback: '正在恢复配置…', import: '正在导入节点…' })[this.activeJob ? this.activeJob.method : this.operationMethod] || '正在执行，请稍候…';
+		if (this.uncertain) return '操作结果未确认，请重新检查';
+		if (this.serviceRunning() === false) return '服务已停止，修改将在下次启动使用';
 		return this.dirty ? '有未保存的修改' : this.state.appliedRevision == null ? '配置尚未应用' :
 			this.state.savedRevision !== this.state.appliedRevision ? '配置已保存，尚未应用' : '配置已应用';
 	},
@@ -207,15 +318,13 @@ return view.extend({
 		return typeof actual === 'string' ? actual : actual && actual.now;
 	},
 	groupStatus: function(group) {
-		if (this.serviceRunning() === false) return '服务已停止';
+			if (this.pendingGroup === group.id && this.busy) return '正在切换…';
+		if (this.serviceRunning() === false) return '';
+		if (group.id === 'Other' && group.selected === 'block') return '未匹配流量将阻断';
 		var actual = this.actualChoice(group.id);
 		if (!actual) return '实际出口未获取';
 		if (actual !== group.selected) return '核心当前选择：' + model.label(this.draft, actual);
-		if (actual === 'Proxy') {
-			var primary = this.actualChoice('Proxy');
-			return primary ? '核心跟随：' + model.label(this.draft, primary) : '核心跟随主策略';
-		}
-		return '核心选择一致';
+		return '';
 	},
 	updateLive: function() {
 		// Polling only replaces status text. Keep focused selects, forms and scroll intact.
@@ -227,10 +336,14 @@ return view.extend({
 		if (live.conflict) live.conflict.hidden = !this.conflict;
 		if (live.runtimeError) { live.runtimeError.hidden = !this.runtimeError; live.runtimeError.textContent = this.runtimeError || ''; }
 		if (live.lastError) { live.lastError.hidden = !this.state.lastError; live.lastError.textContent = this.lastErrorLabel(); }
-		if (live.start) live.start.disabled = !!(this.busy || this.readonly || this.dirty || this.conflict || running === true);
-		if (live.stop) live.stop.disabled = !!(this.busy || this.readonly || running === false);
-		if (live.apply) live.apply.disabled = !!(this.busy || this.readonly || this.conflict);
-		if (live.save) live.save.disabled = !!(this.busy || this.readonly || !this.dirty || this.conflict);
+		if (live.toggle) {
+			var checking = this.uncertain || typeof running !== 'boolean';
+			var label = this.busy && this.operationMethod === 'service' ? (this.serviceTarget ? '启动中…' : '停止中…') : checking ? '重新检查' : running ? '停止' : '启动';
+			var needsNode = !checking && !running && this.draft.mode !== 'direct' && !this.proxyReady();
+			live.toggle.textContent = label; live.toggle.setAttribute('aria-label', label); live.toggle.setAttribute('title', needsNode ? '请先添加并选择代理节点' : label);
+			live.toggle.disabled = !!(this.busy || needsNode || (!checking && this.readonly));
+		}
+		(live.controls || []).forEach(function(control) { control.disabled = !!(self.busy || self.readonly || self.uncertain || self.conflict || typeof running !== 'boolean'); });
 		(this.draft.groups || []).forEach(function(group) { if (live.groups && live.groups[group.id]) live.groups[group.id].textContent = self.groupStatus(group); });
 		if (live.logs) {
 			var fingerprint = JSON.stringify([this.logsError || null, this.logs]);
@@ -247,6 +360,7 @@ return view.extend({
 		var self = this, s = this.state;
 		this.live = { groups: {} };
 		var tabs = [['overview', '代理策略'], ['nodes', '节点'], ['subscriptions', '订阅'], ['logs', '日志'], ['settings', '备份与恢复']];
+		if (this.readonly) tabs = [['overview', '运行状态'], ['logs', '日志']];
 		var content = [E('div', { 'class': 'ar-heading' }, [
 			E('h2', {}, ['AlwayRoute']),
 			E('div', { 'class': 'ar-actions' }, [
@@ -266,31 +380,19 @@ return view.extend({
 		})));
 		content.push(this['render_' + this.tab]());
 		this.live.config = E('span', { 'class': 'ar-config-state', role: 'status' }, [this.configurationLabel()]);
-		this.live.apply = this.button('保存并应用', '', function() { return self.saveApply(); }, { text: true, primary: true, style: 'cbi-button-apply', disabled: this.conflict });
-		this.live.save = this.button('保存', '', function() { return self.save(); }, { text: true, style: 'cbi-button-save', disabled: !this.dirty || this.conflict });
-		content.push(E('div', { 'class': 'cbi-page-actions ar-page-actions' }, [this.live.config,
-			E('div', { 'class': 'ar-actions' }, [this.live.apply, this.live.save,
-				this.button('重置', '', function() { return self.reload(); }, { text: true, style: 'cbi-button-reset', disabled: !this.dirty })])
+		content.push(E('div', { 'class': 'ar-operation-status' }, [this.live.config,
+			this.uncertain ? this.button('重新检查', '↻', function() { return self.reconcile(); }, { text: true, readonly: true, recovery: true }) : ''
 		]));
+
 		domReplace(this.root, content);
 	},
 
 	reload: function() {
 		var self = this;
+		if (this.readonly) return this.refreshRuntime(true);
 		if (this.dirty && !window.confirm('重新读取将丢弃尚未保存的编辑。继续？')) return;
 		this.checks = {};
 		return this.mutate('get', [], '已重新读取持久配置。').then(function() { return self.refreshRuntime(); });
-	},
-	save: function() { return this.mutate('save', [this.revision, this.draft], '配置已保存，尚未应用。'); },
-	saveApply: function() {
-		var self = this;
-		if (this.conflict) throw new Error('请先处理版本冲突');
-		return (this.dirty ? this.save() : Promise.resolve()).then(function() { return self.apply(); });
-	},
-	apply: function() {
-		if (this.dirty || this.conflict) throw new Error('请先保存当前编辑并处理版本冲突');
-		var self = this;
-		return this.mutate('apply', [this.revision], '配置已应用。').then(function(result) { return self.refreshRuntime(true).then(function() { return result; }); });
 	},
 
 	lastErrorLabel: function() {
@@ -308,34 +410,41 @@ return view.extend({
 
 	render_overview: function() {
 		var self = this, running = this.serviceRunning(), traffic = this.traffic || {};
-		var mode = this.select(this.draft.mode, [['rule', '规则分流'], ['global', '全局代理'], ['direct', '全部直连']]);
-		var fallback = this.select(this.draft.defaultOutbound, this.outbounds({ groups: true, block: true }));
-		mode.disabled = this.busy || this.readonly;
-		fallback.disabled = this.busy || this.readonly || this.draft.mode !== 'rule';
-		mode.addEventListener('change', function() { self.draft.mode = mode.value; self.changed(); });
-		fallback.addEventListener('change', function() { self.draft.defaultOutbound = fallback.value; self.changed(); });
+		if (this.readonly) {
+			this.live.service = E('strong', {}, [running === true ? '运行中' : running === false ? '已停止' : '未知']);
+			this.live.traffic = E('span', {}, [traffic.available ? '↑ ' + model.formatRate(traffic.upload) + '    ↓ ' + model.formatRate(traffic.download) : '不可用']);
+			this.live.runtimeError = E('p', { 'class': 'alert-message warning', hidden: !this.runtimeError || undefined }, [this.runtimeError || '']);
+			return this.card('运行状态', [this.field('代理服务', this.live.service), this.field('实时流量', this.live.traffic), this.live.runtimeError]);
+		}
+		var mode = this.select(this.pendingModel ? this.pendingModel.mode : this.draft.mode, [['rule', '规则分流'], ['global', '全局代理'], ['direct', '全部直连']]);
+		this.live.controls = [mode];
+		mode.disabled = this.busy || this.readonly || this.uncertain || this.conflict || typeof running !== 'boolean';
+		mode.addEventListener('change', function() { self.changeMode(mode.value).catch(function(error) { self.error(error); }); });
 		this.live.service = E('strong', {}, [running === true ? '运行中' : running === false ? '已停止' : '未知']);
-		this.live.start = this.button('启动', '', function() { return self.mutate('service', ['start'], '启动请求已完成。').then(function() { return self.refreshRuntime(); }); }, { text: true, disabled: this.dirty || this.conflict || running === true });
-		this.live.stop = this.button('停止', '', function() { return self.mutate('service', ['stop'], '服务已停止。').then(function() { return self.refreshRuntime(); }); }, { text: true, disabled: running === false });
+		var checking = this.uncertain || typeof running !== 'boolean';
+		var label = this.busy && this.operationMethod === 'service' ? (this.serviceTarget ? '启动中…' : '停止中…') : checking ? '重新检查' : running ? '停止' : '启动';
+		var needsNode = !checking && !running && this.draft.mode !== 'direct' && !this.proxyReady();
+		this.live.toggle = this.button(label, '', function() { return self.toggleService(); }, { text: true, readonly: checking, recovery: checking, disabled: needsNode });
+		if (needsNode) this.live.toggle.setAttribute('title', '请先添加并选择代理节点');
 		this.live.traffic = E('span', {}, [traffic.available ? '↑ ' + model.formatRate(traffic.upload) + '    ↓ ' + model.formatRate(traffic.download) : '不可用']);
 		this.live.health = E('span', {}, [model.stateLabel(this.state.healthy)]);
 		this.live.runtimeError = E('p', { 'class': 'alert-message warning', hidden: !this.runtimeError || undefined }, [this.runtimeError || '']);
+		var basic = [this.field('代理服务', E('div', { 'class': 'ar-actions' }, [this.live.service, this.live.toggle])),
+			this.field('实时流量', this.live.traffic), this.field('运行模式', mode), this.live.runtimeError];
+		if (this.draft.mode === 'global') {
+			var primary = this.draft.groups.find(function(g) { return g.id === 'Proxy'; });
+			basic.push(this.field('代理节点', this.groupSelect(primary)));
+		}
+		var content = [this.card('运行与策略', basic)];
+		if (this.draft.mode !== 'rule') return E('div', {}, content);
 		var section = this.strategySection || 'groups';
-		return E('div', {}, [this.card('运行与策略', [
-			this.field('代理服务', E('div', { 'class': 'ar-actions' }, [this.live.service, this.live.start, this.live.stop,
-				this.button('刷新运行状态', '↻', function() { return self.refreshRuntime(); }, { readonly: true })])),
-			this.field('实时流量', this.live.traffic),
-			this.field('终端出口验证', this.live.health),
-			this.live.runtimeError,
-			this.field('运行模式', mode),
-			this.draft.mode === 'rule' ? this.field('默认出口', fallback, '未匹配分流规则时使用。') : E('p', { 'class': 'cbi-section-descr' }, [this.draft.mode === 'global' ? '全局代理使用主策略组，分流规则暂不参与。' : '应用后停止代理接管，保留已有策略配置。'])
-		]),
-			E('ul', { 'class': 'cbi-tabmenu', 'aria-label': '代理策略设置' }, [['groups', '策略组'], ['rules', '分流规则']].map(function(tab) {
-				return E('li', { 'class': section === tab[0] ? 'cbi-tab' : 'cbi-tab-disabled' }, [E('a', { href: '#', 'aria-current': section === tab[0] ? 'page' : undefined,
-					click: function(event) { event.preventDefault(); self.strategySection = tab[0]; self.paint(); }
-				}, [tab[1]])]);
-			})), section === 'rules' ? this.render_rules() : this.render_groups()
-		]);
+		content.push(E('ul', { 'class': 'cbi-tabmenu', 'aria-label': '代理策略设置' }, [['groups', '策略组'], ['rules', '分流规则']].map(function(tab) {
+			return E('li', { 'class': section === tab[0] ? 'cbi-tab' : 'cbi-tab-disabled' }, [E('a', { href: '#', 'aria-current': section === tab[0] ? 'page' : undefined,
+				click: function(event) { event.preventDefault(); self.strategySection = tab[0]; self.paint(); }
+			}, [tab[1]])]);
+		})));
+		content.push(section === 'rules' ? this.render_rules() : this.render_groups());
+		return E('div', {}, content);
 	},
 
 	render_nodes: function() {
@@ -374,10 +483,10 @@ return view.extend({
 		search.addEventListener('input', filter); sourceFilter.addEventListener('change', filter); filter();
 		return this.card('节点', [E('div', { 'class': 'ar-toolbar' }, [E('div', { 'class': 'ar-actions ar-filters' }, [search, sourceFilter]),
 			E('div', { 'class': 'ar-actions' }, [this.button('导入节点', '⇧', function() {
-				self.showImport('导入为手动节点', function(content) { return self.mutate('import', [self.revision, content], '节点已导入并保存。请选择策略组出口，再应用配置。'); });
+				self.showImport('导入为手动节点', function(content) { return self.activateMutation('import', [self.revision, content, true], '节点已导入并生效。'); });
 			}, { text: true, disabled: this.dirty || this.conflict }), this.button('添加节点', '+', function() { self.editNode(); }, { text: true, primary: true })])]),
 			rows.length ? list : this.empty('暂无节点，请添加节点或订阅。'), count,
-			E('p', { 'class': 'ar-muted' }, ['在代理策略页选择出口。节点检查需先保存并应用当前配置。'])]);
+			E('p', { 'class': 'ar-muted' }, ['在代理策略页选择出口。服务运行且当前配置已生效后，可检查节点。'])]);
 	},
 
 	input: function(value, type, attrs) { return E('input', Object.assign({ type: type || 'text', value: value == null ? '' : String(value), 'class': 'cbi-input-text' }, attrs || {})); },
@@ -393,18 +502,23 @@ return view.extend({
 	},
 	modal: function(title, fields, commit, actions) {
 		var self = this, errorBox = E('p', { 'class': 'ar-alert ar-error', hidden: '' });
-		var extra = (actions || []).map(function(action) { return self.button(action.label, '', function() {
-			try { if (action.run() !== false) ui.hideModal(); }
-			catch (error) { errorBox.hidden = false; errorBox.textContent = error.message; }
-		}, { text: true, style: action.style, disabled: action.disabled }); });
-		ui.showModal(title, [E('div', { 'class': 'ar-form' }, fields), errorBox, E('div', { 'class': 'ar-modal-actions' }, [
-			E('div', { 'class': 'ar-actions' }, extra), E('div', { 'class': 'ar-actions' }, [
-			this.button('取消', '×', function() { ui.hideModal(); }, { text: true }),
-			this.button('确定', '✓', function() {
-				try { commit(); ui.hideModal(); self.changed(); }
-				catch (error) { errorBox.hidden = false; errorBox.textContent = error.message; }
-			}, { text: true, primary: true })
-		])])]);
+		var fieldset;
+		async function submit(edit) {
+			fieldset.disabled = true; errorBox.hidden = true;
+			try {
+				var candidate = model.clone(self.draft);
+				if (edit(candidate) === false) return;
+				await self.configureModel(candidate, '配置已更新。'); ui.hideModal();
+			} catch (error) { errorBox.hidden = false; errorBox.textContent = error.message; }
+			finally { fieldset.disabled = false; }
+		}
+		var extra = (actions || []).map(function(action) { return self.button(action.label, '', function() { return submit(action.run); }, { text: true, style: action.style, disabled: action.disabled }); });
+		fieldset = E('fieldset', { 'class': 'ar-modal-fields' }, [E('div', { 'class': 'ar-form' }, fields), errorBox,
+			E('div', { 'class': 'ar-modal-actions' }, [E('div', { 'class': 'ar-actions' }, extra), E('div', { 'class': 'ar-actions' }, [
+				this.button('取消', '', function() { ui.hideModal(); }, { text: true }),
+				this.button('确定', '', function() { return submit(commit); }, { text: true, primary: true })
+			])])]);
+		ui.showModal(title, [fieldset]);
 	},
 
 	editNode: function(raw) {
@@ -427,14 +541,14 @@ return view.extend({
 			this.field('传输', transport), pathField, hostField, this.field('启用 TLS', tls), sniField,
 			E('details', { 'class': 'ar-details' }, [E('summary', {}, ['高级参数']), this.field('VMess 加密', security), this.field('VMess alterId', alterId)]),
 			raw && raw.source ? E('p', { 'class': 'cbi-section-descr' }, ['修改作为本地覆盖保留，订阅更新不会覆盖。']) : ''];
-		var actions = raw ? raw.source ? self.draft.overrides[raw.id] ? [{ label: '恢复订阅原始值', run: function() {
+		var actions = raw ? raw.source ? self.draft.overrides[raw.id] ? [{ label: '恢复订阅原始值', run: function(next) {
 			if (!window.confirm('清除此节点的本地覆盖？')) return false;
-			delete self.draft.overrides[raw.id]; self.changed();
-		} }] : [] : [{ label: '删除节点', style: 'cbi-button-remove', run: function() {
+			delete next.overrides[raw.id];
+		} }] : [] : [{ label: '删除节点', style: 'cbi-button-remove', run: function(next) {
 			if (!window.confirm('删除节点“' + n.name + '”？')) return false;
-			model.removeNode(self.draft, raw.id); self.changed();
+			model.removeNode(next, raw.id);
 		} }] : [];
-		this.modal(raw ? '编辑节点' : '添加 VMess 节点', fields, function() {
+		this.modal(raw ? '编辑节点' : '添加 VMess 节点', fields, function(next) {
 			if (!name.value.trim() || !server.value.trim() || !uuid.value.trim()) throw new Error('名称、服务器和 UUID 必填');
 			if (!model.validPort(port.value)) throw new Error('端口须为 1–65535 的整数');
 			if (!/^\d+$/.test(alterId.value) || Number(alterId.value) > 65535) throw new Error('alterId 须为 0–65535 的整数');
@@ -444,22 +558,22 @@ return view.extend({
 			var values = { server: server.value.trim(), port: Number(port.value), uuid: uuid.value.trim(), security: security.value, alterId: Number(alterId.value),
 				tls: tlsConfig, transport: transport.value ? wsConfig : null };
 			if (raw && raw.source) {
-				var previous = self.draft.overrides[raw.id] || {};
-				if (excluded.checked && !n.excluded && model.references(self.draft, raw.id).length) throw new Error('请先移除该节点的策略组、规则和默认出口引用');
-				self.draft.overrides[raw.id] = Object.assign({}, previous, { name: name.value.trim(), patch: values, excluded: excluded.checked });
+				var previous = next.overrides[raw.id] || {};
+				if (excluded.checked && !n.excluded && model.references(next, raw.id).length) throw new Error('请先移除该节点的策略组、规则和默认出口引用');
+				next.overrides[raw.id] = Object.assign({}, previous, { name: name.value.trim(), patch: values, excluded: excluded.checked });
 			}
 			else {
-				var next = Object.assign({}, raw || { id: model.id('n'), type: 'vmess', source: null }, values, { name: name.value.trim(), enabled: enabled.checked });
-				if (!next.transport) delete next.transport;
-				if (raw) self.draft.nodes[self.draft.nodes.indexOf(raw)] = next;
-				else self.draft.nodes.push(next);
+				var item = Object.assign({}, raw || { id: model.id('n'), type: 'vmess', source: null }, values, { name: name.value.trim(), enabled: enabled.checked });
+				if (!item.transport) delete item.transport;
+				if (raw) next.nodes[next.nodes.findIndex(function(n) { return n.id === raw.id; })] = item;
+				else next.nodes.push(item);
 			}
 		}, actions);
 	},
 
 	checkNode: function(id) {
 		var self = this;
-		if (this.dirty || this.conflict || this.state.savedRevision !== this.state.appliedRevision || this.state.appliedRevision == null) throw new Error('请先保存并应用当前版本，再执行单节点检查');
+		if (this.dirty || this.conflict || this.state.savedRevision !== this.state.appliedRevision || this.state.appliedRevision == null) throw new Error('请先启动服务并确认当前配置已生效，再执行单节点检查');
 		return this.mutate('check', [id], '单节点检查已返回；检查结果仅对应此次请求。').then(function(result) {
 			var checks = Object.assign({}, self.checks); checks[id] = result;
 			self.keepChecks(checks);
@@ -467,8 +581,23 @@ return view.extend({
 		});
 	},
 	chooseNode: function(group, id) {
-		if (this.dirty || this.conflict) throw new Error('请先保存编辑并处理版本冲突');
-		return this.mutate('select', [this.revision, group, id], '选择已保存，请应用后生效。');
+		var current = this.draft.groups.find(function(g) { return g.id === group; });
+		if (!current) return Promise.reject(new Error('策略组不存在'));
+		if (current.selected === id) return Promise.resolve();
+		this.pendingGroup = group;
+		return this.changeConfig(function(next) { next.groups.find(function(g) { return g.id === group; }).selected = id; }, '出口已切换。');
+	},
+	groupSelect: function(group) {
+		var self = this, pending = this.pendingModel && this.pendingModel.groups.find(function(g) { return g.id === group.id; });
+		var primary = group.id === 'Proxy', choices = this.outbounds({ nodesOnly: primary, follow: !primary, block: group.id === 'Other' });
+		var value = pending ? pending.selected : group.selected;
+		if (primary && !choices.some(function(choice) { return choice[0] === value; })) { choices.unshift(['', '请选择节点']); value = ''; }
+		var select = this.select(value, choices);
+		select.setAttribute('aria-label', group.name + '的出口');
+		select.disabled = this.busy || this.readonly || this.uncertain || this.conflict || typeof this.serviceRunning() !== 'boolean';
+		select.addEventListener('change', function() { self.chooseNode(group.id, select.value).catch(function(error) { self.error(error); }); });
+		this.live.controls = this.live.controls || []; this.live.controls.push(select);
+		return select;
 	},
 
 	render_subscriptions: function() {
@@ -483,7 +612,7 @@ return view.extend({
 		});
 		return this.card('订阅来源', [E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['订阅地址仅用于本机管理服务抓取，不发送公共转换服务。失败时保留旧节点。']),
 			this.button('添加订阅', '+', function() { self.editSubscription(); }, { text: true, primary: true })]),
-			rows.length ? this.table(['名称', '状态', '节点数', '更新计划', '最近结果', '操作'], rows) : this.empty('暂无订阅，请添加订阅后保存并更新。'),
+			rows.length ? this.table(['名称', '状态', '节点数', '更新计划', '最近结果', '操作'], rows) : this.empty('暂无订阅，请先添加订阅，再更新节点。'),
 			E('p', { 'class': 'ar-muted' }, ['订阅只更新节点，不导入策略组和规则；节点被引用时不会静默删除。'])]);
 	},
 	editSubscription: function(original) {
@@ -491,94 +620,111 @@ return view.extend({
 		var name = this.input(s.name), url = this.input(s.url, 'password', { autocomplete: 'new-password' });
 		var enabled = this.input('', 'checkbox', { checked: s.enabled || undefined }), interval = this.input(s.intervalHours, 'number', { min: 0, max: 168 });
 		var allowHttp = this.input('', 'checkbox', { checked: s.allowHttp === true || undefined });
-		var actions = original ? [{ label: '删除订阅', style: 'cbi-button-remove', run: function() {
+		var actions = original ? [{ label: '删除订阅', style: 'cbi-button-remove', run: function(next) {
 			if (!window.confirm('删除订阅“' + s.name + '”及所属节点和本地覆盖？')) return false;
-			model.removeSubscription(self.draft, s.id); self.changed();
+			model.removeSubscription(next, s.id);
 		} }] : [];
 		this.modal(original ? '编辑订阅' : '添加订阅', [this.field('名称', name), this.field('订阅地址（敏感）', url), this.field('启用订阅', enabled),
 			this.field('更新间隔（小时）', interval, '0 表示仅手动更新；范围为 1–168 小时。'),
-			E('details', { 'class': 'ar-details' }, [E('summary', {}, ['更多选项']), this.field('允许此订阅使用未加密HTTP', allowHttp, '仅对此来源生效，HTTP 不加密传输。')])], function() {
+			E('details', { 'class': 'ar-details' }, [E('summary', {}, ['更多选项']), this.field('允许此订阅使用未加密HTTP', allowHttp, '仅对此来源生效，HTTP 不加密传输。')])], function(next) {
 			var address = url.value.trim(), https = /^https:\/\/[^\s]+$/i.test(address), http = /^http:\/\/[^\s]+$/i.test(address);
 			if (!name.value.trim() || !(https || (http && allowHttp.checked))) throw new Error('名称必填；默认要求 HTTPS，现有 HTTP 来源须显式勾选此订阅的未加密 HTTP 许可');
 			if (!/^\d+$/.test(interval.value) || Number(interval.value) > 168) throw new Error('更新间隔须为 0–168 的整数');
-			var next = Object.assign({}, s, { id: s.id || model.id('s'), name: name.value.trim(), url: address, enabled: enabled.checked, intervalHours: Number(interval.value), allowHttp: allowHttp.checked });
-			if (original) self.draft.subscriptions[self.draft.subscriptions.indexOf(original)] = next;
-			else self.draft.subscriptions.push(next);
+			var item = Object.assign({}, s, { id: s.id || model.id('s'), name: name.value.trim(), url: address, enabled: enabled.checked, intervalHours: Number(interval.value), allowHttp: allowHttp.checked });
+			if (original) next.subscriptions[next.subscriptions.findIndex(function(item) { return item.id === original.id; })] = item;
+			else next.subscriptions.push(item);
 		}, actions);
 	},
 	updateSubscription: function(s, content) {
-		return this.mutate('refresh', [this.revision, s.id, content || ''], '订阅更新已保存。本地覆盖保留；请应用后核对实际运行选择。');
+		return this.activateMutation('refresh', [this.revision, s.id, content || '', true], '订阅已更新并生效。');
 	},
 	importSubscription: function(s) {
 		var self = this;
 		this.showImport('从本地订阅内容更新', function(content) { return self.updateSubscription(s, content); });
 	},
 	showImport: function(title, commit) {
-		var area = E('textarea', { rows: 10, 'class': 'cbi-input-textarea', autocomplete: 'off', spellcheck: 'false', maxlength: 131072 });
+		var self = this, area = E('textarea', { rows: 10, 'class': 'cbi-input-textarea', autocomplete: 'off', spellcheck: 'false', maxlength: 131072 });
 		var errorBox = E('p', { 'class': 'ar-alert ar-error', hidden: '' });
-		var submit = this.button('导入并保存', '', function() {
+		var cancel = this.button('取消', '', function() { ui.hideModal(); }, { text: true });
+		var submit = this.button('导入', '', function() {
 			if (!area.value.trim()) { errorBox.hidden = false; errorBox.textContent = '请先粘贴导入内容'; return; }
-			submit.disabled = true;
+			submit.disabled = area.disabled = cancel.disabled = true;
 			return Promise.resolve().then(function() { return commit(area.value); }).then(function() { ui.hideModal(); }).catch(function(error) {
 				errorBox.hidden = false; errorBox.textContent = error.message;
-			}).finally(function() { submit.disabled = false; });
+			}).finally(function() { submit.disabled = !!self.uncertain; area.disabled = cancel.disabled = false; });
 		}, { text: true, primary: true });
 		ui.showModal(title, [E('p', {}, ['支持 VMess 链接、Base64 列表及受限 Clash 内容。仅导入节点，失败保留原有数据。']), this.field('订阅或节点内容', area), errorBox,
-			E('div', { 'class': 'right ar-actions' }, [this.button('取消', '×', function() { ui.hideModal(); }, { text: true }),
-				submit])]);
+			E('div', { 'class': 'right ar-actions' }, [cancel, submit])]);
 	},
 
 	outbounds: function(options) {
 		options = options || {};
-		var list = [['direct', '直连']];
+		var list = options.nodesOnly ? [] : [['direct', '直连']];
 		if (options.block) list.push(['block', '阻断']);
 		if (options.groups) this.draft.groups.forEach(function(g) { list.push([g.id, g.name + '（策略组）']); });
-		if (options.follow) list.push(['Proxy', '跟随主策略（' + model.label(this.draft, 'Proxy') + '）']);
+		if (options.follow) list.push(['Proxy', '跟随代理']);
 		var self = this;
 		this.draft.nodes.forEach(function(raw) { var n = model.effectiveNode(self.draft, raw); if (n.enabled && !n.excluded) list.push([n.id, n.name]); });
 		return list;
 	},
 	render_groups: function() {
-		var self = this;
-		var rows = this.draft.groups.map(function(g) {
-			var select = self.select(g.selected, self.outbounds({ follow: g.id !== 'Proxy' }));
-			select.setAttribute('aria-label', g.name + '的出口');
-			select.disabled = self.busy || self.readonly;
-			select.addEventListener('change', function() { g.selected = select.value; self.changed(); });
+		var self = this, presets = this.capabilities.policyPresets || [];
+		var groups = this.draft.groups.filter(function(g) { return g.id !== 'Other' && g.id !== 'Proxy'; });
+		groups.unshift(this.draft.groups.find(function(g) { return g.id === 'Proxy'; }));
+		groups.push(this.draft.groups.find(function(g) { return g.id === 'Other'; }));
+		var rows = groups.filter(Boolean).map(function(g) {
 			var actual = E('small', { 'class': 'ar-muted ar-block', 'data-group-status': g.id }, [self.groupStatus(g)]);
 			self.live.groups[g.id] = actual;
-			var count = self.draft.rules.filter(function(r) { return r.outbound === g.id && r.enabled; }).length, uses = [];
-			if (g.id === 'Proxy') uses.push('主策略');
-			if (self.draft.defaultOutbound === g.id) uses.push('默认出口');
-			if (count) uses.push(count + ' 条规则');
-			return [E('strong', {}, [g.name]), E('div', {}, [select, actual]), uses.join(' · ') || '未使用',
-				self.button('编辑策略组', '✎', function() { self.editGroup(g); })];
+			var preset = presets.find(function(p) { return p.id === g.id; });
+			var count = self.draft.rules.filter(function(r) { return r.outbound === g.id && r.enabled; }).length;
+			var description = preset ? preset.description : count ? count + ' 条自定义规则' : '尚无匹配规则';
+			return [E('strong', { title: description }, [g.name]),
+				E('div', {}, [self.groupSelect(g), actual]), self.button('编辑策略组', '✎', function() { self.editGroup(g); })];
 		});
-		return this.card('策略组', [this.table(['名称', '出口', '用途', '操作'], rows),
-			E('div', { 'class': 'ar-toolbar ar-toolbar-end' }, [this.button('添加策略组', '+', function() { self.editGroup(); }, { text: true, primary: true, disabled: this.draft.groups.length >= 16 })]),
-			E('p', { 'class': 'cbi-section-descr' }, ['组名不会自动匹配网站，请通过分流规则指定用途。'])]);
+		var table = this.table(['策略组', '出口', '操作'], rows); table.setAttribute('class', 'ar-table-scroll ar-group-table');
+		return this.card('策略组', [table,
+			E('div', { 'class': 'ar-toolbar ar-toolbar-end' }, [
+				this.button('添加服务策略', '+', function() { self.addService(); }, { text: true, disabled: this.draft.groups.length >= 16 || !presets.some(function(p) { return p.id !== 'Other' && p.id !== 'Proxy' && !self.draft.groups.some(function(g) { return g.id === p.id; }); }) }),
+				this.button('添加自定义策略', '+', function() { self.editGroup(); }, { text: true, disabled: this.draft.groups.length >= 16 })])]);
 	},
+	addService: function() {
+		var self = this, available = (this.capabilities.policyPresets || []).filter(function(p) { return p.id !== 'Proxy' && p.id !== 'Other' && !self.draft.groups.some(function(g) { return g.id === p.id; }); });
+		if (!available.length) return;
+		var selection = this.select(available[0].id, available.map(function(p) { return [p.id, p.name]; }));
+		this.modal('添加服务策略', [this.field('服务', selection), E('p', { 'class': 'cbi-section-descr' }, ['同时启用对应的内置域名规则。'])], function(next) {
+			var preset = available.find(function(p) { return p.id === selection.value; });
+			if (next.groups.length >= 16 || next.groups.some(function(g) { return g.id === preset.id; })) throw new Error('策略组已存在或数量已满');
+			next.groups.splice(next.groups.findIndex(function(g) { return g.id === 'Other'; }), 0, { id: preset.id, name: preset.name, selected: 'Proxy' });
+		});
+	},
+
 	editGroup: function(original) {
-		var self = this, name = this.input(original ? original.name : ''), selected = this.select(original ? original.selected : 'Proxy', this.outbounds({ follow: !original || original.id !== 'Proxy' }));
+		var self = this, primary = original && original.id === 'Proxy', name = this.input(original ? original.name : ''), choices = this.outbounds({ nodesOnly: primary, follow: !primary, block: original && original.id === 'Other' });
+		if (primary) choices.unshift(['', '请选择节点']);
+		var selected = this.select(original ? original.selected : 'Proxy', choices);
 		var fields = [this.field('名称', name), this.field('出口', selected)];
-		var actions = original && original.id !== 'Proxy' ? [{ label: '删除策略组', run: function() { return self.removeGroup(original); }, style: 'cbi-button-remove' }] : [];
-		this.modal(original ? '编辑策略组' : '添加策略组', fields, function() {
+		var preset = original && (this.capabilities.policyPresets || []).find(function(p) { return p.id === original.id; });
+		if (preset) fields.push(E('p', { 'class': 'cbi-section-descr' }, [preset.description]));
+		var actions = original && original.id !== 'Proxy' && original.id !== 'Other' ? [{ label: '删除策略组', run: function(next) { return self.removeGroup(original, next); }, style: 'cbi-button-remove' }] : [];
+		this.modal(original ? '编辑策略组' : '添加策略组', fields, function(next) {
+			if (primary && !selected.value) throw new Error('请选择代理节点');
 			var value = name.value.trim();
 			if (!value || value.length > 128) throw new Error('名称须为 1–128 个字符');
-			if (original) { original.name = value; original.selected = selected.value; }
+			if (original) { var group = next.groups.find(function(g) { return g.id === original.id; }); group.name = value; group.selected = selected.value; }
 			else {
-				if (self.draft.groups.length >= 16) throw new Error('最多支持 16 个策略组');
-				self.draft.groups.push({ id: model.id('g'), name: value, selected: selected.value });
+				if (next.groups.length >= 16) throw new Error('最多支持 16 个策略组');
+				next.groups.splice(next.groups.findIndex(function(g) { return g.id === 'Other'; }), 0, { id: model.id('g'), name: value, selected: selected.value });
 			}
 		}, actions);
 	},
-	removeGroup: function(group) {
-		if (group.id === 'Proxy') throw new Error('必须保留主策略组');
-		var refs = model.references(this.draft, group.id);
+	removeGroup: function(group, next) {
+		next = next || this.draft;
+		if (group.id === 'Proxy' || group.id === 'Other') throw new Error('必须保留代理和 Other 策略组');
+		var refs = model.references(next, group.id);
 		if (refs.length) throw new Error('请先处理引用：' + refs.join('、'));
 		if (!window.confirm('删除策略组“' + group.name + '”？')) return false;
-		this.draft.groups = this.draft.groups.filter(function(g) { return g.id !== group.id; });
-		this.changed(); return true;
+		next.groups = next.groups.filter(function(g) { return g.id !== group.id; });
+		return true;
 	},
 
 	render_rules: function() {
@@ -587,30 +733,31 @@ return view.extend({
 			return [String(i + 1), r.enabled ? '启用' : '停用', ({ domain: '域名', suffix: '域名后缀', ip: 'IPv4', cidr: 'IPv4 网段' })[r.type] || r.type,
 				r.value, model.label(self.draft, r.outbound), E('div', { 'class': 'ar-actions' }, [
 					self.button('编辑规则', '✎', function() { self.editRule(r); }),
-					self.button('提高优先级', '↑', function() { self.moveRule(i, -1); }, { disabled: i === 0 }),
-					self.button('降低优先级', '↓', function() { self.moveRule(i, 1); }, { disabled: i === self.draft.rules.length - 1 }),
-					self.button('删除规则', '×', function() { if (window.confirm('删除规则“' + r.value + '”？')) { self.draft.rules.splice(i, 1); self.changed(); } })])];
+					self.button('提高优先级', '↑', function() { return self.moveRule(i, -1); }, { disabled: i === 0 }),
+					self.button('降低优先级', '↓', function() { return self.moveRule(i, 1); }, { disabled: i === self.draft.rules.length - 1 }),
+					self.button('删除规则', '×', function() { if (window.confirm('删除规则“' + r.value + '”？')) { return self.changeConfig(function(next) { next.rules.splice(i, 1); }, '规则已删除。'); } })])];
 		});
-		return this.card('分流规则', [this.draft.mode !== 'rule' ? E('p', { 'class': 'alert-message notice' }, ['当前模式不使用分流规则，切换到规则分流并应用后生效。']) : '',
-			E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['按从上到下的顺序匹配，未匹配时使用默认出口。']),
+		return this.card('分流规则', [this.draft.mode !== 'rule' ? E('p', { 'class': 'alert-message notice' }, ['当前模式不使用分流规则，切换到规则分流后生效。']) : '',
+			E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['自定义规则优先，其后匹配服务规则、代理，最后进入 Other。']),
 				this.button('添加规则', '+', function() { self.editRule(); }, { text: true, primary: true })]),
-			rows.length ? this.table(['优先级', '状态', '匹配类型', '匹配值', '出口', '操作'], rows) : this.empty('暂无自定义规则；规则模式使用默认出口。'),
+			rows.length ? this.table(['优先级', '状态', '匹配类型', '匹配值', '出口', '操作'], rows) : this.empty('暂无自定义规则，当前使用内置服务规则和 Other 兜底。'),
 			E('p', { 'class': 'ar-muted' }, ['支持域名、域名后缀和 IPv4 地址/网段。'])]);
 	},
 	moveRule: function(index, delta) {
 		var other = index + delta;
-		if (other < 0 || other >= this.draft.rules.length) return;
-		var moved = this.draft.rules.splice(index, 1)[0]; this.draft.rules.splice(other, 0, moved); this.changed();
+		if (other < 0 || other >= this.draft.rules.length) return Promise.resolve();
+		return this.changeConfig(function(next) { var moved = next.rules.splice(index, 1)[0]; next.rules.splice(other, 0, moved); }, '规则顺序已更新。');
 	},
+
 	editRule: function(original) {
 		var self = this, r = original || { type: 'suffix', value: '', outbound: 'Proxy', enabled: true };
 		var type = this.select(r.type, [['domain', '精确域名'], ['suffix', '域名后缀'], ['ip', 'IPv4 地址'], ['cidr', 'IPv4 CIDR 网段']]);
 		var value = this.input(r.value), outbound = this.select(r.outbound, this.outbounds({ groups: true, block: true })), enabled = this.input('', 'checkbox', { checked: r.enabled || undefined });
-		this.modal(original ? '编辑规则' : '添加规则', [this.field('匹配类型', type), this.field('匹配值', value), this.field('出口', outbound), this.field('启用规则', enabled)], function() {
+		this.modal(original ? '编辑规则' : '添加规则', [this.field('匹配类型', type), this.field('匹配值', value), this.field('出口', outbound), this.field('启用规则', enabled)], function(next) {
 			if (!value.value.trim()) throw new Error('匹配值不能为空');
-			var next = { id: r.id || model.id('r'), type: type.value, value: value.value.trim(), outbound: outbound.value, enabled: enabled.checked };
-			if (original) self.draft.rules[self.draft.rules.indexOf(original)] = next;
-			else self.draft.rules.push(next);
+			var item = { id: r.id || model.id('r'), type: type.value, value: value.value.trim(), outbound: outbound.value, enabled: enabled.checked };
+			if (original) next.rules[next.rules.findIndex(function(item) { return item.id === original.id; })] = item;
+			else next.rules.push(item);
 		});
 	},
 

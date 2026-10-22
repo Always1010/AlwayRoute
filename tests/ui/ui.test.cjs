@@ -19,12 +19,12 @@ function loadModule(source, names = [], values = []) {
 }
 const loadModel = () => loadModule(read('alwayroute/model.js'));
 const model = loadModel();
-const empty = () => ({ schema: 1, revision: 0, mode: 'rule', defaultOutbound: 'Proxy', nodes: [], subscriptions: [], overrides: {},
-  groups: [{ id: 'Proxy', name: '代理', selected: 'direct' }, { id: 'OpenAI', name: 'OpenAI', selected: 'Proxy' }], rules: [] });
+const empty = () => ({ schema: 1, policyVersion: 1, revision: 0, mode: 'rule', defaultOutbound: 'Other', nodes: [], subscriptions: [], overrides: {},
+  groups: [{ id: 'Proxy', name: '代理', selected: 'direct' }, { id: 'OpenAI', name: 'OpenAI', selected: 'Proxy' }, { id: 'Other', name: 'Other', selected: 'direct' }], rules: [] });
 const node = (id = 'n1', source = null) => ({ id, source, name: '节点', type: 'vmess', enabled: true, server: 'example.test', port: 443,
   uuid: '00000000-0000-4000-8000-000000000000', security: 'auto', alterId: 0 });
 
-function harness(call) {
+function harness(call, writable = true) {
   // Minimal DOM surface exercises rendering without requiring npm/browser installs.
   class Element {
     constructor(tag, attrs = {}, children = []) {
@@ -44,11 +44,11 @@ function harness(call) {
   }
   const E = (tag, attrs, children) => new Element(tag, attrs || {}, Array.isArray(children) ? children : children ? [children] : []);
   const document = { hidden: false, body: E('body') };
-  const window = { confirm: () => true, addEventListener() {}, removeEventListener() {}, setTimeout };
+  const window = { confirm: () => true, addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout };
   const poll = { add() {}, remove() {} };
   const ui = { showModal(title, children) { ui.modal = { title, children }; }, hideModal() { ui.modal = null; } };
   const view = loadModule(read('view/alwayroute/app.js'), ['view', 'ui', 'poll', 'api', 'model', 'E', 'L', 'window', 'document'],
-    [BaseClass, ui, poll, { call }, model, E, { resource: x => x, hasViewPermission: () => true }, window, document]);
+    [BaseClass, ui, poll, { call }, model, E, { resource: x => x, hasViewPermission: () => writable }, window, document]);
   view.draft = empty(); view.state = { savedRevision: 0, appliedRevision: null, healthy: 'unverified' };
   view.revision = 0; view.capabilities = {}; view.checks = {}; view.logs = []; view.tab = 'overview'; view.root = E('div');
   return { view, document, ui, window };
@@ -129,53 +129,94 @@ test('all tabs render authenticated data; observed selector is independent from 
   view.runtime = { service: { running: true }, core: { available: true, groups: { Proxy: { now: 'direct' } } }, forwarding: { scope: 'unverified' } };
   view.paint();
   assert.match(text(view.root), /核心当前选择：直连/); assert.doesNotMatch(text(view.root), /最近事件|配置导出/);
-  assert.match(text(view.root), /未验证/); assert.doesNotMatch(text(view.root), /\[object Object\]/);
+  assert.doesNotMatch(text(view.root), /\[object Object\]/);
   for (const tab of ['nodes', 'subscriptions', 'logs', 'settings']) { view.tab = tab; view.paint(); assert.ok(view.root.children.length); }
 });
 
-test('save persists draft without apply; select saves without claiming actual activation', async () => {
-  const calls = [];
+test('selector changes submit one transaction and keep confirmed choice until runtime acknowledgement', async () => {
+  let finish, candidate;
+  const calls = [], base = empty(); base.nodes = [node('n1'), node('n2')]; base.groups[0].selected = 'n1';
   const { view } = harness(async (method, args) => {
-    calls.push([method, args]); return { ok: true, model: Object.assign(empty(), { revision: 1 }), state: { savedRevision: 1, appliedRevision: 0, healthy: 'unverified' } };
+    calls.push(method);
+    if (method === 'configure') { candidate = model.clone(args[1]); candidate.revision = 1; return new Promise(resolve => { finish = resolve; }); }
+    return { state: { savedRevision: 1, appliedRevision: 1 }, service: { running: true }, core: { available: true, groups: Object.fromEntries(candidate.groups.map(g => [g.id, { now: g.selected }])) } };
   });
-  view.dirty = true; await view.save();
-  assert.deepEqual(calls.map(c => c[0]), ['save']); assert.equal(view.dirty, false); assert.equal(view.state.appliedRevision, 0);
-  await view.chooseNode('Proxy', 'direct'); assert.deepEqual(calls.map(c => c[0]), ['save', 'select']); assert.match(view.message.text, /请应用/);
-  view.dirty = true; assert.throws(() => view.apply(), /请先保存/);
+  view.draft = base; view.runtime = { service: { running: true } };
+  const operation = view.chooseNode('Proxy', 'n2');
+  assert.equal(view.busy, true); assert.equal(view.draft.groups[0].selected, 'n1');
+  assert.equal(view.pendingModel.groups[0].selected, 'n2');
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '保存'), null);
+  finish({ model: candidate, state: { savedRevision: 1, appliedRevision: 1 } }); await operation;
+  assert.deepEqual(calls, ['configure', 'status']);
+  assert.equal(view.draft.groups[0].selected, 'n2'); assert.equal(view.actualChoice('Proxy'), 'n2');
+  assert.equal(view.busy, false);
 });
 
-test('save and apply uses the returned revision and a failed save never applies', async () => {
-  const calls = [];
+test('failed configure preserves previous model and failed runtime confirmation requires reconciliation', async () => {
+  const base = empty(); base.nodes = [node('n1'), node('n2')]; base.groups[0].selected = 'n1';
+  let fail = true, mismatch = false, saved = model.clone(base);
   const { view } = harness(async (method, args) => {
-    calls.push([method, args]);
-    if (method === 'status') return { state: { savedRevision: 1, appliedRevision: 1 }, core: { available: true, groups: {} } };
-    if (method === 'traffic') return { available: false };
-    return { model: Object.assign(empty(), { revision: 1 }), state: { savedRevision: 1, appliedRevision: method === 'apply' ? 1 : 0 } };
+    if (method === 'configure') {
+      if (fail) { const error = new Error('核心校验失败'); error.code = 'CORE_CHECK_FAILED'; throw error; }
+      saved = model.clone(args[1]); saved.revision++;
+      return { model: saved, state: { savedRevision: 1, appliedRevision: 1 } };
+    }
+    if (method === 'get') return { model: saved, state: { savedRevision: saved.revision, appliedRevision: saved.revision } };
+    if (method === 'job_status') return { busy: false, job: null };
+    return { state: { savedRevision: saved.revision, appliedRevision: saved.revision }, service: { running: true }, core: { available: true, groups: Object.fromEntries(saved.groups.map(g => [g.id, { now: mismatch && g.id === 'Proxy' ? 'n1' : g.selected }])) } };
   });
-  view.dirty = true; await view.saveApply();
-  assert.deepEqual(calls.map(c => c[0]), ['save', 'apply', 'status', 'traffic']);
-  assert.deepEqual(calls[1][1], [1]);
-  const failed = [];
-  const other = harness(async method => { failed.push(method); throw new Error('保存失败'); }).view;
-  other.dirty = true; await assert.rejects(other.saveApply(), /保存失败/);
-  assert.deepEqual(failed, ['save']); assert.equal(other.dirty, true);
+  view.draft = base; view.runtime = { service: { running: true } };
+  await assert.rejects(view.chooseNode('Proxy', 'n2'), /核心校验失败/);
+  assert.equal(view.draft.groups[0].selected, 'n1'); assert.equal(view.revision, 0);
+  fail = false; mismatch = true;
+  await assert.rejects(view.chooseNode('Proxy', 'n2'), /尚未确认/);
+  assert.equal(view.uncertain, true); assert.equal(view.draft.groups[0].selected, 'n1');
+  await assert.rejects(view.changeMode('global'), /重新检查/);
+  mismatch = false; await view.reconcile();
+  assert.equal(view.uncertain, false); assert.equal(view.draft.groups[0].selected, 'n2');
+});
+
+test('service toggle waits for actual response and uses one action button', async () => {
+  let finish, running = true;
+  const { view } = harness(async method => {
+    if (method === 'service') return new Promise(resolve => { finish = resolve; });
+    return { state: { savedRevision: 0, appliedRevision: null }, service: { running }, core: { available: running, groups: {} } };
+  });
+  view.runtime = { service: { running: true } }; view.paint();
+  assert.ok(find(view.root, n => n.attrs['aria-label'] === '停止'));
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '启动'), null);
+  const operation = view.toggleService();
+  assert.equal(view.serviceRunning(), true); assert.equal(view.busy, true);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '停止中…').disabled, true);
+  running = false; finish({ state: { savedRevision: 0, appliedRevision: null } }); await operation;
+  assert.equal(view.serviceRunning(), false); assert.ok(find(view.root, n => n.attrs['aria-label'] === '启动'));
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '停止'), null);
+});
+
+test('request timeout leaves the previous model and blocks mutations until state is checked', async () => {
+  const { view, window } = harness(async method => method === 'configure' ? new Promise(() => {}) : {});
+  view.draft.nodes.push(node()); view.draft.groups[0].selected = 'n1';
+  window.setTimeout = fn => { queueMicrotask(fn); return 0; };
+  await assert.rejects(view.changeMode('global'), /超时/);
+  assert.equal(view.busy, false); assert.equal(view.uncertain, true); assert.equal(view.draft.mode, 'rule');
+  await assert.rejects(view.changeMode('direct'), /重新检查/);
 });
 
 test('custom groups preserve references on rename and block deleting primary or referenced groups', () => {
   const { view } = harness(async () => { throw new Error('Editing must not call RPC'); });
   let fields, commit;
   view.modal = (_title, f, c) => { fields = f; commit = c; };
-  view.editGroup(); fieldInput(fields, '名称').value = '工作'; commit();
-  const group = view.draft.groups.at(-1), id = group.id;
+  view.editGroup(); fieldInput(fields, '名称').value = '工作'; commit(view.draft);
+  const group = view.draft.groups.find(g => g.name === '工作'), id = group.id;
   assert.equal(group.selected, 'Proxy');
   view.draft.rules.push({ id: 'r1', type: 'suffix', value: 'example.com', enabled: true, outbound: id });
-  view.editGroup(group); fieldInput(fields, '名称').value = '工作网站'; commit();
+  view.editGroup(group); fieldInput(fields, '名称').value = '工作网站'; commit(view.draft);
   assert.equal(group.id, id); assert.equal(view.draft.rules[0].outbound, id);
   assert.throws(() => view.removeGroup(group), /引用/);
   assert.throws(() => view.removeGroup(view.draft.groups[0]), /必须保留/);
   view.draft.rules = []; view.draft.defaultOutbound = id;
   assert.throws(() => view.removeGroup(group), /默认出口/);
-  view.draft.defaultOutbound = 'Proxy'; view.removeGroup(group);
+  view.draft.defaultOutbound = 'Other'; view.removeGroup(group);
   assert.equal(view.draft.groups.some(g => g.id === id), false);
 });
 
@@ -186,19 +227,19 @@ test('runtime refresh preserves strategy controls and never promotes draft choic
   const control = find(view.root, n => n.attrs['aria-label'] === '代理的出口');
   await view.refreshRuntime();
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口'), control);
-  control.value = 'n1'; control.events.change();
-  assert.equal(view.dirty, true); assert.equal(view.actualChoice('Proxy'), 'direct');
+  view.draft.groups[0].selected = 'n1';
+  assert.equal(view.dirty, undefined); assert.equal(view.actualChoice('Proxy'), 'direct');
   assert.equal(view.groupStatus(view.draft.groups[0]), '核心当前选择：直连');
   await view.refreshRuntime(); assert.equal(view.draft.groups[0].selected, 'n1');
   actual = 'n1'; await view.refreshRuntime();
-  assert.equal(view.groupStatus(view.draft.groups[0]), '核心选择一致');
+  assert.equal(view.groupStatus(view.draft.groups[0]), '');
   lastError = { message: '转发失败' }; await view.refreshRuntime();
   assert.equal(view.live.lastError.hidden, false); assert.match(view.live.lastError.textContent, /转发失败/);
   lastError = null; await view.refreshRuntime(); assert.equal(view.live.lastError.hidden, true);
   view.runtime.core = { available: false, groups: {} };
   assert.equal(view.groupStatus(view.draft.groups[0]), '实际出口未获取');
   view.runtime.service.running = false;
-  assert.equal(view.groupStatus(view.draft.groups[0]), '服务已停止');
+  assert.equal(view.groupStatus(view.draft.groups[0]), '');
 });
 
 test('log polling is independent from pending status requests and page content stays separate', async () => {
@@ -222,15 +263,24 @@ test('log polling is independent from pending status requests and page content s
   assert.match(text(view.root), /导出完整配置/); assert.doesNotMatch(text(view.root), /最近 20 条/);
 });
 
-test('revision conflict retains the local draft and exposes error; concurrent mutation is rejected', async () => {
+test('revision conflict preserves confirmed choice and concurrent operations are rejected', async () => {
   let finish;
-  const { view } = harness(() => new Promise(resolve => { finish = resolve; }));
-  view.draft.mode = 'global'; view.dirty = true;
-  const first = view.save(); await assert.rejects(view.mutate('apply', [0]), /另一项操作/);
-  finish({ ok: true, model: view.draft, state: view.state }); await first;
-  const other = harness(async () => { const e = new Error('冲突'); e.code = 'REVISION_CONFLICT'; throw e; }).view;
-  other.draft.mode = 'global'; other.dirty = true;
-  await assert.rejects(other.save(), /冲突/); assert.equal(other.draft.mode, 'global'); assert.equal(other.dirty, true); assert.equal(other.conflict, true);
+  const { view } = harness(async method => {
+    if (method === 'configure') return new Promise(resolve => { finish = resolve; });
+    return { state: { savedRevision: 0, appliedRevision: 0 }, service: { running: false }, core: { available: false, groups: {} } };
+  });
+  view.runtime = { service: { running: false } };
+  view.draft.nodes.push(node()); view.draft.groups[0].selected = 'n1';
+  const first = view.changeMode('global'); await assert.rejects(view.mutate('configure', []), /另一项操作/);
+  finish({ model: Object.assign(empty(), { mode: 'global', revision: 1 }), state: { savedRevision: 1, appliedRevision: null } }); await first;
+  assert.equal(view.draft.mode, 'global');
+  const other = harness(async method => {
+    if (method === 'status') return { state: { savedRevision: 1 }, service: { running: false } };
+    const error = new Error('冲突'); error.code = 'REVISION_CONFLICT'; throw error;
+  }).view;
+  other.draft.nodes.push(node()); other.draft.groups[0].selected = 'n1';
+  await assert.rejects(other.changeMode('global'), /冲突/);
+  assert.equal(other.draft.mode, 'rule'); assert.equal(other.conflict, true);
 });
 
 test('polling pauses on hidden/non-overview pages and stale responses cannot overwrite a mutation', async () => {
@@ -254,7 +304,7 @@ test('new node editor omits empty optional TLS and websocket fields', () => {
   const input = label => fieldInput(fields, label);
   input('名称').value = '测试'; input('服务器').value = 'example.test'; input('UUID（敏感）').value = node().uuid;
   input('VMess 加密').value = 'auto'; input('VMess alterId').value = '0'; input('传输').value = 'ws';
-  commit(); const n = view.draft.nodes[0];
+  commit(view.draft); const n = view.draft.nodes[0];
   assert.equal(n.tls.serverName, undefined); assert.equal(n.transport.host, undefined); assert.equal(n.transport.path, '/');
 });
 
@@ -266,12 +316,12 @@ test('HTTP subscription permission defaults off and is scoped to the explicitly 
   view.editSubscription();
   assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
   input('名称').value = '现有 HTTP 来源'; input('订阅地址（敏感）').value = 'http://example.invalid/redacted';
-  assert.throws(() => commit(), /显式勾选/); assert.equal(view.draft.subscriptions.length, 0);
-  input('允许此订阅使用未加密HTTP').checked = true; commit();
+  assert.throws(() => commit(view.draft), /显式勾选/); assert.equal(view.draft.subscriptions.length, 0);
+  input('允许此订阅使用未加密HTTP').checked = true; commit(view.draft);
   assert.equal(view.draft.subscriptions[0].allowHttp, true);
   view.editSubscription();
   assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
-  input('名称').value = '正常 HTTPS 来源'; input('订阅地址（敏感）').value = 'https://example.invalid/redacted'; commit();
+  input('名称').value = '正常 HTTPS 来源'; input('订阅地址（敏感）').value = 'https://example.invalid/redacted'; commit(view.draft);
   assert.equal(view.draft.subscriptions[1].allowHttp, false);
 });
 
@@ -284,8 +334,8 @@ test('editing a subscription preserves explicit HTTP permission and allows revok
   const input = label => fieldInput(fields, label);
   view.editSubscription(original); assert.equal(input('允许此订阅使用未加密HTTP').checked, true);
   input('允许此订阅使用未加密HTTP').checked = false;
-  assert.throws(() => commit(), /HTTPS/); assert.equal(original.allowHttp, true);
-  input('订阅地址（敏感）').value = 'https://example.invalid/redacted'; commit();
+  assert.throws(() => commit(view.draft), /HTTPS/); assert.equal(original.allowHttp, true);
+  input('订阅地址（敏感）').value = 'https://example.invalid/redacted'; commit(view.draft);
   assert.equal(view.draft.subscriptions[0].allowHttp, false);
   assert.equal(view.draft.subscriptions[0].id, original.id);
   const legacy = { id: 'legacy', name: '旧 HTTPS', url: 'https://example.invalid/redacted', enabled: true, intervalHours: 0 };
@@ -293,10 +343,16 @@ test('editing a subscription preserves explicit HTTP permission and allows revok
   assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
 });
 
-test('readonly view disables write buttons while keeping reload available', () => {
-  const { view } = harness(async () => ({})); view.readonly = true; view.dirty = true; view.paint();
-  assert.equal(find(view.root, n => n.attrs['aria-label'] === '保存').disabled, true);
+test('non-rule modes hide group/rule controls and only global mode has a proxy node selector', () => {
+  const { view } = harness(async () => ({})); view.runtime = { service: { running: true } };
+  view.draft.mode = 'global'; view.paint();
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '重新读取').disabled, false);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '添加自定义策略'), null);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理策略设置'), null);
+  assert.ok(find(view.root, n => n.attrs['aria-label'] === '代理的出口'));
+  view.draft.mode = 'direct'; view.paint();
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口'), null);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '停止').disabled, false);
 });
 
 test('asynchronous job stays busy until success and reloads persisted data; check result is preserved', async () => {
@@ -308,7 +364,7 @@ test('asynchronous job stays busy until success and reloads persisted data; chec
       job: { id: 'j1', method: 'check', status: polls === 1 ? 'running' : 'succeeded', result: { nodeId: 'n1', available: true, delay: 42, healthy: 'passed', checkedRevision: 0 } } };
     return { ok: true, model: empty(), state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified' } };
   });
-  window.setTimeout = fn => { fn(); };
+  window.setTimeout = (fn, ms) => ms === 1000 ? queueMicrotask(fn) : setTimeout(fn, ms);
   view.state.appliedRevision = 0;
   const task = view.checkNode('n1'); assert.equal(view.busy, true); assert.match(view.configurationLabel(), /正在检查节点/);
   await task;
@@ -336,7 +392,7 @@ test('unapplied configuration blocks node checks and applying a new revision rem
   const { view } = harness(async () => { throw new Error('RPC should not run'); });
   view.state = { savedRevision: 2, appliedRevision: 1, healthy: 'unverified' };
   view.checks = { n1: { checkedRevision: 1, healthy: 'passed', delay: 42 } };
-  assert.throws(() => view.checkNode('n1'), /先保存并应用/);
+  assert.throws(() => view.checkNode('n1'), /先启动服务/);
   view.accept({ state: { savedRevision: 2, appliedRevision: 2, healthy: 'unverified' } });
   assert.deepEqual(view.checks, {}); assert.equal(view.state.healthy, 'unverified');
 });
@@ -348,11 +404,86 @@ test('explicit reload clears cached node checks while preserving separate global
   assert.deepEqual(view.checks, {}); assert.equal(view.state.healthy, 'unverified');
 });
 
-test('failed background job reports error without silently replacing the draft', async () => {
-  const { view, window } = harness(async method => method === 'apply' ? { ok: true, job: { id: 'j2', method, status: 'running' } } :
+test('failed asynchronous configure never replaces confirmed model or actual selector', async () => {
+  const { view, window } = harness(async method => method === 'configure' ? { ok: true, job: { id: 'j2', method, status: 'running' } } : method === 'status' ? { state: { savedRevision: 0, appliedRevision: 0 }, service: { running: true }, core: { available: true, groups: { Proxy: { now: 'direct' } } } } :
     { ok: true, busy: false, job: { id: 'j2', status: 'failed', error: { code: 'CORE_CHECK_FAILED', message: '核心校验失败' } } });
-  window.setTimeout = fn => { fn(); };
-  view.draft.mode = 'global';
-  await assert.rejects(view.apply(), /核心校验失败/);
-  assert.equal(view.busy, false); assert.equal(view.draft.mode, 'global'); assert.match(view.message.text, /CORE_CHECK_FAILED/);
+  window.setTimeout = (fn, ms) => ms === 1000 ? queueMicrotask(fn) : setTimeout(fn, ms);
+  view.runtime = { service: { running: true } };
+  view.draft.nodes.push(node()); view.draft.groups[0].selected = 'n1';
+  await assert.rejects(view.changeMode('global'), /核心校验失败/);
+  assert.equal(view.busy, false); assert.equal(view.draft.mode, 'rule'); assert.match(view.message.text, /CORE_CHECK_FAILED/);
+});
+
+test('readonly load and refresh use status without requesting credential-bearing configuration', async () => {
+  const calls = [];
+  const { view } = harness(async method => {
+    calls.push(method);
+    if (method === 'status') return { state: { savedRevision: calls.length, appliedRevision: 0 }, service: { running: false } };
+    if (method === 'capabilities') return {};
+    if (method === 'traffic') return { available: false };
+    throw new Error('read-only role cannot call ' + method);
+  }, false);
+  view.render(await view.load());
+  assert.deepEqual(calls, ['status', 'capabilities']);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '运行模式'), null);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '启动'), null);
+  assert.doesNotMatch(text(view.root), /备份与恢复|订阅|策略组/);
+  await view.reload();
+  assert.equal(!!view.conflict, false); assert.equal(calls.includes('get'), false);
+  await assert.rejects(view.mutate('configure', []), /读取权限/);
+});
+
+test('stopped edits reject unexpected startup for configure and activated imports', async () => {
+  for (const importing of [false, true]) {
+    const saved = empty(); saved.revision = 1;
+    const { view } = harness(async method => method === 'status' ? { state: { savedRevision: 1, appliedRevision: 1 }, service: { running: true }, core: { groups: Object.fromEntries(saved.groups.map(g => [g.id, { now: g.selected }])) } } : { model: saved });
+    view.runtime = { service: { running: false } };
+    await assert.rejects(importing ? view.activateMutation('import', [0, 'content', true], '成功') : view.configureModel(saved), /尚未确认/);
+    assert.equal(view.uncertain, true); assert.equal(view.revision, 0);
+  }
+});
+
+test('reconciliation invalidates overview polls that started before state verification', async () => {
+  let resolveOld, requests = 0;
+  const saved = empty(); saved.revision = 2;
+  const { view } = harness(async method => {
+    if (method === 'status' && ++requests === 1) return new Promise(resolve => { resolveOld = resolve; });
+    if (method === 'status') return { state: { savedRevision: 2, appliedRevision: null }, service: { running: false } };
+    if (method === 'get') return { model: saved, state: { savedRevision: 2, appliedRevision: null } };
+    return { busy: false, available: false };
+  });
+  const old = view.refreshRuntime(); view.uncertain = true; await view.reconcile();
+  resolveOld({ state: { savedRevision: 0 }, service: { running: true } }); await old;
+  assert.equal(view.serviceRunning(), false); assert.equal(view.revision, 2); assert.equal(view.conflict, false);
+});
+
+test('unconfigured proxy modes request a node in the same transaction and never offer direct as a proxy node', async () => {
+  const { view } = harness(async () => { throw new Error('opening the node picker must not write'); });
+  view.runtime = { service: { running: false } }; view.draft.mode = 'direct';
+  await assert.rejects(view.changeMode('global'), /添加可用节点/);
+  view.draft.nodes.push(node()); let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  for (const mode of ['global', 'rule']) {
+    await view.changeMode(mode); assert.equal(view.draft.mode, 'direct');
+    assert.throws(() => commit(model.clone(view.draft)), /请选择代理节点/);
+    fieldInput(fields, '代理节点').value = 'n1';
+    const candidate = model.clone(view.draft); commit(candidate);
+    assert.equal(candidate.mode, mode); assert.equal(candidate.groups[0].selected, 'n1');
+  }
+  view.draft.mode = 'rule'; view.paint();
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '启动').disabled, true);
+  const selector = view.groupSelect(view.draft.groups[0]);
+  assert.equal(find(selector, n => n.tag === 'option' && n.attrs.value === 'direct'), null);
+});
+
+test('empty import stays open and failed import releases fields while preserving input', async () => {
+  const { view, ui } = harness(async () => ({})); let calls = 0;
+  view.showImport('导入', async () => { calls++; throw new Error('解析失败'); });
+  const submit = find({ children: ui.modal.children }, n => n.tag === 'button' && n.attrs['aria-label'] === '导入');
+  const area = find({ children: ui.modal.children }, n => n.tag === 'textarea');
+  submit.events.click({ preventDefault() {} }); await new Promise(setImmediate);
+  assert.equal(calls, 0); assert.ok(ui.modal);
+  area.value = 'invalid content'; submit.events.click({ preventDefault() {} }); await new Promise(setImmediate);
+  assert.equal(calls, 1); assert.equal(area.value, 'invalid content'); assert.equal(area.disabled, false); assert.equal(submit.disabled, false);
+  assert.match(find({ children: ui.modal.children }, n => n.attrs && n.attrs.class === 'ar-alert ar-error').textContent, /解析失败/);
 });

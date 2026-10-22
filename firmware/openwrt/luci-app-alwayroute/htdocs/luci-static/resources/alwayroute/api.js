@@ -3,8 +3,8 @@
 'require rpc';
 
 var definitions = {
-	capabilities: [], get: [], save: ['expectedRevision', 'model'], import: ['expectedRevision', 'content'],
-	refresh: ['expectedRevision', 'subscriptionId', 'content'],
+	capabilities: [], get: [], save: ['expectedRevision', 'model'], configure: ['expectedRevision', 'model'], import: ['expectedRevision', 'content', 'activate'],
+	refresh: ['expectedRevision', 'subscriptionId', 'content', 'activate'],
 	apply: ['expectedRevision'], select: ['expectedRevision', 'group', 'nodeId'],
 	rollback: ['expectedRevision'], service: ['action'], status: [], traffic: [],
 	export: ['includeSecrets'], job_status: [], check: ['nodeId'], logs: ['limit']

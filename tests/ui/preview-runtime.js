@@ -66,12 +66,12 @@
   }
   function report(error) { errors.textContent += String(error && error.stack || error) + '\n'; }
   function fixture() {
-    saved = { schema: 1, revision: 4, mode: 'rule', defaultOutbound: 'Proxy', nodes: [
+    saved = { schema: 1, policyVersion: 1, revision: 4, mode: 'rule', defaultOutbound: 'Other', nodes: [
       { id: 'manual_demo', name: '东京 · 手动 VMess', type: 'vmess', enabled: true, source: null, server: 'tokyo.example.invalid', port: 443, uuid: '00000000-0000-4000-8000-000000000000', security: 'auto', alterId: 0, tls: { enabled: true, serverName: 'example.invalid' } },
       { id: 's_demo_sample', name: '订阅 · VMess WebSocket', type: 'vmess', enabled: true, source: 'demo', sourceKey: 'sample', server: 'subscription.example.invalid', port: 443, uuid: '00000000-0000-4000-8000-000000000001', security: 'auto', alterId: 0, tls: { enabled: true }, transport: { type: 'ws', path: '/demo' } }
     ], subscriptions: [{ id: 'demo', name: '脱敏订阅样例', url: 'https://subscription.example.invalid/redacted', enabled: true, intervalHours: 24, lastUpdate: Math.floor(Date.now() / 1000) - 3600 }],
       overrides: { s_demo_sample: { name: '香港 · 订阅本地名称' } },
-      groups: [{ id: 'Proxy', name: '代理', selected: 'manual_demo' }, { id: 'OpenAI', name: 'OpenAI', selected: 'Proxy' }, { id: 'Netflix', name: 'Netflix', selected: 'Proxy' }, { id: 'Disney', name: 'Disney+', selected: 'direct' }],
+      groups: window.PREVIEW_POLICIES.filter(function(p) { return p.default; }).map(function(p) { return { id: p.id, name: p.name, selected: p.id === 'Proxy' ? 'manual_demo' : p.id === 'Other' ? 'direct' : 'Proxy' }; }),
       rules: [{ id: 'demo_rule1', enabled: true, type: 'suffix', value: 'example.com', outbound: 'Proxy' }, { id: 'demo_rule2', enabled: true, type: 'cidr', value: '192.0.2.0/24', outbound: 'direct' }, { id: 'demo_rule3', enabled: false, type: 'domain', value: 'blocked.example.invalid', outbound: 'block' }] };
     state = { savedRevision: 4, appliedRevision: 4, healthy: 'unverified' };
     observed = clone(saved.groups); serviceRunning = true; job = null; calls.length = 0; checks = {};
@@ -88,18 +88,20 @@
     if (!job || job.status !== 'running' || Date.now() < job.doneAt) return;
     if (scenario === 'job-failed') { job.status = 'failed'; job.error = { code: 'PREVIEW_JOB_FAILED', message: '测试场景：后台任务失败，未模拟成功。' }; return; }
     if (job.method === 'check') { job.result = { ok: true, nodeId: job.args.nodeId, available: true, delay: 42, healthy: 'passed', checkedRevision: state.appliedRevision }; checks[job.args.nodeId] = clone(job.result); }
+    if (job.method === 'configure') { saved = clone(job.args.model); saved.revision++; state.savedRevision = saved.revision; if (serviceRunning) { state.appliedRevision = saved.revision; observed = clone(saved.groups); } }
     if (job.method === 'apply' || job.method === 'rollback') { state.appliedRevision = saved.revision; observed = clone(saved.groups); state.healthy = 'unverified'; }
-    if (job.method === 'refresh') { saved.subscriptions.find(function(s) { return s.id === job.args.subscriptionId; }).lastUpdate = Math.floor(Date.now() / 1000); saved.revision++; state.savedRevision = saved.revision; }
-    if (job.method === 'service') serviceRunning = job.args.action === 'start';
+    if (job.method === 'refresh') { saved.subscriptions.find(function(s) { return s.id === job.args.subscriptionId; }).lastUpdate = Math.floor(Date.now() / 1000); saved.revision++; state.savedRevision = saved.revision; if (job.args.activate && serviceRunning) { state.appliedRevision = saved.revision; observed = clone(saved.groups); } }
+    if (job.method === 'import') { saved.revision++; state.savedRevision = saved.revision; if (job.args.activate && serviceRunning) { state.appliedRevision = saved.revision; observed = clone(saved.groups); } }
+    if (job.method === 'service') { serviceRunning = job.args.action === 'start'; state.appliedRevision = serviceRunning ? saved.revision : null; if (serviceRunning) observed = clone(saved.groups); }
     job.status = 'succeeded'; job.state = clone(state);
     events.push({ time: '预览样例', level: 'info', message: '模拟任务完成：' + job.method });
   }
   function dispatch(method, args) {
     calls.push({ method: method, argumentNames: Object.keys(args) }); if (calls.length > 100) calls.shift();
     if (method === 'job_status') { finishJob(); return { ok: true, busy: !!job && job.status === 'running', job: job ? clone(job) : null }; }
-    if (method === 'capabilities') return { ok: true, schema: 1, protocols: ['vmess'], subscriptionFormats: ['vmess-uri', 'base64-vmess-list', 'clash-json', 'clash-yaml-block-subset'], forwarding: 'unverified' };
+    if (method === 'capabilities') return { ok: true, schema: 1, protocols: ['vmess'], subscriptionFormats: ['vmess-uri', 'base64-vmess-list', 'clash-json', 'clash-yaml-block-subset'], forwarding: 'unverified', policyPresets: clone(window.PREVIEW_POLICIES) };
     if (method === 'get') return result();
-    if (method === 'status') return { ok: true, state: clone(state), checks: clone(checks), service: { running: serviceRunning }, core: { available: scenario !== 'unavailable', groups: scenario === 'unavailable' ? {} : Object.fromEntries(observed.map(function(g) { return [g.id, { now: g.selected }]; })) }, forwarding: { scope: 'preview-only', available: false, dns: 'unverified', udp: 'unverified', ipv6: 'unverified' } };
+    if (method === 'status') return { ok: true, state: clone(state), checks: clone(checks), service: { running: serviceRunning }, core: { available: serviceRunning && scenario !== 'unavailable', groups: !serviceRunning || scenario === 'unavailable' ? {} : Object.fromEntries(observed.map(function(g) { return [g.id, { now: g.id === 'Other' && g.selected === 'block' ? 'direct' : g.selected }]; })) }, forwarding: { scope: 'preview-only', available: false, dns: 'unverified', udp: 'unverified', ipv6: 'unverified' } };
     if (method === 'traffic') return scenario === 'unavailable' ? { ok: true, available: false, upload: null, download: null, reason: '测试场景：核心流量不可用' } : { ok: true, available: true, upload: 18432, download: 345678, unit: 'bytes/s', reason: '脱敏模拟数据，仅用于本地预览' };
     if (method === 'logs') return { ok: true, entries: clone(events.slice(-20)) };
     if (method === 'export') { var m = clone(saved); if (!args.includeSecrets) { m.nodes.forEach(function(n) { n.uuid = '[redacted]'; }); m.subscriptions.forEach(function(s) { s.url = 'https://redacted.invalid/'; }); } return { ok: true, model: m, redacted: !args.includeSecrets }; }
@@ -108,9 +110,9 @@
     if (args.expectedRevision != null && args.expectedRevision !== saved.revision) return fail('REVISION_CONFLICT', '测试版本冲突');
     if (method === 'save') return persist(args.model);
     if (method === 'select') { var next = clone(saved); next.groups.find(function(g) { return g.id === args.group; }).selected = args.nodeId; return persist(next); }
-    if (method === 'import') { if (!args.content.trim()) return fail('INVALID_INPUT', '测试输入不能为空'); return persist(saved); }
-    if (['apply', 'refresh', 'rollback', 'check'].includes(method) || method === 'service' && args.action === 'start') return startJob(method, args);
-    if (method === 'service' && args.action === 'stop') { serviceRunning = false; return { ok: true, state: clone(state) }; }
+    if (method === 'import' && !args.activate) { if (!args.content.trim()) return fail('INVALID_INPUT', '测试输入不能为空'); return persist(saved); }
+    if (['configure', 'apply', 'refresh', 'rollback', 'check', 'service'].includes(method) || method === 'import' && args.activate) return startJob(method, args);
+
     return fail('UNSUPPORTED', '预览未实现此模拟操作');
   }
   var rpc = { declare: function(spec) { return function() {
