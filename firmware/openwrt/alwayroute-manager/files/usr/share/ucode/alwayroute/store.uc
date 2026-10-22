@@ -35,8 +35,19 @@ function restoreMetadata(pending,good,service) {
 function state() {let m=model(),runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null};}
 function jobStatus() {
  let job=read(TMP+'/job.json',null);
- if(job?.status=='running' && ((time()-job.started>120) || (time()-job.started>10 && (!job.pid || !fs.access('/proc/'+job.pid))))) {
-  job.status='failed';job.error={code:'JOB_INTERRUPTED',message:'后台事务中断；请检查状态，启动服务会从上一份可用配置恢复'};write(TMP+'/job.json',job);
+ if(job?.status=='running' && (job.pid?!fs.access('/proc/'+job.pid):time()-job.started>10)) {
+  // Recheck under the worker claim lock; the snapshot may precede PID registration.
+  let lock=fs.open(TMP+'/manager.lock','ae',0600);
+  if(lock && lock.lock('xn')) {
+   try {
+    job=read(TMP+'/job.json',null);
+    if(job?.status=='running' && (job.pid?!fs.access('/proc/'+job.pid):time()-job.started>10)) {
+     let failed=clone(job);failed.status='failed';failed.error={code:'JOB_INTERRUPTED',message:'后台事务中断；请检查状态，启动服务会从上一份可用配置恢复'};
+     write(TMP+'/job.json',failed);job=failed;
+    }
+   }catch(e){}
+   lock.lock('u');lock.close();
+  }else lock?.close();
  }
  return {ok:true,busy:job?.status=='running',job};
 };
@@ -88,10 +99,12 @@ function recover(good,wasRunning) {
  if(!wasRunning) {
   // Keep interception guarded while removing a candidate started by this attempt.
   try {
-   if(!running())return {restored:false,stopped:true,guarded:forwarding('guard')};
-   write(TMP+'/restarting.json',{guarded:true});
-   let stopped=command('/etc/init.d/alwayroute stop') && !running();fs.unlink(TMP+'/restarting.json');
-   return {restored:false,stopped,guarded:forwarding('guard')};
+   let stopped=!running();
+   if(!stopped) {
+    write(TMP+'/restarting.json',{guarded:true});
+    stopped=command('/etc/init.d/alwayroute stop') && !running();fs.unlink(TMP+'/restarting.json');
+   }
+   if(stopped && forwarding('stop'))return {restored:false,stopped:true,guarded:false};
   }catch(e){}
  }
  return {restored:false,guarded:forwarding('guard')};
@@ -124,6 +137,7 @@ function applyModel(m,commitCurrent) {
 };
 function configureCandidate(next) {
  validate(next);
+ if(next.mode=='global')for(let g in next.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
  if(running())return applyModel(next,true);
  // A stopped service validates the next start without changing its enabled state.
  checkConfig(next);write(DATA+'/current.json',next);system('/bin/sync');
@@ -260,9 +274,21 @@ export function call(method,args,inline) {
  lock.lock('u');lock.close();return response;
 };
 export function work() {
- init();let request=read(TMP+'/job.request.json',null),job=read(TMP+'/job.json',null);
- if(!request || !job || request.id!=job.id || index(['refresh','apply','rollback','check','service','configure','import'],request.method)<0)return;
- job.pid=int(split(fs.readfile('/proc/self/stat') ?? '0',' ')[0]);write(TMP+'/job.json',job);
+ init();let lock=fs.open(TMP+'/manager.lock','ae',0600),owned=false;
+ if(!lock)return;
+ for(let i=0;i<4;i++){if(lock.lock('xn')){owned=true;break;}system('/bin/sleep 1');}
+ if(!owned){lock.close();return;}
+ let request=null,job=null,claimed=false;
+ try {
+  request=read(TMP+'/job.request.json',null);job=read(TMP+'/job.json',null);
+  if(request && job && request.id==job.id && index(['refresh','apply','rollback','check','service','configure','import'],request.method)>=0) {
+   if(job.status!='running')fs.unlink(TMP+'/job.request.json');
+   else {job.pid=int(split(fs.readfile('/proc/self/stat') ?? '0',' ')[0]);write(TMP+'/job.json',job);claimed=true;}
+  }
+ }catch(e){}
+ // call() acquires manager.lock itself, so release the claim before execution.
+ lock.lock('u');lock.close();
+ if(!claimed)return;
  let response;
  for(let i=0;i<4;i++){response=call(request.method,request.args,true);if(response.error?.code!='BUSY')break;system('/bin/sleep 1');}
  job.status=response.ok?'succeeded':'failed';job.finished=time();

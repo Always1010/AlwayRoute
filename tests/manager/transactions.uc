@@ -3,8 +3,8 @@ import { sha256 } from 'digest';
 
 // In-memory adapters exercise the actual store transaction code. No host paths,
 // networking, process execution, or persistent files are accessed by this suite.
-let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null;
-let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0;
+let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null;
+let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped';
 let fs={
  mkdir:()=>true,chmod:()=>true,
  readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';return files[path] ?? null;},
@@ -17,7 +17,7 @@ let fs={
   return {
    write:function(value){files[path]=value;return length(value);},flush:()=>true,
    close:function(){if(owns)locked=false;return true;},
-   lock:function(mode){if(mode=='u'){locked=false;owns=false;return true;}if(locked)return null;locked=true;owns=true;return true;}
+   lock:function(mode){if(mode=='u'){locked=false;owns=false;return true;}if(locked)return null;locked=true;owns=true;if(onLock){let callback=onLock;onLock=null;callback();}return true;}
   };
  },
  popen:function(command){
@@ -28,9 +28,9 @@ let fs={
  }
 };
 function system(command){
- if(index(command,'alwayroute-forwarding guard')>=0)guardCalls++;
- if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;}
- if(index(command,'alwayroute-forwarding activate')>=0 && activateFails){activateFails=false;return 1;}
+ if(index(command,'alwayroute-forwarding guard')>=0){guardCalls++;forwardingMode='guarded';}
+ if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;forwardingMode='stopped';}
+ if(index(command,'alwayroute-forwarding activate')>=0){if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
  if(index(command,'sing-box check')>=0 && allChecksFail)return 1;
  if(index(command,'sing-box check')>=0 && checkFails){checkFails=false;return 1;}
  if(index(command,'alwayroute running')>=0)return active?0:1;
@@ -43,6 +43,27 @@ function system(command){
 
 let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
+let savedJob=files['/tmp/alwayroute/job.json'];
+files['/tmp/alwayroute/job.json']=sprintf('%J',{id:'old-live-job',status:'running',started:time()-121,pid:123});
+let observedJob=call('job_status',{});
+check(observedJob.busy && observedJob.job.status=='running','live worker remains busy beyond UI timeout and cannot be mistaken for a completed transaction');
+files['/tmp/alwayroute/job.json']=sprintf('%J',{id:'old-dead-job',status:'running',started:time()-121,pid:999});
+observedJob=call('job_status',{});
+check(!observedJob.busy && observedJob.job.status=='failed' && observedJob.job.error.code=='JOB_INTERRUPTED','missing worker PID confirms an interrupted transaction');
+if(savedJob==null)delete files['/tmp/alwayroute/job.json'];else files['/tmp/alwayroute/job.json']=savedJob;
+files['/tmp/alwayroute/job.json']=sprintf('%J',{id:'claim-race-job',status:'running',started:time()-11});
+locked=true;let contendedJob=call('job_status',{});locked=false;
+onLock=function(){files['/tmp/alwayroute/job.json']=sprintf('%J',{id:'claim-race-job',status:'running',started:time()-11,pid:123});};
+observedJob=call('job_status',{});
+check(contendedJob.busy && observedJob.busy && observedJob.job.pid==123 && json(files['/tmp/alwayroute/job.json']).status=='running','interruption detection tolerates a held manager lock and rechecks a worker claim under the same lock');
+if(savedJob==null)delete files['/tmp/alwayroute/job.json'];else files['/tmp/alwayroute/job.json']=savedJob;
+let savedRequest=files['/tmp/alwayroute/job.request.json'],savedCurrent=files['/etc/alwayroute/current.json'],lateModel=empty();lateModel.mode='direct';
+files['/tmp/alwayroute/job.json']=sprintf('%J',{id:'late-job',method:'configure',status:'running',started:time()-11});
+files['/tmp/alwayroute/job.request.json']=sprintf('%J',{id:'late-job',method:'configure',args:{expectedRevision:0,model:lateModel}});
+call('job_status',{});work();observedJob=call('job_status',{});
+check(!observedJob.busy && observedJob.job.status=='failed' && observedJob.job.error.code=='JOB_INTERRUPTED' && files['/etc/alwayroute/current.json']==savedCurrent && !active && !files['/tmp/alwayroute/job.request.json'],'late worker cannot take over or commit a job already declared interrupted');
+if(savedJob==null)delete files['/tmp/alwayroute/job.json'];else files['/tmp/alwayroute/job.json']=savedJob;
+if(savedRequest==null)delete files['/tmp/alwayroute/job.request.json'];else files['/tmp/alwayroute/job.request.json']=savedRequest;
 let r=call('get',{});check(r.ok && r.model.revision==0,'initial state');
 let oversized='x';while(length(oversized)<=131072)oversized+=oversized;
 r=call('configure',{expectedRevision:0,model:{padding:oversized}});
@@ -50,6 +71,9 @@ check(r.error?.code=='INPUT_LIMIT' && !files['/tmp/alwayroute/job.request.json']
 r=call('import',{expectedRevision:0,content:oversized,activate:true});
 check(r.error?.code=='INPUT_LIMIT' && !files['/tmp/alwayroute/job.request.json'],'oversized activated import is rejected before writing a background request');
 r=call('get',{});
+let beforeCurrent=files['/etc/alwayroute/current.json'],unconfigured=clone(r.model);unconfigured.mode='global';
+call('configure',{expectedRevision:0,model:unconfigured});work();r=call('get',{});
+check(call('job_status',{}).job.error.code=='UNCONFIGURED' && !active && r.model.revision==0 && r.model.mode=='rule' && files['/etc/alwayroute/current.json']==beforeCurrent,'stopped global mode rejects an unconfigured Proxy without changing current');
 let draft=r.model;
 draft.nodes=[{id:'n1',name:'Test',type:'vmess',enabled:true,source:null,server:'example.invalid',port:443,uuid:'00000000-0000-4000-8000-000000000001',security:'auto',alterId:0}];
 draft.groups[0].selected='n1';
@@ -117,7 +141,10 @@ draft=clone(r.model);draft.mode='rule';for(let g in draft.groups)if(g.id=='Other
 call('configure',{expectedRevision:5,model:draft});work();r=call('get',{});
 check(call('job_status',{}).job.status=='succeeded' && r.model.revision==6 && r.state.appliedRevision==6,'Other block is confirmed against its direct selector representation');
 call('service',{action:'stop'});work();failWrite='/etc/alwayroute/lastgood.json.new';call('service',{action:'start'});work();
-check(call('job_status',{}).job.error.code=='STORAGE_ERROR' && !active && !json(files['/etc/alwayroute/service.json']).enabled && call('get',{}).state.appliedRevision==null,'failed start restores previously stopped service even after candidate core started');
+check(call('job_status',{}).job.error.code=='STORAGE_ERROR' && !active && !json(files['/etc/alwayroute/service.json']).enabled && call('get',{}).state.appliedRevision==null && forwardingMode=='stopped','failed start restores stopped core and inactive forwarding even after candidate core started');
+stopFails=true;failWrite='/etc/alwayroute/lastgood.json.new';call('service',{action:'start'});work();
+check(call('job_status',{}).job.error.code=='STORAGE_ERROR' && !active && forwardingMode=='guarded','failed restoration of inactive forwarding falls back to guard');
+stopFails=false;call('service',{action:'stop'});work();
 
 let good=clone(r.model);files['/etc/alwayroute/applying.json']=sprintf('%J',{previousRevision:6,previousCurrent:good,previousService:{enabled:true}});files['/etc/alwayroute/previous.json']=sprintf('%J',good);files['/etc/alwayroute/service.json']='{"enabled":true}';
 let interrupted=clone(good);interrupted.revision=7;interrupted.mode='direct';files['/etc/alwayroute/current.json']=sprintf('%J',interrupted);files['/etc/alwayroute/lastgood.json']=sprintf('%J',interrupted);
