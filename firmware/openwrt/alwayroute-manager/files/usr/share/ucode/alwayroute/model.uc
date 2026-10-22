@@ -14,10 +14,58 @@ function text(value, max) {
 };
 function id(value) { return type(value) == 'string' && match(value, /^[A-Za-z0-9_-]{1,64}$/) != null; }
 function integer(value, min, max) { return type(value) == 'int' && value >= min && value <= max; }
+const POLICY_VERSION = 1;
+const POLICIES = [
+ {id:'Proxy',name:'代理',default:true,description:'未命中业务组的常用境外网站',domains:['github.com','githubassets.com','githubusercontent.com','github.io','netflix.com','nflxext.com','nflximg.com','nflxso.net','nflxvideo.net','disneyplus.com','disney-plus.net','dssott.com','spotify.com','scdn.co','reddit.com','redd.it','wikipedia.org','wikimedia.org','twitch.tv','medium.com','stackoverflow.com']},
+ {id:'OpenAI',name:'OpenAI',default:true,description:'OpenAI、ChatGPT 及静态内容',domains:['openai.com','chatgpt.com','oaistatic.com','oaiusercontent.com']},
+ {id:'Claude',name:'Claude',default:true,description:'Anthropic 与 Claude',domains:['anthropic.com','claude.ai','claude.com']},
+ {id:'Google',name:'Google',default:true,description:'Google 通用服务；YouTube 规则优先',domains:['google.com','googleapis.com','gstatic.com','googleusercontent.com','googleadservices.com','google-analytics.com','withgoogle.com','blogger.com','blogspot.com']},
+ {id:'YouTube',name:'YouTube',default:true,description:'YouTube 页面、短链、视频与静态内容',domains:['youtube.com','youtu.be','youtube-nocookie.com','googlevideo.com','ytimg.com']},
+ {id:'X',name:'X',default:true,description:'X（原 Twitter）页面、短链与静态内容',domains:['x.com','twitter.com','t.co','twimg.com']},
+ {id:'Telegram',name:'Telegram',default:true,description:'Telegram 官方网页与公开链接',domains:['telegram.org','telegram.me','telegram.dog','t.me','telesco.pe','telegra.ph']},
+ {id:'Other',name:'Other',default:true,description:'所有规则均未命中时的最终出口',domains:[]},
+ {id:'Microsoft',name:'Microsoft',default:false,description:'Microsoft、Microsoft 365 与常用消费服务',domains:['microsoft.com','microsoftonline.com','live.com','office.com','office365.com','outlook.com','windows.com','azure.com','bing.com','xbox.com','cloud.microsoft','static.microsoft','usercontent.microsoft']},
+ {id:'Apple',name:'Apple',default:false,description:'Apple、iCloud、商店与静态内容',domains:['apple.com','icloud.com','icloud-content.com','itunes.apple.com','apps.apple.com','mzstatic.com','cdn-apple.com','apple-dns.net']},
+ {id:'Meta',name:'Meta',default:false,description:'Meta、Facebook、Instagram 与 WhatsApp',domains:['meta.com','facebook.com','fb.com','fbcdn.net','instagram.com','cdninstagram.com','whatsapp.com','whatsapp.net']},
+ {id:'Discord',name:'Discord',default:false,description:'Discord 页面、API 与内容分发',domains:['discord.com','discord.gg','discordapp.com','discordapp.net']},
+ {id:'Steam',name:'Steam',default:false,description:'Steam 商店、社区、内容与 API',domains:['steampowered.com','steamcommunity.com','steamstatic.com','steamcontent.com','steamserver.net','steam-api.com','valvesoftware.com']}
+];
+export function policyCatalog() { return clone(POLICIES); };
 export function empty() {
- return { schema: 1, revision: 0, mode: 'rule', defaultOutbound: 'Proxy', nodes: [], subscriptions: [], overrides: {},
+ return { schema: 1, policyVersion: POLICY_VERSION, revision: 0, mode: 'rule', defaultOutbound: 'Other', nodes: [], subscriptions: [], overrides: {},
  groups: [{id:'Proxy',name:'代理',selected:'direct'}, {id:'OpenAI',name:'OpenAI',selected:'Proxy'},
- {id:'Netflix',name:'Netflix',selected:'Proxy'}, {id:'Disney',name:'Disney+',selected:'Proxy'}], rules: [] };
+ {id:'Claude',name:'Claude',selected:'Proxy'}, {id:'Google',name:'Google',selected:'Proxy'},
+ {id:'YouTube',name:'YouTube',selected:'Proxy'}, {id:'X',name:'X',selected:'Proxy'},
+ {id:'Telegram',name:'Telegram',selected:'Proxy'}, {id:'Other',name:'Other',selected:'direct'}], rules: [] };
+};
+function legacyFallback(m) {
+ let target=m.defaultOutbound;
+ if(target=='Proxy')return target;
+ if(type(m.groups)!='array')return target;
+ for(let g in m.groups)if(g.id==target)return g.selected;
+ return target;
+};
+export function normalize(m) {
+ let n=clone(m);
+ if(type(n)!='object' || n.policyVersion==POLICY_VERSION)return n;
+ if(n.policyVersion!=null)return n;
+ if(type(n.groups)!='array' || type(n.rules)!='array')return n;
+ let fallback=legacyFallback(n), merged={GitHub:true,Netflix:true,Disney:true,Spotify:true}, kept=[];
+ for(let g in n.groups)if(!merged[g.id])push(kept,g);
+ for(let g in kept)if(merged[g.selected])g.selected='Proxy';
+ for(let r in n.rules)if(merged[r.outbound])r.outbound='Proxy';
+ n.groups=kept;
+ let present={};for(let g in n.groups)present[g.id]=true;
+ if(!present.Other && length(n.groups)<16){push(n.groups,{id:'Other',name:'Other',selected:fallback});present.Other=true;}
+ else if(present.Other)for(let g in n.groups)if(g.id=='Other')g.selected=fallback;
+ for(let p in POLICIES)if(p.default && p.id!='Other' && !present[p.id] && length(n.groups)<16){push(n.groups,{id:p.id,name:p.name,selected:p.id=='Proxy'?'direct':'Proxy'});present[p.id]=true;}
+ if(!present.Other)fail('MIGRATION_REQUIRED','策略组已满，无法在不删除自定义组的情况下添加 Other');
+ let ordered=[],orderedIds={};
+ for(let p in POLICIES)if(p.default && p.id!='Other')for(let g in n.groups)if(g.id==p.id){push(ordered,g);orderedIds[g.id]=true;}
+ for(let g in n.groups)if(g.id!='Other' && !orderedIds[g.id])push(ordered,g);
+ for(let g in n.groups)if(g.id=='Other')push(ordered,g);
+ n.groups=ordered;n.defaultOutbound='Other';n.policyVersion=POLICY_VERSION;
+ return n;
 };
 export function node(n) {
  fields(n, ['id','name','type','enabled','source','sourceKey','server','port','uuid','security','alterId','tls','transport']);
@@ -54,8 +102,8 @@ export function effective(m) {
  return result;
 };
 export function validate(m) {
- fields(m,['schema','revision','mode','defaultOutbound','nodes','subscriptions','overrides','groups','rules']);
- require(m.schema == 1 && integer(m.revision,0,2147483646), '模型版本无效');
+ fields(m,['schema','policyVersion','revision','mode','defaultOutbound','nodes','subscriptions','overrides','groups','rules']);
+ require(m.schema == 1 && m.policyVersion == POLICY_VERSION && integer(m.revision,0,2147483646), '模型版本无效');
  require(index(['rule','global','direct'],m.mode)>=0,'模式无效');
  for (let key,limit in {nodes:128,subscriptions:16,groups:16,rules:128}) require(type(m[key])=='array' && length(m[key])<=limit,'数量超限或列表无效');
  require(type(m.overrides)=='object' && length(keys(m.overrides)) <= 128,'覆盖设置无效');
@@ -81,10 +129,10 @@ export function validate(m) {
   fields(g,['id','name','selected']); require(id(g.id) && !ids[g.id] && !groupIds[g.id] && text(g.name,128),'策略组标识重复或无效');
   groupIds[g.id]=true;
  }
- require(groupIds.Proxy, '必须保留 Proxy 策略组');
- for(let g in m.groups) require((g.selected!='block' && usable[g.selected]) || (g.id!='Proxy' && g.selected=='Proxy'), '策略组选择不存在、被停用或形成循环');
+ require(groupIds.Proxy && groupIds.Other && m.groups[length(m.groups)-1].id=='Other', '必须保留 Proxy，并将 Other 保持在最后');
+ for(let g in m.groups) require((g.selected!='block' && usable[g.selected]) || (g.id!='Proxy' && g.selected=='Proxy') || (g.id=='Other' && g.selected=='block'), '策略组选择不存在、被停用或形成循环');
  for(let k in keys(groupIds)) usable[k]=true;
- require(usable[m.defaultOutbound], '默认出口不存在');
+ require(m.defaultOutbound=='Other', '默认出口必须由 Other 策略组管理');
  let ruleIds={};
  for(let r in m.rules) {
   fields(r,['id','enabled','type','value','outbound']);
@@ -110,7 +158,7 @@ export function generate(m) {
   if(n.transport) o.transport={type:'ws',path:n.transport.path ?? '/',headers: n.transport.host ? {Host:n.transport.host}: {}};
   push(outbounds,o); push(choices,n.id);
  }
- for(let g in m.groups) {let members=clone(choices);if(g.id!='Proxy')push(members,'Proxy');push(outbounds,{type:'selector',tag:g.id,outbounds:members,default:g.selected,interrupt_exist_connections:false});}
+ for(let g in m.groups) {let members=clone(choices);if(g.id!='Proxy')push(members,'Proxy');push(outbounds,{type:'selector',tag:g.id,outbounds:members,default:g.selected=='block'?'direct':g.selected,interrupt_exist_connections:false});}
  if(m.mode=='rule') for(let r in m.rules) {
   if(!r.enabled) continue;
   let rule={}; rule[r.type=='domain'?'domain':r.type=='suffix'?'domain_suffix':'ip_cidr']=[r.type=='ip'?r.value+'/32':r.value];
@@ -118,8 +166,13 @@ export function generate(m) {
   push(rules,rule);
   if((r.type=='domain' || r.type=='suffix') && r.outbound=='direct') {let d={server:'bootstrap'};d[r.type=='domain'?'domain':'domain_suffix']=[r.value];push(dnsRules,d);}
  }
- let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':m.defaultOutbound;
- if(final=='block') {push(rules,{action:'reject'});final='direct';}
+ if(m.mode=='rule') {
+  let groupIds={};for(let g in m.groups)groupIds[g.id]=true;
+  for(let wanted in ['OpenAI','Claude','YouTube','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Proxy'])
+   if(groupIds[wanted])for(let p in POLICIES)if(p.id==wanted && length(p.domains))push(rules,{domain_suffix:clone(p.domains),action:'route',outbound:wanted});
+ }
+ let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':'Other';
+ if(m.mode=='rule')for(let g in m.groups)if(g.id=='Other' && g.selected=='block'){push(rules,{action:'reject'});final='direct';}
  return {log:{disabled:true},inbounds:[{type:'mixed',tag:'local-mixed',listen:'127.0.0.1',listen_port:7890},
  {type:'tproxy',tag:'lan-tproxy',listen:'0.0.0.0',listen_port:7893}],outbounds,
  dns:{servers:[{type:'local',tag:'bootstrap'},{type:'https',tag:'proxy-dns',server:'1.1.1.1',tls:{enabled:true,server_name:'cloudflare-dns.com'},detour:'Proxy'}],rules:dnsRules,final:m.mode=='direct'?'bootstrap':'proxy-dns',reverse_mapping:true,strategy:'ipv4_only',cache_capacity:512},
