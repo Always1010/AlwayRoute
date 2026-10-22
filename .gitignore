@@ -1,0 +1,54 @@
+# Credentials and machine-specific settings
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*.pem
+*.p12
+*.pfx
+/.local/
+/secrets/
+/private/
+
+# Device backups, downloaded firmware, and generated artifacts
+/backups/
+/downloads/
+/artifacts/
+*.bak
+*.backup
+*.bin
+*.img
+*.trx
+*.itb
+*.ubi
+*.ipk
+*.apk
+
+# Dependencies, build output, and caches
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+coverage/
+dist/
+build/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+/tmp/
+/temp/
+
+# Editor and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
