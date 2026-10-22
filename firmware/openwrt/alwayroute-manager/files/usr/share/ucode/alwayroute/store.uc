@@ -1,7 +1,7 @@
 'use strict';
 import * as fs from 'fs';
 import { sha256 } from 'digest';
-import { fail, clone, empty, validate, effective, generate } from 'alwayroute.model';
+import { fail, clone, empty, normalize, validate, effective, generate, policyCatalog } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
@@ -14,7 +14,24 @@ function write(path,value) {
  let n=f.write(data),flushed=f.flush(),closed=f.close();
  if(n!=length(data) || !flushed || !closed || !fs.rename(path+'.new',path))fail('STORAGE_ERROR','配置原子保存失败');
 };
-function model() {return validate(read(DATA+'/current.json',empty()));}
+function normalized(m) {return m==null?null:validate(normalize(m));}
+function model() {
+ let pending=read(DATA+'/applying.json',null);
+ return normalized(pending?.previousCurrent ?? read(DATA+'/current.json',empty()));
+}
+function lastGood() {
+ let pending=read(DATA+'/applying.json',null);
+ if(!pending)return normalized(read(DATA+'/lastgood.json',null));
+ let good=pending.previousRevision==null?null:normalized(read(DATA+'/previous.json',null));
+ return good?.revision==pending.previousRevision?good:null;
+}
+function restoreMetadata(pending,good,service) {
+ if(pending.previousCurrent)write(DATA+'/current.json',normalized(pending.previousCurrent));
+ if(good)write(DATA+'/lastgood.json',good);
+ else if(fs.readfile(DATA+'/lastgood.json')!=null && !fs.unlink(DATA+'/lastgood.json'))fail('STORAGE_ERROR','候选应用副本无法撤销');
+ write(DATA+'/service.json',service);system('/bin/sync');
+ if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','恢复提交标志无法清除');system('/bin/sync');
+}
 function state() {let m=model(),runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null};}
 function jobStatus() {
  let job=read(TMP+'/job.json',null);
@@ -46,10 +63,14 @@ function forwarding(action) {
  return command('/usr/libexec/alwayroute-forwarding '+action);
 };
 function coreStatus() {let p=fetchJson('/proxies');return p?.proxies?{available:true,groups:p.proxies}:{available:false,groups:{}};}
-function restart(m) {
- if(m.mode!='direct')for(let g in m.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
+function checkConfig(m) {
  write(TMP+'/runtime.json',generate(m));
  if(!command('/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json'))fail('CORE_CHECK_FAILED','核心拒绝配置，原应用保持可恢复');
+}
+function selected(g) {return g.id=='Other' && g.selected=='block'?'direct':g.selected;}
+function restart(m) {
+ if(m.mode!='direct')for(let g in m.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
+ checkConfig(m);
  if(!forwarding('prepare'))fail('FORWARDING_CHECK_FAILED','转发预检失败');
  if(!forwarding('guard'))fail('FORWARDING_GUARD_FAILED','无法建立故障阻断，保留当前核心');
  write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});
@@ -59,35 +80,56 @@ function restart(m) {
  let observed=null;
  for(let i=0;i<4;i++){observed=coreStatus();if(observed.available)break;system('/bin/sleep 1');}
  if(!observed?.available)fail('CORE_LOAD_FAILED','核心 API 未确认配置加载');
- for(let g in m.groups)if(observed.groups[g.id]?.now!=g.selected)fail('CORE_LOAD_FAILED','实际策略选择与候选不一致');
+ for(let g in m.groups)if(observed.groups[g.id]?.now!=selected(g))fail('CORE_LOAD_FAILED','实际策略选择与候选不一致');
  if(!forwarding('activate'))fail('FORWARDING_APPLY_FAILED','转发应用失败');
 };
 function recover(good,wasRunning) {
  if(good && wasRunning) {try{restart(good);return {restored:true,guarded:false};}catch(e){}}
+ if(!wasRunning) {
+  // Keep interception guarded while removing a candidate started by this attempt.
+  try {
+   if(!running())return {restored:false,stopped:true,guarded:forwarding('guard')};
+   write(TMP+'/restarting.json',{guarded:true});
+   let stopped=command('/etc/init.d/alwayroute stop') && !running();fs.unlink(TMP+'/restarting.json');
+   return {restored:false,stopped,guarded:forwarding('guard')};
+  }catch(e){}
+ }
  return {restored:false,guarded:forwarding('guard')};
 };
-function applyModel(m) {
- let good=read(DATA+'/lastgood.json',null),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false});
+function applyModel(m,commitCurrent) {
+ let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?model():null;
+ let pending={previousRevision:good?.revision ?? null,previousService:service,previousRunning:wasRunning};
+ if(commitCurrent)pending.previousCurrent=before;
  // The candidate is only in tmp; current and lastgood remain valid across power loss.
  try {
   if(good)write(DATA+'/previous.json',good);
-  write(DATA+'/applying.json',{previousRevision:good?.revision ?? null});system('/bin/sync');
+  write(DATA+'/applying.json',pending);system('/bin/sync');
   restart(m);
   write(DATA+'/lastgood.json',m);write(DATA+'/service.json',{enabled:true});
   write(TMP+'/state.json',{appliedRevision:m.revision,healthy:'unverified'});
+  if(commitCurrent)write(DATA+'/current.json',m);
+  system('/bin/sync');
   if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','应用提交标志无法清除');system('/bin/sync');
  }catch(e) {
   let recovery=recover(good,wasRunning);
   // Recovery runs even if flash is full or read-only. An uncleared marker makes
   // the next boot rebuild previous.json instead of a half-committed candidate.
-  try {if(good)write(DATA+'/lastgood.json',good);else fs.unlink(DATA+'/lastgood.json');write(DATA+'/service.json',service);fs.unlink(DATA+'/applying.json');system('/bin/sync');}catch(storageError){}
-  let message=recovery.restored?'应用失败，已恢复上一份可用配置':recovery.guarded?'应用及恢复失败，已进入故障阻断':'应用及恢复失败，故障阻断未确认；保留核心并需人工处理';
+  try {restoreMetadata(pending,good,service);}catch(storageError){}
+  let message=recovery.restored?'应用失败，已恢复上一份可用配置':recovery.stopped?'应用失败，服务已恢复停止状态':recovery.guarded?'应用及恢复失败，已进入故障阻断':'应用及恢复失败，故障阻断未确认；保留核心并需人工处理';
   try {write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified',lastError:message});event(message,'error');}catch(stateError){}
   die(e.message);
  }
- event('核心加载已确认；出口与终端接管仍须实测');
+ try {event('核心加载已确认；出口与终端接管仍须实测');}catch(logError){}
  return {ok:true,state:state()};
 };
+function configureCandidate(next) {
+ validate(next);
+ if(running())return applyModel(next,true);
+ // A stopped service validates the next start without changing its enabled state.
+ checkConfig(next);write(DATA+'/current.json',next);system('/bin/sync');
+ try {event('配置已确认，将用于下次启动');}catch(logError){}
+ return {ok:true,state:state()};
+}
 function refresh(args,m) {
  let s=null;for(let candidate in m.subscriptions)if(candidate.id==args.subscriptionId)s=candidate;
  if(!s || !s.enabled)fail('INVALID_SUBSCRIPTION','订阅不存在或已停用');
@@ -102,17 +144,25 @@ function refresh(args,m) {
  next.nodes=filter(next.nodes,n=>n.source!=s.id);for(let n in incoming)push(next.nodes,n);next.revision++;
  for(let item in next.subscriptions)if(item.id==s.id){item.lastUpdate=time();delete item.lastError;}
  // validate rejects removal of selected or rule-referenced node. No silent fallback.
- validate(next);let response=saved(next);response.imported=length(incoming);return response;
+ validate(next);let response=args.activate===true?configureCandidate(next):saved(next);response.imported=length(incoming);return response;
 };
 function redact(m) {m=clone(m);for(let n in m.nodes)n.uuid='[redacted]';for(let s in m.subscriptions)s.url='https://redacted.invalid/';for(let k,o in m.overrides)if(o.patch?.uuid)o.patch.uuid='[redacted]';return m;}
 function execute(method,args) {
- if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,logs:true};
+ if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
  if(method=='status')return {ok:true,state:state(),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};
  if(method=='traffic') {let t=fetchJson('/traffic',true);return {ok:true,available:type(t?.up)=='int' && type(t?.down)=='int',upload:t?.up ?? null,download:t?.down ?? null,unit:'bytes/s',reason:t?null:'核心流量流不可用'};}
  if(method=='logs') {let entries=read(TMP+'/events.json',[]),limit=int(args.limit ?? 20);if(limit<1 || limit>20)limit=20;return {ok:true,entries:slice(entries,-limit)};}
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
+ let interrupted=read(DATA+'/applying.json',null);
+ if(interrupted && !(method=='service' && args.action=='stop')) {
+  let good=lastGood(),service=interrupted.previousService ?? read(DATA+'/service.json',{enabled:false});
+  let recovery=recover(good,interrupted.previousRunning ?? service.enabled);
+  if(!recovery.restored && !recovery.stopped)fail('RECOVERY_FAILED','上次事务尚未恢复，已请求故障阻断；请重试或显式停止服务');
+  restoreMetadata(interrupted,good,service);
+  write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified'});
+ }
  let m=model();
  if(method=='check') {
   let current=state();
@@ -129,16 +179,22 @@ function execute(method,args) {
   if(args.action=='stop') {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
    if(!command('/etc/init.d/alwayroute stop') || running())fail('CORE_STOP_FAILED','核心停止失败，启动设置保持不变');
-   write(DATA+'/service.json',{enabled:false});system('/bin/sync');event('服务已停止');return {ok:true,state:state()};
+   if(interrupted)restoreMetadata(interrupted,lastGood(),{enabled:false});
+   write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state()};
   }
   if(args.action=='start') {
-   let good=read(DATA+'/lastgood.json',null);if(!good)fail('NOT_APPLIED','尚无可启动的已应用配置');
-   try{restart(good);}catch(e){forwarding('guard');die(e.message);}
-   write(TMP+'/state.json',{appliedRevision:good.revision,healthy:'unverified'});write(DATA+'/service.json',{enabled:true});system('/bin/sync');return {ok:true,state:state()};
+   return applyModel(m);
   }
   fail('INVALID_ACTION','仅支持 start/stop');
  }
  expected(args,m);
+ if(method=='configure') {
+  let next=normalized(clone(args.model));
+  if(!next)fail('INVALID_MODEL','需要配置模型');
+  if(next.revision!=m.revision)fail('REVISION_CONFLICT','模型版本不匹配');
+  next.revision=m.revision+1;
+  return configureCandidate(next);
+ }
  if(method=='save') {
   let next=clone(args.model);validate(next);
   if(next.revision!=m.revision)fail('REVISION_CONFLICT','模型版本不匹配');
@@ -151,15 +207,15 @@ function execute(method,args) {
  if(method=='import') {
   let incoming=parse(args.content,'manual',sha256);
   for(let n in incoming) {n.id='m_'+n.sourceKey;n.source=null;delete n.sourceKey;push(m.nodes,n);}
-  m.revision++;let r=saved(m);r.imported=length(incoming);return r;
+  m.revision++;let r=args.activate===true?configureCandidate(m):saved(m);r.imported=length(incoming);return r;
  }
  if(method=='refresh')return refresh(args,m);
  if(method=='apply')return applyModel(m);
  if(method=='rollback') {
-  let good=read(DATA+'/lastgood.json',null),previous=read(DATA+'/previous.json',null);
+  let good=lastGood(),previous=normalized(read(DATA+'/previous.json',null));
   let target=(good && good.revision!=m.revision)?good:previous;
   if(!target)fail('NO_ROLLBACK','没有可恢复的历史配置');
-  target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target);write(DATA+'/current.json',target);system('/bin/sync');return result();
+  target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target,true);return result();
  }
  fail('UNSUPPORTED','该方法尚未支持');
 };
@@ -173,12 +229,14 @@ export function call(method,args,inline) {
  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有配置事务进行中，请稍后重试'}};}
  let response;
  try {
-  let long=index(['refresh','apply','rollback','check','service'],method)>=0;
+  let long=index(['refresh','apply','rollback','check','service','configure'],method)>=0 || (method=='import' && args?.activate===true);
   let pending=read(TMP+'/job.json',null);
   if(!inline && pending?.status=='running' && index(['capabilities','get','status','traffic','logs','export'],method)<0)fail('BUSY','后台事务尚未完成');
   if(!inline && long) {
    if(pending?.status=='running')fail('BUSY','后台事务尚未完成');
-   if(method=='refresh' && (type(args?.content)!='string' || length(args.content)>131072))fail('INPUT_LIMIT','订阅正文不得超过128KiB');
+   if(index(['refresh','import'],method)>=0 && (type(args?.content)!='string' || length(args.content)>131072))fail('INPUT_LIMIT','导入或订阅正文须为字符串且不得超过128KiB');
+   if(method=='configure' && type(args?.model)!='object')fail('INVALID_MODEL','需要配置模型对象');
+   if(method=='configure' && length(sprintf('%J',args.model))>131072)fail('INPUT_LIMIT','配置模型不得超过128KiB');
    let job={id:trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? sprintf('%d',time())),method,status:'running',started:time()};
    write(TMP+'/job.request.json',{method,args:args ?? {},id:job.id});write(TMP+'/job.json',job);
    if(system('/usr/libexec/alwayroute-job >/dev/null 2>&1 &')!=0) {job.status='failed';job.error={code:'JOB_START_FAILED',message:'后台事务启动失败'};write(TMP+'/job.json',job);fail('JOB_START_FAILED','后台事务启动失败');}
@@ -203,7 +261,7 @@ export function call(method,args,inline) {
 };
 export function work() {
  init();let request=read(TMP+'/job.request.json',null),job=read(TMP+'/job.json',null);
- if(!request || !job || request.id!=job.id || index(['refresh','apply','rollback','check','service'],request.method)<0)return;
+ if(!request || !job || request.id!=job.id || index(['refresh','apply','rollback','check','service','configure','import'],request.method)<0)return;
  job.pid=int(split(fs.readfile('/proc/self/stat') ?? '0',' ')[0]);write(TMP+'/job.json',job);
  let response;
  for(let i=0;i<4;i++){response=call(request.method,request.args,true);if(response.error?.code!='BUSY')break;system('/bin/sleep 1');}
@@ -213,11 +271,13 @@ export function work() {
  write(TMP+'/job.json',job);fs.unlink(TMP+'/job.request.json');fs.unlink(TMP+'/subscription.body');
 };
 export function boot() {
- init();let config=read(DATA+'/service.json',{enabled:false}),good=read(DATA+'/lastgood.json',null);
+ init();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();
  let pending=read(DATA+'/applying.json',null);
  if(pending) {
-  good=pending.previousRevision==null?null:read(DATA+'/previous.json',null);
+  config=pending.previousService ?? config;
+  good=pending.previousRevision==null?null:normalized(read(DATA+'/previous.json',null));
   if(good?.revision!=pending.previousRevision)good=null;
+  restoreMetadata(pending,good,config);
  }
  if(!config.enabled || !good)return false;
  write(TMP+'/runtime.json',generate(good));write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
@@ -236,11 +296,11 @@ export function started() {
  try {
   let runtime=read(TMP+'/state.json',{});
   if(runtime.restoringRevision!=null) {
-   let pending=read(DATA+'/applying.json',null),good=read(DATA+(pending?'/previous.json':'/lastgood.json'),null),core=null;
+   let pending=read(DATA+'/applying.json',null),good=normalized(read(DATA+(pending?'/previous.json':'/lastgood.json'),null)),core=null;
    if(good?.revision==runtime.restoringRevision) {
     for(let i=0;i<4;i++){core=coreStatus();if(core.available)break;system('/bin/sleep 1');}
     let matches=running() && core?.available;
-    for(let g in good.groups)if(core?.groups?.[g.id]?.now!=g.selected)matches=false;
+    for(let g in good.groups)if(core?.groups?.[g.id]?.now!=selected(g))matches=false;
     if(matches && forwarding('activate'))write(TMP+'/state.json',{appliedRevision:good.revision,healthy:'unverified'});
     else {forwarding('guard');write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified',lastError:'启动恢复未通过核心/转发检查，已请求故障阻断'});}
    }

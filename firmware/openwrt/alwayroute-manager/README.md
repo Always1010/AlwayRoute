@@ -18,19 +18,25 @@ URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通
 
 持久文件职责：
 
-- `current.json`：用户保存草稿及revision。
+- `current.json`：最新确认配置及revision；旧save/select接口也可保存待应用草稿。
 - `lastgood.json`：最近通过核心加载与转发适配器确认的模型；出口健康仍为unverified。
 - `previous.json`：上一份应用模型，供保存草稿相同于lastgood时回退。
-- `applying.json`：小型提交标志，未清除则下次启动从previous重建，避免半提交配置。
+- `applying.json`：提交标志及原启停设置；configure/rollback还保存原current，未清除时读取与启动恢复旧配置，避免半提交配置。
 - `service.json`：用户启停选择；停止后重启不会自动恢复代理。
 - `subscription-status.json`：最多16个当前来源的更新时间、成功状态及脱敏错误码。
 
-每份模型最多128KiB，三份持久副本最多384KiB；原子写候选峰值增加128KiB。
+每份模型最多128KiB，三份持久副本最多384KiB；configure提交标志还暂存一份原current，原子写候选另增加最多128KiB。
 `/tmp/alwayroute/`放置生成运行配置、订阅正文、作业进度、实时检查和最多20条脱敏事件，
 不将流量历史写闪存。凭证目录0700，文件0600。flock非阻塞锁配CLOEXEC，防后台子进程继承锁。
 
 应用流程：expectedRevision校验 → 生成 → `sing-box check` → 转发prepare →
 procd restart → loopback API检查所有selector实际选择 → 转发activate → 提交lastgood。
+即时configure在单个后台事务完成模型规范化、revision校验与递增；运行时复用上述确认流程，
+最后提交current及lastgood并清除标志。包括current保存失败在内的错误均恢复旧current及运行态，
+未清标志保留旧current作为读取和断电恢复依据。服务停止时只校验并保存current，保持停止；
+service.start使用最新current，确认后lastgood/state对应同一revision，不会启动旧选择。
+首页import/refresh使用activate:true，将解析后的节点候选交给同一确认流程，失败不提前保存节点；
+import此时同样排入后台worker。省略activate继续保留原仅保存语义，cron仍不自动应用。
 失败先尝试恢复之前运行状态，再尽力恢复持久元数据；闪存写失败也不能跳过核心恢复。
 核心重启前先建立故障阻断，init停止阶段按重启标志维持阻断，待核心确认后激活代理。
 恢复失败保持阻断，不自动撤销转发变成直连；仅显式停止或Direct模式恢复基础联网。
@@ -64,11 +70,12 @@ python tests/manager/run-tests.py /path/to/ucode -
 ucode -L firmware/openwrt/alwayroute-manager/files/usr/share/ucode tests/manager/run.uc
 ```
 
-第一项将模块机械组合到stdin，运行31项模型/导入检查、20项内存适配事务检查，
-以及8项实际下载脚本许可检查；
+第一项将模块机械组合到stdin，运行模型/导入、内存适配事务及下载脚本许可检查；
 第二项检查真实模块导入。事务适配器覆盖revision冲突、后台排队、配置校验失败、
 提交写失败恢复、回退、凭证导出脱敏、停机持久、启动中断恢复、转发停止失败、
 适配器缺失及核心恢复失败保持阻断，未访问设备。
+即时配置事务另覆盖运行/停止态配置确认、最新current启动、导入/订阅节点候选失败保持原配置、
+current写失败及提交标记清除失败恢复、中断读保护与恢复后继续配置；不会调用真实进程或服务。
 已在现有Rock host ucode执行；三种模式的生成JSON亦通过现有ARM64 sing-box1.13.21真实check。
 用户授权的私有完整Clash订阅亦已通过纯解析，实际得到38个VMess节点；
 样本只留Rock私有目录，仓库仅含合成fixture，未输出URL、节点值或凭证。
