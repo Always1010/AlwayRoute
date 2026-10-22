@@ -17,7 +17,7 @@ define Package/alwayroute-core
   SECTION:=net
   CATEGORY:=Network
   TITLE:=AlwayRoute static sing-box evaluation core
-  DEPENDS:=+ca-bundle +kmod-nft-tproxy +ip-full
+  DEPENDS:=+ca-bundle +kmod-nft-tproxy +ip-tiny
 endef
 
 define Package/alwayroute-core/description

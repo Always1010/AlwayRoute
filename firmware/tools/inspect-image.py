@@ -15,17 +15,28 @@ import zlib
 
 work = pathlib.Path('/srv/alwayroute/openwrt-build')
 source = work / 'source'
+default_core_sha256 = 'f2abdeffaaec58568d7471e44e0fe0d9557eee6a3011ffc2c6f36fcaac396d76'
+
+
+def sha256_arg(value):
+    if not re.fullmatch(r'[0-9a-fA-F]{64}', value):
+        raise argparse.ArgumentTypeError('SHA-256 must contain exactly 64 hexadecimal characters')
+    return value.lower()
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('image', type=pathlib.Path)
 parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
 parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
+parser.add_argument('--ip-package', choices=('ip-full', 'ip-tiny'), default='ip-full')
+parser.add_argument('--core-sha256', type=sha256_arg, default=default_core_sha256)
 parser.add_argument('--output', type=pathlib.Path, default=work / 'image-inspection.json')
 args = parser.parse_args()
 if args.profile == 'manager' and args.baseline_image is None:
     parser.error('--profile manager requires --baseline-image')
 image = args.image.resolve()
 data = image.read_bytes()
-expected_core_sha = 'f2abdeffaaec58568d7471e44e0fe0d9557eee6a3011ffc2c6f36fcaac396d76'
+expected_core_sha = args.core_sha256
 checks = {}
 
 
@@ -171,8 +182,9 @@ packages = {}
 for line in manifest.read_text().splitlines():
     name, version = line.split(' - ', 1)
     packages[name] = version
-for name in ['alwayroute-core', 'kmod-mt7603', 'kmod-mt76x2', 'kmod-nft-tproxy', 'ip-full', 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only']:
+for name in ['alwayroute-core', 'kmod-mt7603', 'kmod-mt76x2', 'kmod-nft-tproxy', args.ip_package, 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only']:
     check('package_' + name, name in packages)
+expected_package_delta = None
 if args.profile == 'manager':
     for name in ['alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute']:
         check('package_' + name, name in packages)
@@ -181,12 +193,36 @@ if args.profile == 'manager':
     check('manager_kernel_payload_unchanged', data[64:kernel_end] == baseline_data[64:baseline_kernel_end])
     baseline_manifest = args.baseline_image.with_name(args.baseline_image.name.replace('-squashfs-sysupgrade.bin', '.manifest'))
     baseline_packages = dict(line.split(' - ', 1) for line in baseline_manifest.read_text().splitlines())
-    check('manager_only_three_added_packages', set(packages) - set(baseline_packages) == {'alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute'})
-    check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
+    manager_packages = {'alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute'}
+    added_packages = set(packages) - set(baseline_packages)
+    if args.ip_package == 'ip-full':
+        expected_package_delta = {'added': sorted(manager_packages), 'removed': []}
+        check('manager_only_three_added_packages', added_packages == manager_packages)
+        check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
+    else:
+        removed_packages = set(baseline_packages) - set(packages)
+        allowed_removed_packages = {'ip-full', 'libbpf', 'libelf1', 'zlib'}
+        expected_package_delta = {
+            'added': sorted(manager_packages | {'ip-tiny'}),
+            'removed_required': ['ip-full'],
+            'removed_allowed': sorted(allowed_removed_packages),
+        }
+        check('manager_only_manager_and_ip_tiny_added_packages', added_packages == manager_packages | {'ip-tiny'})
+        check('manager_only_ip_full_dependencies_removed', 'ip-full' in removed_packages and removed_packages <= allowed_removed_packages)
+        check('manager_remaining_baseline_packages_unchanged', all(
+            packages.get(name) == version
+            for name, version in baseline_packages.items()
+            if name not in removed_packages
+        ))
 check('no_ppp', 'ppp' not in packages and 'ppp-mod-pppoe' not in packages)
 overlay_start = ((offset + used + 65535) // 65536) * 65536
 report = {
     'image': str(image), 'profile': args.profile, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+    'expected': {
+        'core_sha256': expected_core_sha,
+        'ip_package': args.ip_package,
+        'manager_package_delta': expected_package_delta,
+    },
     'uimage_payload_end': kernel_end, 'squashfs_bytes_used': used,
     'squashfs_block_size': squashfs_block_size,
     'overlay_start_relative_firmware': overlay_start,

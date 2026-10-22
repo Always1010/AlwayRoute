@@ -12,7 +12,7 @@ define Package/alwayroute-forwarding
   SECTION:=net
   CATEGORY:=Network
   TITLE:=AlwayRoute LAN forwarding adapter
-  DEPENDS:=+alwayroute-core +firewall4 +jsonfilter +ip-full +ubus
+  DEPENDS:=+alwayroute-core +firewall4 +jsonfilter +ip-tiny +ubus
 endef
 
 define Build/Compile
