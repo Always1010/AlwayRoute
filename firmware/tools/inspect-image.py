@@ -3,17 +3,27 @@
 Run on Rock after make has produced its target image and native host tools.
 This script never connects to or writes a router.
 """
+import argparse
 import hashlib
 import json
 import pathlib
+import re
 import struct
 import subprocess
-import sys
+import tempfile
 import zlib
 
 work = pathlib.Path('/srv/alwayroute/openwrt-build')
 source = work / 'source'
-image = pathlib.Path(sys.argv[1]).resolve()
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('image', type=pathlib.Path)
+parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
+parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
+parser.add_argument('--output', type=pathlib.Path, default=work / 'image-inspection.json')
+args = parser.parse_args()
+if args.profile == 'manager' and args.baseline_image is None:
+    parser.error('--profile manager requires --baseline-image')
+image = args.image.resolve()
 data = image.read_bytes()
 expected_core_sha = 'f2abdeffaaec58568d7471e44e0fe0d9557eee6a3011ffc2c6f36fcaac396d76'
 checks = {}
@@ -79,7 +89,82 @@ key = readfile('etc/dropbear/authorized_keys')
 check('public_key_matches', key == (source / 'files/etc/dropbear/authorized_keys').read_bytes())
 check('only_ed25519_public_key_embedded', key.startswith(b'ssh-ed25519 ') and b'PRIVATE KEY' not in key and len(key.splitlines()) == 1)
 listing = tool(str(unsquashfs), '-o', str(offset), '-ll', str(image)).decode(errors='replace')
-check('no_proxy_autostart', 'squashfs-root/etc/init.d/alwayroute' not in listing and 'squashfs-root/etc/init.d/sing-box' not in listing)
+listed_paths = {
+    match.group(1).split(' -> ', 1)[0]
+    for line in listing.splitlines()
+    if (match := re.search(r'squashfs-root/(.*)$', line))
+}
+input_hashes = {}
+executable_texts = []
+executable_source_fragments = []
+if args.profile == 'baseline':
+    check('no_proxy_autostart', 'squashfs-root/etc/init.d/alwayroute' not in listing and 'squashfs-root/etc/init.d/sing-box' not in listing)
+else:
+    # Compare all owned payloads with reviewed package inputs. LuCI deliberately
+    # minifies web assets, so replay its existing host tools before comparing.
+    config = (source / '.config').read_text().splitlines()
+    for package, directory, prefix in [
+        ('alwayroute-forwarding', 'files', 'usr/libexec'),
+        ('alwayroute-manager', 'files', ''),
+        ('luci-app-alwayroute', 'root', ''),
+        ('luci-app-alwayroute', 'htdocs', 'www'),
+    ]:
+        root = source / 'package' / package / directory
+        for path in sorted(root.rglob('*')):
+            if not path.is_file():
+                continue
+            target = '/'.join(part for part in (prefix, path.relative_to(root).as_posix()) if part)
+            expected = path.read_bytes()
+            input_sha = hashlib.sha256(expected).hexdigest()
+            if directory == 'htdocs' and path.suffix == '.js' and 'CONFIG_LUCI_JSMIN=y' in config:
+                result = subprocess.run([str(source / 'staging_dir/hostpkg/bin/jsmin')], input=expected, capture_output=True, timeout=120, check=True)
+                expected = result.stdout
+            elif directory == 'htdocs' and path.suffix == '.css' and 'CONFIG_LUCI_CSSTIDY=y' in config:
+                with tempfile.TemporaryDirectory(prefix='alwayroute-inspect-', dir=work / 'tmp') as temporary:
+                    output = pathlib.Path(temporary) / 'style.css'
+                    tool(str(source / 'staging_dir/hostpkg/bin/csstidy'), str(path), '--template=highest', '--remove_last_semicolon=true', str(output))
+                    expected = output.read_bytes()
+            actual = readfile(target)
+            check('manager_input_' + target, actual == expected)
+            input_hashes[target] = {'input_sha256': input_sha, 'installed_sha256': hashlib.sha256(actual).hexdigest()}
+    check('manager_no_embedded_user_state', not any(
+        path == 'etc/config/alwayroute' or path == 'etc/init.d/sing-box'
+        or path == 'etc/alwayroute' or path.startswith('etc/alwayroute/')
+        or path == 'tmp/alwayroute' or path.startswith('tmp/alwayroute/')
+        for path in listed_paths
+    ))
+    # The service is allowed to autostart only after a user enabled it and a
+    # successful revision exists. A fresh image contains neither state file.
+    store = readfile('usr/share/ucode/alwayroute/store.uc')
+    check('manager_boot_requires_enabled_lastgood', b"read(DATA+'/service.json',{enabled:false})" in store and b"read(DATA+'/lastgood.json',null)" in store and b'if(!config.enabled || !good)return false;' in store)
+    init = readfile('etc/init.d/alwayroute')
+    check('manager_init_requires_runtime', b'[ -s /tmp/alwayroute/runtime.json ] || /usr/libexec/alwayroute-boot || return 0' in init)
+    check('manager_boot_service_enabled', any(
+        line.startswith('l') and line.endswith('squashfs-root/etc/rc.d/S95alwayroute -> ../init.d/alwayroute')
+        for line in listing.splitlines()
+    ))
+    for line in listing.splitlines():
+        match = re.search(r'squashfs-root/(.*)$', line)
+        if not match or not line.startswith('-') or 'x' not in line.split()[0]:
+            continue
+        path = match.group(1)
+        content = readfile(path)
+        if b'\0' in content:
+            continue
+        try:
+            content.decode('utf-8')
+        except UnicodeDecodeError:
+            continue
+        executable_texts.append(path)
+        first_line = content.split(b'\n', 1)[0]
+        check('executable_text_lf_' + path, b'\r\n' not in content)
+        if not first_line.startswith(b'#!') and path not in input_hashes:
+            # Upstream shell fragments (for example /etc/profile.d/*.sh) can
+            # carry execute bits although they are only sourced by a shell.
+            executable_source_fragments.append(path)
+            continue
+        interpreter = first_line[2:].split()[0] if first_line.startswith(b'#!') and first_line[2:].strip() else b''
+        check('executable_text_shebang_' + path, interpreter.startswith(b'/') and interpreter.decode().lstrip('/') in listed_paths)
 check('no_embedded_ssh_host_keys', not any('squashfs-root/etc/dropbear/dropbear_' in line and '_host_key' in line for line in listing.splitlines()))
 manifest = image.with_name(image.name.replace('-squashfs-sysupgrade.bin', '.manifest'))
 packages = {}
@@ -88,10 +173,20 @@ for line in manifest.read_text().splitlines():
     packages[name] = version
 for name in ['alwayroute-core', 'kmod-mt7603', 'kmod-mt76x2', 'kmod-nft-tproxy', 'ip-full', 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only']:
     check('package_' + name, name in packages)
+if args.profile == 'manager':
+    for name in ['alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute']:
+        check('package_' + name, name in packages)
+    baseline_data = args.baseline_image.read_bytes()
+    baseline_kernel_end = 64 + struct.unpack_from('>I', baseline_data, 12)[0]
+    check('manager_kernel_payload_unchanged', data[64:kernel_end] == baseline_data[64:baseline_kernel_end])
+    baseline_manifest = args.baseline_image.with_name(args.baseline_image.name.replace('-squashfs-sysupgrade.bin', '.manifest'))
+    baseline_packages = dict(line.split(' - ', 1) for line in baseline_manifest.read_text().splitlines())
+    check('manager_only_three_added_packages', set(packages) - set(baseline_packages) == {'alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute'})
+    check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
 check('no_ppp', 'ppp' not in packages and 'ppp-mod-pppoe' not in packages)
 overlay_start = ((offset + used + 65535) // 65536) * 65536
 report = {
-    'image': str(image), 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+    'image': str(image), 'profile': args.profile, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
     'uimage_payload_end': kernel_end, 'squashfs_bytes_used': used,
     'squashfs_block_size': squashfs_block_size,
     'overlay_start_relative_firmware': overlay_start,
@@ -101,7 +196,10 @@ report = {
     'core_bytes': len(core), 'core_sha256': core_sha,
     'metadata': metadata, 'package_count': len(packages), 'checks': checks,
     'boot_verified': False, 'flashing_performed': False,
+    'owned_payload_hashes': input_hashes,
+    'executable_texts_checked': executable_texts,
+    'upstream_executable_texts_without_shebang': executable_source_fragments,
 }
-out = work / 'image-inspection.json'
+out = args.output
 out.write_text(json.dumps(report, indent=2) + '\n')
 print(json.dumps(report, indent=2))
