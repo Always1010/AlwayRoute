@@ -82,4 +82,18 @@ forwarding 依赖 `libc`、`alwayroute-core`、`firewall4`、`jsonfilter`、`ip-
 | 按擦除块对齐的 overlay 起点 | 13,434,880 | 相对 firmware 起点 |
 | raw overlay 容量 | 1,769,472 | 1728 KiB / 1.6875 MiB，尚未扣文件系统开销 |
 
-原厂首刷边界与现有 OpenWrt sysupgrade 分区边界分别核算；本构建线没有执行任何刷机步骤。镜像内按擦除块边界计算的 raw overlay 容量只是文件系统开销前的物理空间，不能当作设备实际可用 overlay 达标证据。用户已刷基线后的初始 `df` 可用约 1496 KiB，低于 1.5 MiB；最终设备容量须以实机 `df` 单独验收。本构建记录不声称已完成最终镜像启动或保留配置升级验证。
+原厂首刷边界与现有 OpenWrt sysupgrade 分区边界分别核算；构建子任务没有执行刷机，随后由主任务执行，结果见下节。raw overlay 只是扣除文件系统开销前的物理空间，不能当作实际可用空间达标证据。基础首启可用 1500 KiB，写入标记后约 1496 KiB，均低于 1.5 MiB；最终升级后实测也未达到该规划值。
+
+## 主任务追加：最终保留配置升级与启动验证
+
+用户针对上述最终 SHA 单独批准后，主任务再核对目标 SHA、marker 和 `sysupgrade -T`，执行一次不带 `-n` 的 `sysupgrade /tmp/alwayroute-manager-final.bin`。没有写 Bootloader、Factory 或 ALL。外置配置备份为 9562 字节，包含网络、无线、SSH/Web、shadow、authorized_keys、主机密钥、管理模型/service 和 marker，11 项必需内容核对通过。
+
+升级关闭会话时 SSH 包装返回 246，日志包含 procd/ubus connection failed；不能把该会话退出码作为最终刷写结果。约 124 秒后以原主机密钥重新连接，新 boot ID 为 `<runtime-id>`；`/rom` 内 marker 修正脚本、S95 启动入口与 manager 模块载荷已确认，证明实际运行的是最终镜像。
+
+- 原 11 项关键配置文件逐一 SHA 与升级前备份一致，双频 AP 自动启用，SSID 保持不变，root 登录及认证后 LuCI 页面返回 200。
+- current/lastgood 为 revision 6，38 个节点、1 个订阅、无测试规则；saved/applied 均为 6，核心、selector 与透明转发自动恢复，没有重新保存或手动启动服务。
+- 升级后透明 HTTPS 两次证书校验通过并返回 204，耗时 1172/770 ms；沿用已批准的单 IP 临时测试路由，结束后移除。
+- 启动后的首轮节点检查未确认、首轮 LAN DNS 超时；没有修改配置或服务，随后 UDP/TCP DNS 分别约 1214/1215 ms 返回 rcode 0，节点检查再测通过（1106 ms）。原因未确定，保留冷启动瞬时失败记录，不宣称没有发生过。
+- overlay 在初次连接为 1484 KiB、稍后为 1492 KiB；核心 RSS 一次采样为 29,724 KiB，MemAvailable 为 22,140 KiB。不是原始物理容量达标证据，也不代表持续并发性能。
+
+最终镜像及检查文件已复制到电脑 `artifacts/manager-20261023/`，固件 SHA 与 Rock/目标一致。真实手机浏览器使用、物理断开 Rock、UDP 代理及 200 Mbps/持续负载仍需按各自范围验收；不把本轮自动恢复成功标成全部 A1–A9 完成。
