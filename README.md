@@ -13,12 +13,12 @@
 
 | 路径 | 方向 | 当前状态 |
 | --- | --- | --- |
-| A：刷入新固件 | 评估适配本机的 OpenWrt 等固件，结合现成代理组件和 Web 管理能力 | 候选；标签与芯片组合已核对，验证镜像构建中，实际启动、资源及恢复仍待验收 |
-| B：保留小米固件 | 保留原厂网络功能，加装代理核心及管理服务；ShellCrash 是候选运行组件 | 候选；2.28.62 的 root／SSH 重启与单条 VMess 显式代理已验证，独立持久化、透明接管和完整管理仍待验证 |
+| A：刷入新固件 | 自编 OpenWrt、sing-box 与轻量 LuCI 管理扩展 | 已选实施主线；基础候选已刷入，SSH、上网与持久化重启通过；管理扩展联调中 |
+| B：保留小米固件 | 原厂网络功能加核心／管理服务 | 历史备选；保留原厂镜像、备份与兼容性试验记录 |
 
-两条路径服务于同一份需求，尚未选定最终路线。ShellCrash、Mihomo、OpenClash 等均为候选组件，不是已确认可在本机部署的组合。
+用户已选择自编固件主线。ShellCrash、Mihomo、OpenClash 等前期候选与比较结论保留在历史报告中。
 
-已在原厂固件完成两种静态 sing-box 构建的单条 VMess 实测，定制 OpenWrt 验证镜像正在构建；完整网页管理、透明转发和独立运行验收尚未通过。尚未找到已证明满足全部需求的现成组合。Rock 长期网关提案已不采纳。
+已有配置管理、LuCI 页面和透明转发包源码；完整网页、真实订阅、实际出口及脱离 Rock 的独立运行正在集成验收。当前能打开基础 LuCI 不代表代理扩展已经验收。Rock 仅承担开发、构建与操作职责。
 
 ## 文档入口
 
@@ -27,10 +27,12 @@
 | 类别 | 文档 | 内容与状态 |
 | --- | --- | --- |
 | 需求 | [项目需求](docs/requirements.md) | 产品范围、功能、配置语义和首版验收标准 |
-| 计划 | [实施路径与阶段方案](docs/implementation-plan.md) | 两条路线、推进条件、分工与当前检查结论 |
+| 计划 | [并行实施方案](docs/implementation-plan.md) | 已选主线、任务分工、依赖与验收 |
 | 开发 | [源码与 Rock 构建同步](docs/development-workflow.md) | 电脑仓库保存自有源码，以 rsync 同步到独立 Rock 工作副本 |
 | 设备 | [小米 4A 设备与网络记录](docs/devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
-| 验证 | [管理入口、备份与路线验证](docs/reports/2026-10-22-4a-baseline-and-route-validation.md) | 最新验证报告：root、SSH 加固、在线分区备份及一次重启结果 |
+| 当前设备 | [首刷与基础实机结果](docs/reports/2026-10-23-first-flash-review.md) | OpenWrt 首刷、实际空间、网络及重启 |
+| 集成审查 | [管理扩展核查](docs/reports/2026-10-23-manager-integration-audit.md) | 运行时、权限、配置事务及故障边界 |
+| 构建历史 | [管理入口、备份与路线验证](docs/reports/2026-10-22-4a-baseline-and-route-validation.md) | 原厂基线、备份、核心测试和基础候选构建 |
 | 验证历史 | [降级、root 与 SSH 管理入口记录](docs/reports/2026-10-22-4a-root-ssh-verification.md) | 前次执行报告；SSH 安全配置、备份及重启状态已由后续报告更新 |
 | 调查 | 本地环境资料 | 离线资源核算、组件缺口和待验证条件；设备状态以最新报告为准 |
 | 历史提案 | 本地环境资料 | 已明确不采纳、未执行，保留原文供对照 |
@@ -39,13 +41,15 @@
 
 ## 文件组织
 
-当前仓库以需求、调研和设备验证记录为主；[firmware](firmware/README.md) 保存 OpenWrt 验证镜像的构建输入，尚无完整代理管理应用。
+自有应用与构建配方位于 [firmware](firmware/README.md)，前后端契约位于 `contracts/`，针对性验证位于 `tests/`。源码保存在电脑仓库，通过 rsync 同步到 Rock；第三方源码及构建缓存留在 Rock。
 
 ```text
 AlwayRoute/
 ├── README.md                 # 项目概览、当前进度和完整文档导航
 ├── .gitignore                # 凭证、备份、下载物和本地记录的排除规则
 ├── firmware/                 # 验证固件的包配方、配置、首启脚本和补丁
+├── contracts/                # 管理模型、RPC 契约和脱敏样本
+├── tests/                    # 配置事务、界面及集成检查
 ├── scripts/                  # 源码同步等项目工作流脚本
 └── docs/
     ├── requirements.md       # 需求与验收标准
@@ -60,7 +64,9 @@ AlwayRoute/
 
 ## 当前进度
 
-截至 2026-10-22（Asia/Shanghai），项目处于两条路线的可行性验证阶段。4A 已由前次操作降级为原厂 MiWiFi `2.28.62`；本轮直接复核 root／SSH，完成分区在线备份、SSH 加固、一次重启自启验证和两种静态核心的 VMess 显式代理测试。OpenWrt 镜像正在 Rock 原生构建，尚未刷入设备，也未部署长期代理服务。自有构建文件已保存在本仓库，并完成首次 rsync 同步与哈希比对；完整 AlwayRoute 业务应用尚未开发。
+截至 2026-10-23（Asia/Shanghai），4A 已运行自编 OpenWrt 25.12.6／Linux 6.12.112，SSH 122、公钥认证、WAN DHCP、HTTPS 上网和一次持久化重启通过。原 Wi-Fi 名称／密码已恢复，LuCI 登录认证已验证并仅向 LAN／回环开放。基础候选首启可写空间为 1500KiB（约 1.465MiB），低于此前 1.5MiB 规划目标；完整组件和更新峰值仍须实测。
+
+三个自有包已实现初版：`alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding`。当前进行真实订阅、目标运行时与透明代理联调；尚未完成全部首版验收，也未证明 200Mbps 代理吞吐。
 
 早期 XMiR-Patcher 中断及取消的验证属于历史记录；前次降级／root 操作另有报告。本轮通过现有密钥登录，没有重复漏洞利用。早期中断不能独自证明 2.28.91 完整利用链失效。
 
