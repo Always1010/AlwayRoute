@@ -37,7 +37,7 @@
   var ui = {
     showModal: function(title, children) {
       ui.hideModal(); previousFocus = document.activeElement;
-      var panel = E('section', { 'class': 'preview-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title }, [E('h2', {}, [title])].concat(children));
+      var panel = E('section', { 'class': 'modal preview-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title }, [E('h2', {}, [title])].concat(children));
       modal = E('div', { 'class': 'preview-overlay' }, [panel]); document.body.appendChild(modal);
       var first = modal.querySelector('input,select,textarea,button'); if (first) first.focus();
     },
@@ -99,7 +99,7 @@
     if (method === 'job_status') { finishJob(); return { ok: true, busy: !!job && job.status === 'running', job: job ? clone(job) : null }; }
     if (method === 'capabilities') return { ok: true, schema: 1, protocols: ['vmess'], subscriptionFormats: ['vmess-uri', 'base64-vmess-list', 'clash-json', 'clash-yaml-block-subset'], forwarding: 'unverified' };
     if (method === 'get') return result();
-    if (method === 'status') return { ok: true, state: clone(state), checks: clone(checks), service: { running: serviceRunning }, core: { available: scenario !== 'unavailable', groups: scenario === 'unavailable' ? null : Object.fromEntries(observed.map(function(g) { return [g.id, { now: g.selected }]; })) }, forwarding: { scope: 'preview-only', available: false, dns: 'unverified', udp: 'unverified', ipv6: 'unverified' } };
+    if (method === 'status') return { ok: true, state: clone(state), checks: clone(checks), service: { running: serviceRunning }, core: { available: scenario !== 'unavailable', groups: scenario === 'unavailable' ? {} : Object.fromEntries(observed.map(function(g) { return [g.id, { now: g.selected }]; })) }, forwarding: { scope: 'preview-only', available: false, dns: 'unverified', udp: 'unverified', ipv6: 'unverified' } };
     if (method === 'traffic') return scenario === 'unavailable' ? { ok: true, available: false, upload: null, download: null, reason: '测试场景：核心流量不可用' } : { ok: true, available: true, upload: 18432, download: 345678, unit: 'bytes/s', reason: '脱敏模拟数据，仅用于本地预览' };
     if (method === 'logs') return { ok: true, entries: clone(events.slice(-20)) };
     if (method === 'export') { var m = clone(saved); if (!args.includeSecrets) { m.nodes.forEach(function(n) { n.uuid = '[redacted]'; }); m.subscriptions.forEach(function(s) { s.url = 'https://redacted.invalid/'; }); } return { ok: true, model: m, redacted: !args.includeSecrets }; }
@@ -131,11 +131,11 @@
     if (app) { poll.remove(app.pollFn); window.removeEventListener('beforeunload', app.beforeUnload); }
     ui.hideModal(); errors.textContent = ''; fixture(); delete modules['view.alwayroute.app'];
     document.getElementById('view').replaceChildren(E('p', {}, ['正在加载…']));
-    try { app = requireModule('view.alwayroute.app'); app.ready.then(function() { return app.refreshRuntime(); }).catch(report); }
+    try { app = requireModule('view.alwayroute.app'); app.ready.then(function() { return app.refreshRuntime(true); }).catch(report); }
     catch (error) { report(error); }
-    window.preview = { calls: calls, get app() { return app; }, reset: reset, scenario: function(value) { scenario = value; app.refreshRuntime(); } };
+    window.preview = { calls: calls, get app() { return app; }, reset: reset, scenario: function(value) { scenario = value; app.refreshRuntime(true); } };
   }
   document.getElementById('preview-reset').addEventListener('click', reset);
-  document.getElementById('preview-scenario').addEventListener('change', function(event) { scenario = event.target.value; app.refreshRuntime(); });
+  document.getElementById('preview-scenario').addEventListener('change', function(event) { scenario = event.target.value; app.refreshRuntime(true); });
   reset();
 })();

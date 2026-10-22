@@ -33,10 +33,12 @@ function harness(call) {
       this.checked = !!attrs.checked; this.disabled = !!attrs.disabled; this.isConnected = true;
       if (attrs.click) this.events.click = attrs.click;
       children.forEach(c => this.appendChild(c));
+      if (tag === 'select') this.value = (children.find(c => c.attrs.selected != null) || children[0] || { attrs: {} }).attrs.value || '';
     }
     appendChild(child) { this.children.push(child); return child; }
     removeChild(child) { this.children.splice(this.children.indexOf(child), 1); }
     addEventListener(event, fn) { this.events[event] = fn; }
+    setAttribute(key, value) { this.attrs[key] = value; }
     remove() {}
     get firstChild() { return this.children[0]; }
   }
@@ -62,6 +64,11 @@ function find(element, predicate) {
   if (predicate(element)) return element;
   for (const child of element.children || []) { const hit = find(child, predicate); if (hit) return hit; }
   return null;
+}
+
+function fieldInput(fields, label) {
+  const field = find({ children: fields }, n => n.attrs && n.attrs.class === 'cbi-value ar-field' && text(n.children[0]) === label);
+  return find(field, n => ['input', 'select', 'textarea'].includes(n.tag));
 }
 
 test('effective subscription overrides remain separate from source nodes', () => {
@@ -121,9 +128,9 @@ test('all tabs render authenticated data; observed selector is independent from 
   view.draft.nodes.push(node()); view.draft.groups[0].selected = 'n1';
   view.runtime = { service: { running: true }, core: { available: true, groups: { Proxy: { now: 'direct' } } }, forwarding: { scope: 'unverified' } };
   view.paint();
-  assert.match(text(view.root), /核心实际选择/); assert.match(text(view.root), /scope：unverified/);
+  assert.match(text(view.root), /核心当前选择：直连/); assert.doesNotMatch(text(view.root), /最近事件|配置导出/);
   assert.match(text(view.root), /未验证/); assert.doesNotMatch(text(view.root), /\[object Object\]/);
-  for (const tab of ['nodes', 'subscriptions', 'groups', 'rules', 'settings']) { view.tab = tab; view.paint(); assert.ok(view.root.children.length); }
+  for (const tab of ['nodes', 'subscriptions', 'logs', 'settings']) { view.tab = tab; view.paint(); assert.ok(view.root.children.length); }
 });
 
 test('save persists draft without apply; select saves without claiming actual activation', async () => {
@@ -135,6 +142,84 @@ test('save persists draft without apply; select saves without claiming actual ac
   assert.deepEqual(calls.map(c => c[0]), ['save']); assert.equal(view.dirty, false); assert.equal(view.state.appliedRevision, 0);
   await view.chooseNode('Proxy', 'direct'); assert.deepEqual(calls.map(c => c[0]), ['save', 'select']); assert.match(view.message.text, /请应用/);
   view.dirty = true; assert.throws(() => view.apply(), /请先保存/);
+});
+
+test('save and apply uses the returned revision and a failed save never applies', async () => {
+  const calls = [];
+  const { view } = harness(async (method, args) => {
+    calls.push([method, args]);
+    if (method === 'status') return { state: { savedRevision: 1, appliedRevision: 1 }, core: { available: true, groups: {} } };
+    if (method === 'traffic') return { available: false };
+    return { model: Object.assign(empty(), { revision: 1 }), state: { savedRevision: 1, appliedRevision: method === 'apply' ? 1 : 0 } };
+  });
+  view.dirty = true; await view.saveApply();
+  assert.deepEqual(calls.map(c => c[0]), ['save', 'apply', 'status', 'traffic']);
+  assert.deepEqual(calls[1][1], [1]);
+  const failed = [];
+  const other = harness(async method => { failed.push(method); throw new Error('保存失败'); }).view;
+  other.dirty = true; await assert.rejects(other.saveApply(), /保存失败/);
+  assert.deepEqual(failed, ['save']); assert.equal(other.dirty, true);
+});
+
+test('custom groups preserve references on rename and block deleting primary or referenced groups', () => {
+  const { view } = harness(async () => { throw new Error('Editing must not call RPC'); });
+  let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  view.editGroup(); fieldInput(fields, '名称').value = '工作'; commit();
+  const group = view.draft.groups.at(-1), id = group.id;
+  assert.equal(group.selected, 'Proxy');
+  view.draft.rules.push({ id: 'r1', type: 'suffix', value: 'example.com', enabled: true, outbound: id });
+  view.editGroup(group); fieldInput(fields, '名称').value = '工作网站'; commit();
+  assert.equal(group.id, id); assert.equal(view.draft.rules[0].outbound, id);
+  assert.throws(() => view.removeGroup(group), /引用/);
+  assert.throws(() => view.removeGroup(view.draft.groups[0]), /必须保留/);
+  view.draft.rules = []; view.draft.defaultOutbound = id;
+  assert.throws(() => view.removeGroup(group), /默认出口/);
+  view.draft.defaultOutbound = 'Proxy'; view.removeGroup(group);
+  assert.equal(view.draft.groups.some(g => g.id === id), false);
+});
+
+test('runtime refresh preserves strategy controls and never promotes draft choices to actual choices', async () => {
+  let actual = 'direct', lastError = null;
+  const { view } = harness(async method => method === 'status' ? { state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified', lastError }, service: { running: true }, core: { available: true, groups: { Proxy: { now: actual } } } } : { available: true, upload: 1, download: 2 });
+  view.draft.nodes.push(node()); view.paint();
+  const control = find(view.root, n => n.attrs['aria-label'] === '代理的出口');
+  await view.refreshRuntime();
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口'), control);
+  control.value = 'n1'; control.events.change();
+  assert.equal(view.dirty, true); assert.equal(view.actualChoice('Proxy'), 'direct');
+  assert.equal(view.groupStatus(view.draft.groups[0]), '核心当前选择：直连');
+  await view.refreshRuntime(); assert.equal(view.draft.groups[0].selected, 'n1');
+  actual = 'n1'; await view.refreshRuntime();
+  assert.equal(view.groupStatus(view.draft.groups[0]), '核心选择一致');
+  lastError = { message: '转发失败' }; await view.refreshRuntime();
+  assert.equal(view.live.lastError.hidden, false); assert.match(view.live.lastError.textContent, /转发失败/);
+  lastError = null; await view.refreshRuntime(); assert.equal(view.live.lastError.hidden, true);
+  view.runtime.core = { available: false, groups: {} };
+  assert.equal(view.groupStatus(view.draft.groups[0]), '实际出口未获取');
+  view.runtime.service.running = false;
+  assert.equal(view.groupStatus(view.draft.groups[0]), '服务已停止');
+});
+
+test('log polling is independent from pending status requests and page content stays separate', async () => {
+  let finishStatus;
+  const calls = [];
+  const { view } = harness(async method => {
+    calls.push(method);
+    if (method === 'status') return new Promise(resolve => { finishStatus = resolve; });
+    return method === 'logs' ? { entries: [{ time: 1700000000, level: 'info', message: '管理事件' }] } : { available: false };
+  });
+  view.paint(); const status = view.refreshRuntime();
+  view.tab = 'logs'; view.paint(); await view.refreshRuntime();
+  assert.deepEqual(calls, ['status', 'traffic', 'logs']);
+  assert.equal(view.logs[0].message, '管理事件');
+  const table = view.live.logs.firstChild;
+  await view.refreshRuntime(); assert.equal(view.live.logs.firstChild, table);
+  assert.doesNotMatch(text(view.root), /导出完整配置|实时流量/);
+  finishStatus({ state: { savedRevision: 99 } }); await status;
+  assert.equal(view.revision, 0); assert.equal(view.conflict, undefined);
+  view.tab = 'settings'; view.paint();
+  assert.match(text(view.root), /导出完整配置/); assert.doesNotMatch(text(view.root), /最近 20 条/);
 });
 
 test('revision conflict retains the local draft and exposes error; concurrent mutation is rejected', async () => {
@@ -154,8 +239,8 @@ test('polling pauses on hidden/non-overview pages and stale responses cannot ove
   document.hidden = true; await view.refreshRuntime(); assert.equal(calls.length, 0);
   document.hidden = false; view.tab = 'nodes'; await view.refreshRuntime(); assert.equal(calls.length, 0);
   view.tab = 'overview'; const operation = view.refreshRuntime();
-  assert.deepEqual(calls, ['status', 'traffic', 'logs']);
-  const duplicate = view.refreshRuntime(); await duplicate; assert.equal(calls.length, 3);
+  assert.deepEqual(calls, ['status', 'traffic']);
+  const duplicate = view.refreshRuntime(); await duplicate; assert.equal(calls.length, 2);
   view.operationGeneration = 1;
   pending.forEach(([method, resolve]) => resolve(method === 'status' ? { state: { savedRevision: 99 } } : method === 'logs' ? { entries: [] } : { available: false }));
   await operation; assert.equal(view.conflict, undefined); assert.equal(view.revision, 0);
@@ -166,7 +251,7 @@ test('new node editor omits empty optional TLS and websocket fields', () => {
   let fields, commit;
   view.modal = (_title, f, c) => { fields = f; commit = c; };
   view.editNode();
-  const input = label => fields.find(f => f.tag === 'label' && text(f.children[0]) === label).children[1];
+  const input = label => fieldInput(fields, label);
   input('名称').value = '测试'; input('服务器').value = 'example.test'; input('UUID（敏感）').value = node().uuid;
   input('VMess 加密').value = 'auto'; input('VMess alterId').value = '0'; input('传输').value = 'ws';
   commit(); const n = view.draft.nodes[0];
@@ -177,7 +262,7 @@ test('HTTP subscription permission defaults off and is scoped to the explicitly 
   const { view } = harness(async () => ({}));
   let fields, commit;
   view.modal = (_title, f, c) => { fields = f; commit = c; };
-  const input = label => fields.find(f => f.tag === 'label' && text(f.children[0]) === label).children[1];
+  const input = label => fieldInput(fields, label);
   view.editSubscription();
   assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
   input('名称').value = '现有 HTTP 来源'; input('订阅地址（敏感）').value = 'http://example.invalid/redacted';
@@ -196,7 +281,7 @@ test('editing a subscription preserves explicit HTTP permission and allows revok
   view.draft.subscriptions.push(original);
   let fields, commit;
   view.modal = (_title, f, c) => { fields = f; commit = c; };
-  const input = label => fields.find(f => f.tag === 'label' && text(f.children[0]) === label).children[1];
+  const input = label => fieldInput(fields, label);
   view.editSubscription(original); assert.equal(input('允许此订阅使用未加密HTTP').checked, true);
   input('允许此订阅使用未加密HTTP').checked = false;
   assert.throws(() => commit(), /HTTPS/); assert.equal(original.allowHttp, true);
@@ -225,7 +310,7 @@ test('asynchronous job stays busy until success and reloads persisted data; chec
   });
   window.setTimeout = fn => { fn(); };
   view.state.appliedRevision = 0;
-  const task = view.checkNode('n1'); assert.equal(view.busy, true);
+  const task = view.checkNode('n1'); assert.equal(view.busy, true); assert.match(view.configurationLabel(), /正在检查节点/);
   await task;
   assert.deepEqual(calls, ['check', 'job_status', 'job_status', 'get']);
   assert.equal(view.busy, false); assert.equal(view.checks.n1.delay, 42); assert.equal(view.checks.n1.checkedRevision, 0); assert.equal(view.state.healthy, 'unverified');
@@ -241,7 +326,7 @@ test('status restores only node checks belonging to the currently applied revisi
   await view.refreshRuntime();
   assert.deepEqual(Object.keys(view.checks), ['n1']);
   view.tab = 'nodes'; view.paint();
-  assert.match(text(view.root), /42 ms/); assert.match(text(view.root), /终端出口验证：未验证/);
+  assert.match(text(view.root), /42 ms/); assert.equal(view.state.healthy, 'unverified');
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '检查此节点').disabled, true);
   applied = 3; view.tab = 'overview'; await view.refreshRuntime();
   assert.deepEqual(view.checks, {});
