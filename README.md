@@ -22,46 +22,25 @@
 
 ## 文档入口
 
-建议先读需求与实施方案，再查设备现状和验证报告；调查报告与历史提案用于了解判断依据。
+完整文档清单与阅读顺序集中在 [docs/README.md](docs/README.md)。常用入口：
 
-| 类别 | 文档 | 内容与状态 |
-| --- | --- | --- |
-| 需求 | [项目需求](docs/requirements.md) | 产品范围、功能、配置语义和首版验收标准 |
-| 计划 | [并行实施方案](docs/implementation-plan.md) | 已选主线、任务分工、依赖与验收 |
-| 开发 | [源码与 Rock 构建同步](docs/development-workflow.md) | 电脑仓库保存自有源码，以 rsync 同步到独立 Rock 工作副本 |
-| 设备 | [小米 4A 设备与网络记录](docs/devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
-| 当前设备 | [首刷与基础实机结果](docs/reports/2026-10-23-first-flash-review.md) | OpenWrt 首刷、实际空间、网络及重启 |
-| 集成审查 | [管理扩展核查](docs/reports/2026-10-23-manager-integration-audit.md) | 运行时、权限、配置事务及故障边界 |
-| 扩展构建 | [管理扩展构建记录](docs/reports/2026-10-23-manager-build.md) | 签名包、完整镜像、载荷校验及被拒绝的候选 |
-| 构建历史 | [管理入口、备份与路线验证](docs/reports/2026-10-22-4a-baseline-and-route-validation.md) | 原厂基线、备份、核心测试和基础候选构建 |
-| 验证历史 | [降级、root 与 SSH 管理入口记录](docs/reports/2026-10-22-4a-root-ssh-verification.md) | 前次执行报告；SSH 安全配置、备份及重启状态已由后续报告更新 |
-| 调查 | 本地环境资料 | 离线资源核算、组件缺口和待验证条件；设备状态以最新报告为准 |
-| 历史提案 | 本地环境资料 | 已明确不采纳、未执行，保留原文供对照 |
-
-同日记录按上述前后关系阅读，不能仅凭文件名排序判断先后。需求以需求文档为基线，当前计划以实施方案为准；设备状态优先查看设备记录及最新验证报告，历史报告保留当时的观察和结论。
+- [项目需求](docs/requirements.md)与[当前实施方案](docs/implementation-plan.md)：范围、依赖和验收标准。
+- [仓库文件结构](docs/repository-structure.md)：目录职责、源码位置、新文件放置及维护规则。
+- [源码与 Rock 构建同步](docs/development-workflow.md)及[固件说明](firmware/README.md)：源码主本、同步、构建输入和缓存约定。
+- [v1 接口契约](contracts/v1.md)与[测试说明](tests/README.md)：前后端边界、验证命令和执行环境。
+- [设备记录](docs/devices/xiaomi-4a.md)及[验证报告导航](docs/README.md)：当前设备状态和历史证据。
 
 ## 文件组织
 
-自有应用与构建配方位于 [firmware](firmware/README.md)，前后端契约位于 `contracts/`，针对性验证位于 `tests/`。源码保存在电脑仓库，通过 rsync 同步到 Rock；第三方源码及构建缓存留在 Rock。
+| 目录 | 职责 |
+| --- | --- |
+| `firmware/` | OpenWrt 自有包、构建配置、补丁和固件专用工具 |
+| `contracts/` | 管理模型、RPC 契约及合成样本 |
+| `tests/` | 管理后端、界面和集成检查，以及离线预览 |
+| `scripts/` | 源码同步等跨组件开发工作流 |
+| `docs/` | 文档导航、需求、计划、开发约定、设备记录、提案和报告 |
 
-```text
-AlwayRoute/
-├── README.md                 # 项目概览、当前进度和完整文档导航
-├── .gitignore                # 凭证、备份、下载物和本地记录的排除规则
-├── firmware/                 # 验证固件的包配方、配置、首启脚本和补丁
-├── contracts/                # 管理模型、RPC 契约和脱敏样本
-├── tests/                    # 配置事务、界面及集成检查
-├── scripts/                  # 源码同步等项目工作流脚本
-└── docs/
-    ├── requirements.md       # 需求与验收标准
-    ├── implementation-plan.md # 当前实施方案
-    ├── development-workflow.md # 本地源码与 Rock 构建同步约定
-    ├── devices/              # 持续更新的设备与网络记录
-    ├── proposals/            # 可行性调查、候选方案及历史提案
-    └── reports/              # 按日期保存的执行与验证报告
-```
-
-新增执行报告与提案使用 `YYYY-MM-DD-主题.md` 命名，并在文首说明日期、状态和关联文档；同日存在多轮记录时，注明前后关系。需求、当前方案与设备记录在原文件持续维护，新增文档同步加入上方导航。
+源码保存在电脑仓库，通过 rsync 同步到 Rock 的独立工作副本；第三方源码、工具链和构建缓存留在 Rock。本机 `.local/`、`artifacts/` 和 `session-log.md` 由 Git 忽略，其用途及完整目录树见[仓库文件结构](docs/repository-structure.md)。
 
 ## 当前进度
 
