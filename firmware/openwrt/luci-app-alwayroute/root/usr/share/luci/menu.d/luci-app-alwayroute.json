@@ -1,0 +1,8 @@
+{
+  "admin/services/alwayroute": {
+    "title": "AlwayRoute",
+    "order": 30,
+    "action": { "type": "view", "path": "alwayroute/app" },
+    "depends": { "acl": ["luci-app-alwayroute"] }
+  }
+}
