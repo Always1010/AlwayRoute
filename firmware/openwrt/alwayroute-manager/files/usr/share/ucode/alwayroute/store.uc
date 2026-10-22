@@ -94,7 +94,7 @@ function refresh(args,m) {
  let content=args.content;
  if(!content) {
   // URL is staged in a root-only file; downloader diagnostics are suppressed.
-  write(TMP+'/fetch.json',{url:s.url});
+  write(TMP+'/fetch.json',{url:s.url,allowHttp:s.allowHttp===true});
   if(!command('/usr/libexec/alwayroute-fetch'))fail('FETCH_FAILED','HTTPS 订阅获取失败，原节点保持不变');
   content=fs.readfile(TMP+'/subscription.body',131073);
  }
@@ -106,7 +106,7 @@ function refresh(args,m) {
 };
 function redact(m) {m=clone(m);for(let n in m.nodes)n.uuid='[redacted]';for(let s in m.subscriptions)s.url='https://redacted.invalid/';for(let k,o in m.overrides)if(o.patch?.uuid)o.patch.uuid='[redacted]';return m;}
 function execute(method,args) {
- if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,logs:true};
+ if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,logs:true};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
  if(method=='status')return {ok:true,state:state(),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};

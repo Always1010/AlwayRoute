@@ -19,23 +19,61 @@ function scalar(s) {
   if(char(s,-1)!="'") unsupported();
   let value=''; for(let i=1;i<length(s)-1;i++) { if(char(s,i)=="'") {if(char(s,i+1)!="'")unsupported();i++;} value+=char(s,i); } return value;
  }
- for(let c in split(s,'')) if(index('{}[]&*!|>\t#',c)>=0) unsupported();
+ for(let c in split(s,'')) if(index('{}[]&*!|>\t#\'"',c)>=0) unsupported();
  if(s=='true')return true;if(s=='false')return false;
  return s;
 };
+function flowTokens(s,separator) {
+ let parts=[],start=0,quoted='';
+ for(let i=0;i<length(s);i++) {
+  let c=char(s,i);
+  if(quoted) {
+   if(quoted=='"' && c=='\\'){i++;if(i>=length(s))unsupported();continue;}
+   if(c==quoted){if(quoted=="'" && char(s,i+1)=="'")i++;else quoted='';}
+  } else {
+   if(c=='"' || c=="'")quoted=c;
+   else if(index('{}[]',c)>=0)unsupported();
+   else if(c==separator){push(parts,substr(s,start,i-start));start=i+1;}
+  }
+ }
+ if(quoted)unsupported();push(parts,substr(s,start));return parts;
+};
+function flow(s) {
+ s=trim(s);if(char(s,0)!='{' || char(s,-1)!='}')unsupported();
+ let result={};
+ for(let entry in flowTokens(substr(s,1,length(s)-2),',')) {
+  let tokens=flowTokens(entry,':');if(length(tokens)<2)unsupported();
+  let key=scalar(shift(tokens)),value=scalar(join(':',tokens));
+  if(type(key)!='string' || !length(key) || value==null || key in result)unsupported();
+  result[key]=value;
+ }
+ return result;
+};
+function hasProxies(content) {
+ for(let line in split(content,'\n'))if(substr(line,0,1)!=' ' && trim(line)=='proxies:')return true;
+ return false;
+};
 function yaml(content) {
- let proxies=[], current=null, parents=[], found=false;
+ let proxies=[],current=null,parents=[],found=false,active=false,listIndent=null;
  for(let raw in split(content,'\n')) {
   if(length(raw) && char(raw,-1)=='\r')raw=substr(raw,0,length(raw)-1);
   if(!length(trim(raw)) || char(trim(raw),0)=='#')continue;
   let indent=0;while(char(raw,indent)==' ')indent++;
   let line=substr(raw,indent);
-  if(!indent) {if(line!='proxies:' || found)unsupported();found=true;continue;}
-  if(!found || indent%2)unsupported();
-  if(indent==2 && substr(line,0,2)=='- ') {
-   current={};push(proxies,current);parents=[{indent:2,obj:current}];line=substr(line,2);indent=4;
+  if(!indent && !(active && substr(line,0,2)=='- ')) {
+   if(trim(line)=='proxies:'){if(found)unsupported();found=true;active=true;continue;}
+   // Import only proxies: system settings, groups, secrets and rules are ignored.
+   active=false;continue;
   }
-  if(!current || indent<4)unsupported();
+  if(!active)continue;
+  if(indent%2)unsupported();
+  if(substr(line,0,2)=='- ' && (listIndent==null || indent==listIndent)) {
+   if(listIndent==null){if(indent!=0 && indent!=2)unsupported();listIndent=indent;}
+   line=trim(substr(line,2));
+   if(char(line,0)=='{'){push(proxies,flow(line));current=null;parents=[];continue;}
+   current={};push(proxies,current);parents=[{indent:listIndent,obj:current}];indent=listIndent+2;
+  }
+  if(!current || indent<listIndent+2)unsupported();
   let colon=index(line,':');if(colon<=0)unsupported();
   let key=substr(line,0,colon), tail=substr(line,colon+1);
   for(let c in split(key,''))if(index('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_',c)<0)unsupported();
@@ -74,9 +112,9 @@ function vmess(uri) {
 export function parse(content,source,hash) {
  if(type(content)!='string' || !length(content) || length(content)>131072)fail('INPUT_LIMIT','订阅必须为 1..128KiB');
  let body=trim(content), raw=[];
- if(substr(body,0,8)!='vmess://' && char(body,0)!='{' && substr(body,0,8)!='proxies:')body=trim(decode(body));
+ if(substr(body,0,8)!='vmess://' && char(body,0)!='{' && !hasProxies(body))body=trim(decode(body));
  if(char(body,0)=='{') {let value;try{value=json(body);}catch(e){unsupported();}allowed(value,['proxies']);if(type(value.proxies)!='array')unsupported();for(let p in value.proxies)push(raw,clash(p));}
- else if(substr(body,0,8)=='proxies:') {for(let p in yaml(body))push(raw,clash(p));}
+ else if(hasProxies(body)) {for(let p in yaml(body))push(raw,clash(p));}
  else for(let line in split(body,'\n'))if(length(trim(line)))push(raw,vmess(trim(line)));
  if(!length(raw) || length(raw)>128)fail('INPUT_LIMIT','订阅节点数量必须为 1..128');
  let nodes=[],ids={};for(let n in raw) {

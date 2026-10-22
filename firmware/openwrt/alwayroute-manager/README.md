@@ -7,7 +7,11 @@ LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重�
 
 包安装 root-only 配置库 `/etc/alwayroute/`、rpcd ACL、init 脚本及每小时第17分的
 订阅更新 cron。cron 只更新保存配置，管理员须显式应用，避免定时改变现有转发。
-下载仅 HTTPS、默认验证证书、20秒总时限、128KiB上限；不使用公共转换服务。
+下载默认仅 HTTPS、默认验证证书、20秒总时限、128KiB上限；不使用公共转换服务。
+每个订阅可由管理员显式设置`allowHttp:true`，仅为该来源允许http://输入；
+缺字段、false或非布尔true均不构成许可。HTTP没有传输加密，不全局放开，也不允许其他scheme。
+固定uclient-fetch源码自动跟随最多10次重定向，没有CLI关闭或限制选项，
+因此不能保证重定向链阻止HTTPS降级；只严格约束初始URL，不添加猜测参数。
 固定镜像未编BusyBox timeout，本包使用一次性POSIX shell watchdog约束下载进程，
 完成后清理计时子进程，无需安装timeout或改变BusyBox配置。
 URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通状态；完整配置仅有管理写权限可读。
@@ -45,8 +49,10 @@ DoH走Proxy，bootstrap用路由器系统DNS；直连域名使用bootstrap。缓
 IPv6 LAN绕行阻断及IPv4 TCP/UDP TProxy由转发包实施，管理访问豁免亦由其保证。
 
 订阅解析范围故意有限：VMess URI、整体base64 URI列表、仅含proxies数组的Clash JSON、
-精简Clash YAML块列表。YAML用逐字符token及缩进解析，未使用正则抽取字段；
-锚点、标签、flow map/数组、多行字符串、未知字段、其他协议、跳过证书验证和udp:false均拒绝。
+Clash YAML中的顶层proxies块。完整Clash其余监听、secret、proxy-groups及rules均忽略，不透传。
+节点支持块形式或单行flow map标量，逐字符处理引号、转义、逗号和冒号；
+YAML用逐字符token及缩进解析，未使用正则抽取字段。
+锚点、标签、嵌套flow map/数组、多行字符串、未知节点字段、其他协议、跳过证书验证和udp:false均拒绝。
 不宣称支持任意Clash YAML。示例仅使用example.invalid及全合成UUID。
 节点连接身份(type/server/port/uuid)SHA256生成稳定ID；改名不变ID；
 覆盖与排除独立保存，更新消失选中或被引用节点时拒绝整个更新，原数据保留。
@@ -58,11 +64,14 @@ python tests/manager/run-tests.py /path/to/ucode -
 ucode -L firmware/openwrt/alwayroute-manager/files/usr/share/ucode tests/manager/run.uc
 ```
 
-第一项将模块机械组合到stdin，运行18项模型/导入检查和20项内存适配事务检查；
+第一项将模块机械组合到stdin，运行31项模型/导入检查、20项内存适配事务检查，
+以及8项实际下载脚本许可检查；
 第二项检查真实模块导入。事务适配器覆盖revision冲突、后台排队、配置校验失败、
 提交写失败恢复、回退、凭证导出脱敏、停机持久、启动中断恢复、转发停止失败、
 适配器缺失及核心恢复失败保持阻断，未访问设备。
 已在现有Rock host ucode执行；三种模式的生成JSON亦通过现有ARM64 sing-box1.13.21真实check。
+用户授权的私有完整Clash订阅亦已通过纯解析，实际得到38个VMess节点；
+样本只留Rock私有目录，仓库仅含合成fixture，未输出URL、节点值或凭证。
 
 仍需目标环境验证：rpcd会话ACL、procd异步时序、uclient TLS与实际订阅、重启及断电恢复、
 LAN终端DNS/UDP/IPv6防绕行、实际出口/吞吐/资源。进程存活、API加载确认和单节点延迟

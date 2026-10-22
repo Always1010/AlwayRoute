@@ -1,0 +1,15 @@
+# Synthetic full Clash subscription. Only proxies are imported.
+port: 7890
+socks-port: 7891
+redir-port: 7892
+allow-lan: true
+mode: global
+log-level: debug
+external-controller: 0.0.0.0:9090
+secret: synthetic-fixture-only
+proxies:
+  - { name: "Example, region: A", type: vmess, server: example.invalid, port: 443, uuid: 00000000-0000-4000-8000-000000000001, alterId: 0, cipher: auto, udp: true }
+proxy-groups:
+  - { name: ExternalPolicy, type: select, proxies: [DIRECT] }
+rules:
+  - MATCH,DIRECT

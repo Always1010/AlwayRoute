@@ -27,6 +27,11 @@ suites = [
     "import { sha256 } from 'digest';\n" + bundle(['model.uc', 'subscription.uc']) + '\n' + model_tests,
     (ROOT / 'tests/manager/transactions.uc').read_text(encoding='utf-8').replace(
         '// MANAGER_SOURCE', bundle(['model.uc', 'subscription.uc', 'store.uc'])),
+    (ROOT / 'tests/manager/fetch.uc').read_text(encoding='utf-8').replace(
+        '// FETCH_SOURCE', '\n'.join(line for line in
+            (ROOT / 'firmware/openwrt/alwayroute-manager/files/usr/libexec/alwayroute-fetch')
+            .read_text(encoding='utf-8').splitlines()
+            if not line.startswith('import ') and not line.startswith('#!'))),
 ]
 for suite in suites:
     result = subprocess.run(command, input=suite.encode('utf-8'), check=False)

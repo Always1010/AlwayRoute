@@ -173,6 +173,41 @@ test('new node editor omits empty optional TLS and websocket fields', () => {
   assert.equal(n.tls.serverName, undefined); assert.equal(n.transport.host, undefined); assert.equal(n.transport.path, '/');
 });
 
+test('HTTP subscription permission defaults off and is scoped to the explicitly approved source', () => {
+  const { view } = harness(async () => ({}));
+  let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  const input = label => fields.find(f => f.tag === 'label' && text(f.children[0]) === label).children[1];
+  view.editSubscription();
+  assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
+  input('名称').value = '现有 HTTP 来源'; input('订阅地址（敏感）').value = 'http://example.invalid/redacted';
+  assert.throws(() => commit(), /显式勾选/); assert.equal(view.draft.subscriptions.length, 0);
+  input('允许此订阅使用未加密HTTP').checked = true; commit();
+  assert.equal(view.draft.subscriptions[0].allowHttp, true);
+  view.editSubscription();
+  assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
+  input('名称').value = '正常 HTTPS 来源'; input('订阅地址（敏感）').value = 'https://example.invalid/redacted'; commit();
+  assert.equal(view.draft.subscriptions[1].allowHttp, false);
+});
+
+test('editing a subscription preserves explicit HTTP permission and allows revoking it after moving to HTTPS', () => {
+  const { view } = harness(async () => ({}));
+  const original = { id: 'http_source', name: 'HTTP', url: 'http://example.invalid/redacted', enabled: true, intervalHours: 0, allowHttp: true };
+  view.draft.subscriptions.push(original);
+  let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  const input = label => fields.find(f => f.tag === 'label' && text(f.children[0]) === label).children[1];
+  view.editSubscription(original); assert.equal(input('允许此订阅使用未加密HTTP').checked, true);
+  input('允许此订阅使用未加密HTTP').checked = false;
+  assert.throws(() => commit(), /HTTPS/); assert.equal(original.allowHttp, true);
+  input('订阅地址（敏感）').value = 'https://example.invalid/redacted'; commit();
+  assert.equal(view.draft.subscriptions[0].allowHttp, false);
+  assert.equal(view.draft.subscriptions[0].id, original.id);
+  const legacy = { id: 'legacy', name: '旧 HTTPS', url: 'https://example.invalid/redacted', enabled: true, intervalHours: 0 };
+  view.draft.subscriptions.push(legacy); view.editSubscription(legacy);
+  assert.equal(input('允许此订阅使用未加密HTTP').checked, false);
+});
+
 test('readonly view disables write buttons while keeping reload available', () => {
   const { view } = harness(async () => ({})); view.readonly = true; view.dirty = true; view.paint();
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '保存').disabled, true);

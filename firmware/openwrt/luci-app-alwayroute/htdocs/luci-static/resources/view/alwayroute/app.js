@@ -371,14 +371,17 @@ return view.extend({
 			E('p', { 'class': 'ar-muted' }, ['更新可能增加或移除节点。若所选节点或规则引用消失，服务端拒绝更新并保留旧数据；请先调整引用。定时更新由路由器管理服务执行。'])]);
 	},
 	editSubscription: function(original) {
-		var self = this, s = original || { name: '', url: '', enabled: true, intervalHours: 0 };
+		var self = this, s = original || { name: '', url: '', enabled: true, intervalHours: 0, allowHttp: false };
 		var name = this.input(s.name), url = this.input(s.url, 'password', { autocomplete: 'new-password' });
 		var enabled = this.input('', 'checkbox', { checked: s.enabled || undefined }), interval = this.input(s.intervalHours, 'number', { min: 0, max: 168 });
-		this.modal(original ? '编辑订阅' : '添加订阅', [this.field('名称', name), this.field('HTTPS 订阅地址（敏感）', url), this.field('启用订阅', enabled),
+		var allowHttp = this.input('', 'checkbox', { checked: s.allowHttp === true || undefined });
+		this.modal(original ? '编辑订阅' : '添加订阅', [this.field('名称', name), this.field('订阅地址（敏感）', url), this.field('启用订阅', enabled),
+			this.field('允许此订阅使用未加密HTTP', allowHttp, '仅用于现有 HTTP 来源。凭证和节点配置不受传输加密保护；此开关仅对此订阅生效。'),
 			this.field('更新间隔（小时）', interval, '0 表示仅手动更新；定时范围为 1–168 小时。')], function() {
-			if (!name.value.trim() || !/^https:\/\/[^\s]+$/i.test(url.value.trim())) throw new Error('名称必填，订阅地址必须是 HTTPS URL');
+			var address = url.value.trim(), https = /^https:\/\/[^\s]+$/i.test(address), http = /^http:\/\/[^\s]+$/i.test(address);
+			if (!name.value.trim() || !(https || (http && allowHttp.checked))) throw new Error('名称必填；默认要求 HTTPS，现有 HTTP 来源须显式勾选此订阅的未加密 HTTP 许可');
 			if (!/^\d+$/.test(interval.value) || Number(interval.value) > 168) throw new Error('更新间隔须为 0–168 的整数');
-			var next = Object.assign({}, s, { id: s.id || model.id('s'), name: name.value.trim(), url: url.value.trim(), enabled: enabled.checked, intervalHours: Number(interval.value) });
+			var next = Object.assign({}, s, { id: s.id || model.id('s'), name: name.value.trim(), url: address, enabled: enabled.checked, intervalHours: Number(interval.value), allowHttp: allowHttp.checked });
 			if (original) self.draft.subscriptions[self.draft.subscriptions.indexOf(original)] = next;
 			else self.draft.subscriptions.push(next);
 		});

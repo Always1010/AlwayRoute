@@ -61,10 +61,12 @@ export function validate(m) {
  require(type(m.overrides)=='object' && length(keys(m.overrides)) <= 128,'覆盖设置无效');
  let ids = {direct:true,block:true}, sourceIds = {};
  for (let s in m.subscriptions) {
-  fields(s,['id','name','url','enabled','intervalHours','lastUpdate','lastError']);
+  fields(s,['id','name','url','enabled','intervalHours','allowHttp','lastUpdate','lastError']);
   require(id(s.id) && !sourceIds[s.id] && length(s.id)<=20 && text(s.name,128),'订阅标识无效或重复'); sourceIds[s.id]=true;
   require(type(s.enabled)=='bool' && integer(s.intervalHours,0,168),'订阅开关或周期无效');
-  require(text(s.url,2048) && index(s.url,'https://')==0 && !match(s.url,/[ "'<>\\]/),'订阅仅允许 HTTPS URL');
+  require(s.allowHttp==null || type(s.allowHttp)=='bool','HTTP 例外必须为布尔开关');
+  let schemeAllowed=type(s.url)=='string' && (index(s.url,'https://')==0 || (s.allowHttp===true && index(s.url,'http://')==0));
+  require(text(s.url,2048) && schemeAllowed && !match(s.url,/[ "'<>\\]/),'订阅需要 HTTPS；HTTP 须对此订阅显式允许');
  }
  for (let n in m.nodes) { node(n); require(!ids[n.id],'节点ID重复'); ids[n.id]=true; require(n.source == null || sourceIds[n.source], '节点引用未知订阅'); }
  for (let key,o in m.overrides) {
