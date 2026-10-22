@@ -87,9 +87,25 @@ return view.extend({
 
 	accept: function(result) {
 		if (result.model) { this.draft = model.clone(result.model); this.dirty = false; }
-		if (result.state) this.state = result.state;
+		if (result.state) this.updateState(result.state);
 		this.revision = this.state.savedRevision;
 		this.conflict = false;
+	},
+	updateState: function(state) {
+		this.state = state;
+		this.keepChecks(this.checks);
+	},
+	keepChecks: function(checks) {
+		var current = {}, revision = this.state.appliedRevision;
+		if (revision != null) Object.keys(checks || {}).forEach(function(id) {
+			var check = checks[id];
+			if (check && check.checkedRevision === revision) current[id] = check;
+		});
+		this.checks = current;
+	},
+	checkLabel: function(check) {
+		return check.available === false ? '不可用：' + (check.reason || model.stateLabel(check.healthy)) :
+			check.delay != null ? check.delay + ' ms' : model.stateLabel(check.healthy);
 	},
 
 	mutate: function(method, args, success) {
@@ -151,7 +167,8 @@ return view.extend({
 				self.runtime = results[0].value;
 				var remote = self.runtime.state || {};
 				if (remote.savedRevision !== self.revision) self.conflict = true;
-				else self.state = remote;
+				self.updateState(remote);
+				self.keepChecks(self.runtime.checks);
 				self.runtimeError = null;
 			}
 			else { self.runtime = null; self.runtimeError = results[0].reason.message; }
@@ -180,7 +197,7 @@ return view.extend({
 			E('span', { 'class': this.dirty ? 'ar-badge ar-warning' : 'ar-badge' }, [this.dirty ? '有未保存修改' : '编辑内容已保存']),
 			E('span', { 'class': 'ar-badge' }, ['已保存版本 ' + (s.savedRevision == null ? '未知' : s.savedRevision)]),
 			E('span', { 'class': 'ar-badge ' + (s.savedRevision !== s.appliedRevision ? 'ar-warning' : '') }, ['已应用版本 ' + (s.appliedRevision == null ? '无' : s.appliedRevision)]),
-			E('span', { 'class': 'ar-badge' }, ['连通性：' + model.stateLabel(s.healthy)]),
+			E('span', { 'class': 'ar-badge' }, ['终端出口验证：' + model.stateLabel(s.healthy)]),
 			this.busy ? E('span', { 'class': 'ar-badge' }, [this.activeJob ? '后台任务 ' + this.activeJob.method + ' 正在执行…' : '正在执行，请稍候…']) : ''
 		])];
 		if (this.conflict) content.push(E('div', { 'class': 'ar-alert ar-error', role: 'alert' }, ['配置已被其他会话修改。当前编辑内容保留；请复制需要保留的内容后重新读取，再编辑保存。']));
@@ -199,6 +216,7 @@ return view.extend({
 	reload: function() {
 		var self = this;
 		if (this.dirty && !window.confirm('重新读取将丢弃尚未保存的编辑。继续？')) return;
+		this.checks = {};
 		return this.mutate('get', [], '已重新读取持久配置。').then(function() { return self.refreshRuntime(); });
 	},
 	save: function() { return this.mutate('save', [this.revision, this.draft], '配置已保存。尚未应用；单节点检查也须单独执行。'); },
@@ -255,14 +273,15 @@ return view.extend({
 		var rows = this.draft.nodes.map(function(raw) {
 			var n = model.effectiveNode(self.draft, raw), override = self.draft.overrides[raw.id];
 			var source = raw.source && self.draft.subscriptions.filter(function(s) { return s.id === raw.source; })[0];
-			var check = self.checks[n.id];
+			var result = self.checks[n.id];
+			var check = result && self.state.appliedRevision != null && result.checkedRevision === self.state.appliedRevision ? self.checkLabel(result) : null;
 			return [E('div', {}, [E('strong', {}, [n.name]), E('small', { 'class': 'ar-muted ar-block' }, [n.id])]),
 				n.type.toUpperCase(), source ? source.name + (override ? ' · 本地覆盖' : '') : '手动',
 				n.excluded ? '已排除' : n.enabled ? '启用' : '停用',
 				check ? check : '未检查',
 				E('div', { 'class': 'ar-actions' }, [
 					self.button('编辑节点', '✎', function() { self.editNode(raw); }),
-					self.button('检查此节点', '◉', function() { return self.checkNode(n.id); }, { disabled: self.dirty || n.excluded || !n.enabled }),
+					self.button('检查此节点', '◉', function() { return self.checkNode(n.id); }, { disabled: self.dirty || self.conflict || self.state.savedRevision !== self.state.appliedRevision || n.excluded || !n.enabled }),
 					self.button('保存为 Proxy 选择', '▷', function() { return self.chooseNode('Proxy', n.id); }, { disabled: self.dirty || self.conflict || n.excluded || !n.enabled }),
 					raw.source && override ? self.button('清除本地覆盖', '↶', function() {
 						if (window.confirm('清除此节点的本地名称、参数和排除设置？保存后使用订阅原始值。')) { delete self.draft.overrides[n.id]; self.changed(); }
@@ -280,7 +299,7 @@ return view.extend({
 				self.showImport('导入为手动节点', function(content) { return self.mutate('import', [self.revision, content], '节点已导入并保存。请选择策略组出口，再应用配置。'); });
 			}, { text: true, disabled: this.dirty || this.conflict }), this.button('添加节点', '+', function() { self.editNode(); }, { text: true, primary: true })])]),
 			rows.length ? this.table(['名称', '协议', '来源', '状态', '单节点检查', '操作'], rows) : this.empty('还没有节点。添加 VMess 节点，或在订阅页导入受支持的订阅内容。'),
-			E('p', { 'class': 'ar-muted' }, ['选择节点仅保存选择，随后须应用；实际选择请到总览查看。单节点检查只对所选节点发送一次请求。'])]);
+			E('p', { 'class': 'ar-muted' }, ['选择节点仅保存选择，随后须应用；实际选择请到总览查看。请先应用已保存版本，再执行单节点检查。检查结果仅对应当前已应用版本，且不代表终端出口验证。'])]);
 	},
 
 	input: function(value, type, attrs) { return E('input', Object.assign({ type: type || 'text', value: value == null ? '' : String(value), 'class': 'cbi-input-text' }, attrs || {})); },
@@ -342,9 +361,10 @@ return view.extend({
 
 	checkNode: function(id) {
 		var self = this;
+		if (this.dirty || this.conflict || this.state.savedRevision !== this.state.appliedRevision || this.state.appliedRevision == null) throw new Error('请先保存并应用当前版本，再执行单节点检查');
 		return this.mutate('check', [id], '单节点检查已返回；检查结果仅对应此次请求。').then(function(result) {
-			self.checks[id] = result.available === false ? '不可用：' + (result.reason || model.stateLabel(result.healthy)) :
-				result.delay != null ? result.delay + ' ms' : model.stateLabel(result.healthy);
+			var checks = Object.assign({}, self.checks); checks[id] = result;
+			self.keepChecks(checks);
 			self.paint();
 		});
 	},

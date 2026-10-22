@@ -220,14 +220,47 @@ test('asynchronous job stays busy until success and reloads persisted data; chec
     calls.push(method);
     if (method === 'check') return { ok: true, job: { id: 'j1', method, status: 'running' } };
     if (method === 'job_status') return { ok: true, busy: ++polls === 1,
-      job: { id: 'j1', method: 'check', status: polls === 1 ? 'running' : 'succeeded', result: { nodeId: 'n1', available: true, delay: 42, healthy: 'passed' } } };
+      job: { id: 'j1', method: 'check', status: polls === 1 ? 'running' : 'succeeded', result: { nodeId: 'n1', available: true, delay: 42, healthy: 'passed', checkedRevision: 0 } } };
     return { ok: true, model: empty(), state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified' } };
   });
   window.setTimeout = fn => { fn(); };
+  view.state.appliedRevision = 0;
   const task = view.checkNode('n1'); assert.equal(view.busy, true);
   await task;
   assert.deepEqual(calls, ['check', 'job_status', 'job_status', 'get']);
-  assert.equal(view.busy, false); assert.equal(view.checks.n1, '42 ms'); assert.equal(view.state.healthy, 'unverified');
+  assert.equal(view.busy, false); assert.equal(view.checks.n1.delay, 42); assert.equal(view.checks.n1.checkedRevision, 0); assert.equal(view.state.healthy, 'unverified');
+});
+
+test('status restores only node checks belonging to the currently applied revision', async () => {
+  let applied = 2;
+  const { view } = harness(async method => method === 'status' ? {
+    ok: true, state: { savedRevision: 3, appliedRevision: applied, healthy: 'unverified' },
+    checks: { n1: { nodeId: 'n1', delay: 42, healthy: 'passed', checkedRevision: 2 }, old: { healthy: 'passed', checkedRevision: 1 }, unknown: { healthy: 'passed' } }
+  } : method === 'logs' ? { ok: true, entries: [] } : { ok: true, available: false });
+  view.revision = 3; view.draft.nodes.push(node());
+  await view.refreshRuntime();
+  assert.deepEqual(Object.keys(view.checks), ['n1']);
+  view.tab = 'nodes'; view.paint();
+  assert.match(text(view.root), /42 ms/); assert.match(text(view.root), /终端出口验证：未验证/);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '检查此节点').disabled, true);
+  applied = 3; view.tab = 'overview'; await view.refreshRuntime();
+  assert.deepEqual(view.checks, {});
+});
+
+test('unapplied configuration blocks node checks and applying a new revision removes old results', () => {
+  const { view } = harness(async () => { throw new Error('RPC should not run'); });
+  view.state = { savedRevision: 2, appliedRevision: 1, healthy: 'unverified' };
+  view.checks = { n1: { checkedRevision: 1, healthy: 'passed', delay: 42 } };
+  assert.throws(() => view.checkNode('n1'), /先保存并应用/);
+  view.accept({ state: { savedRevision: 2, appliedRevision: 2, healthy: 'unverified' } });
+  assert.deepEqual(view.checks, {}); assert.equal(view.state.healthy, 'unverified');
+});
+
+test('explicit reload clears cached node checks while preserving separate global health', async () => {
+  const { view } = harness(async () => ({ ok: true, model: empty(), state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified' } }));
+  view.tab = 'nodes'; view.checks = { n1: { checkedRevision: 0, healthy: 'passed', delay: 42 } };
+  await view.reload();
+  assert.deepEqual(view.checks, {}); assert.equal(view.state.healthy, 'unverified');
 });
 
 test('failed background job reports error without silently replacing the draft', async () => {

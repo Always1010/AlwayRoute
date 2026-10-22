@@ -115,6 +115,8 @@ function execute(method,args) {
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
  let m=model();
  if(method=='check') {
+  let current=state();
+  if(current.savedRevision!==current.appliedRevision)fail('NOT_APPLIED','请先应用已保存配置，再检查节点');
   let n=null;for(let item in effective(m))if(item.id==args.nodeId)n=item;
   if(!n)fail('INVALID_NODE','节点不存在或已停用');
   let r=fetchJson('/proxies/'+n.id+'/delay?timeout=2000&url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204');

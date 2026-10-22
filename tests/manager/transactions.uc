@@ -4,7 +4,7 @@ import { sha256 } from 'digest';
 // In-memory adapters exercise the actual store transaction code. No host paths,
 // networking, process execution, or persistent files are accessed by this suite.
 let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null;
-let helperAvailable=true,stopFails=false,guardCalls=0,stopCalls=0;
+let helperAvailable=true,stopFails=false,guardCalls=0,stopCalls=0,delayCalls=0;
 let fs={
  mkdir:()=>true,chmod:()=>true,
  readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';return files[path] ?? null;},
@@ -22,7 +22,8 @@ let fs={
  },
  popen:function(command){
   let body='{}';
-  if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)if(o.type=='selector')proxies[o.tag]={now:o.default,all:o.outbounds};body=sprintf('%J',{proxies});}
+  if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';}
+  else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)if(o.type=='selector')proxies[o.tag]={now:o.default,all:o.outbounds};body=sprintf('%J',{proxies});}
   return {read:()=>body,close:()=>0};
  }
 };
@@ -51,8 +52,12 @@ r=call('apply',{expectedRevision:1});check(r.ok && r.job.status=='running' && !a
 check(call('save',{expectedRevision:1,model:r.model}).error.code=='BUSY','queued mutation excluded');
 work();r=call('job_status',{});check(!r.busy && r.job.status=='succeeded' && active,'worker completes and releases transaction lock');
 check(call('get',{}).state.appliedRevision==1,'applied distinct from saved');
+call('check',{nodeId:'n1'});work();let checked=call('job_status',{}).job;
+check(checked.status=='succeeded' && checked.result.checkedRevision==1 && checked.result.delay==9,'node check uses matching applied revision');
 draft=call('get',{}).model;draft.nodes[0].name='Renamed';r=call('save',{expectedRevision:1,model:draft});
 check(r.model.revision==2 && r.state.appliedRevision==1,'draft save does not apply');
+let previousDelayCalls=delayCalls;call('check',{nodeId:'n1'});work();
+check(call('job_status',{}).job.error.code=='NOT_APPLIED' && delayCalls==previousDelayCalls,'saved unapplied revision rejects check before core API request');
 checkFails=true;call('apply',{expectedRevision:2});work();r=call('job_status',{});
 check(r.job.status=='failed' && r.job.error.code=='CORE_CHECK_FAILED','failed core validation is reported');
 check(call('get',{}).state.appliedRevision==1 && active,'failed apply restores last good');
