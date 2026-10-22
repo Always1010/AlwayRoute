@@ -9,6 +9,7 @@ function rejected(fn,message){let failed=false;try{fn();}catch(e){failed=true;}c
 function group(model,id){for(let g in model.groups)if(g.id==id)return g;}
 function outbound(config,id){for(let o in config.outbounds)if(o.tag==id)return o;}
 function routeIndex(rules,id){for(let i=0;i<length(rules);i++)if(rules[i].outbound==id)return i;return -1;}
+function route(rules,id){let i=routeIndex(rules,id);return i<0?null:rules[i];}
 let uuid='00000000-0000-4000-8000-000000000001';
 let source={v:'2',ps:'Sample',add:'example.invalid',port:'443',id:uuid,aid:'0',net:'ws',type:'none',host:'example.invalid',path:'/vmess',tls:'tls',sni:'example.invalid'};
 let uri='vmess://'+b64enc(sprintf('%J',source));
@@ -61,6 +62,10 @@ check(orderedRules[3].outbound=='direct' && routeIndex(orderedRules,'YouTube')>3
 check(routeIndex(orderedRules,'YouTube')<routeIndex(orderedRules,'Google') && routeIndex(orderedRules,'Proxy')>routeIndex(orderedRules,'Telegram'),'YouTube precedes Google and Proxy follows business groups');
 let optional=clone(m),other=pop(optional.groups);push(optional.groups,{id:'Discord',name:'Discord',selected:'Proxy'});push(optional.groups,other);
 check(routeIndex(generate(optional).route.rules,'Discord')>0,'optional catalog group emits its domain rule when present');
+let baseRules=generate(m).route.rules;
+check(index(route(baseRules,'Proxy').domain_suffix,'microsoft.com')>=0,'disabled optional service domains fall through to Proxy');
+let withoutOpenAI=clone(m);withoutOpenAI.groups=filter(withoutOpenAI.groups,g=>g.id!='OpenAI');let withoutOpenAIRules=generate(withoutOpenAI).route.rules;
+check(routeIndex(withoutOpenAIRules,'OpenAI')<0 && index(route(withoutOpenAIRules,'Proxy').domain_suffix,'openai.com')>=0,'deleted default service domains fall through to Proxy');
 let misplaced=clone(m);push(misplaced.groups,shift(misplaced.groups));rejected(()=>validate(misplaced),'Other must remain the final policy group');
 let blocked=clone(m);group(blocked,'Other').selected='block';let blockedConfig=generate(blocked);
 check(blockedConfig.route.final=='direct' && blockedConfig.route.rules[length(blockedConfig.route.rules)-1].action=='reject' && outbound(blockedConfig,'Other').default=='direct','Other block fallback becomes a terminal reject without invalid selector members');

@@ -31,6 +31,11 @@ const POLICIES = [
  {id:'Steam',name:'Steam',default:false,description:'Steam 商店、社区、内容与 API',domains:['steampowered.com','steamcommunity.com','steamstatic.com','steamcontent.com','steamserver.net','steam-api.com','valvesoftware.com']}
 ];
 export function policyCatalog() { return clone(POLICIES); };
+function policyDomains(id) {
+ let domains=[],seen={};
+ for(let p in POLICIES)if(id=='Proxy' || p.id==id)for(let domain in p.domains)if(!seen[domain]){push(domains,domain);seen[domain]=true;}
+ return domains;
+};
 export function empty() {
  return { schema: 1, policyVersion: POLICY_VERSION, revision: 0, mode: 'rule', defaultOutbound: 'Other', nodes: [], subscriptions: [], overrides: {},
  groups: [{id:'Proxy',name:'代理',selected:'direct'}, {id:'OpenAI',name:'OpenAI',selected:'Proxy'},
@@ -168,8 +173,10 @@ export function generate(m) {
  }
  if(m.mode=='rule') {
   let groupIds={};for(let g in m.groups)groupIds[g.id]=true;
-  for(let wanted in ['OpenAI','Claude','YouTube','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Proxy'])
-   if(groupIds[wanted])for(let p in POLICIES)if(p.id==wanted && length(p.domains))push(rules,{domain_suffix:clone(p.domains),action:'route',outbound:wanted});
+  for(let wanted in ['OpenAI','Claude','YouTube','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Proxy']) {
+   let domains=policyDomains(wanted);
+   if(groupIds[wanted] && length(domains))push(rules,{domain_suffix:domains,action:'route',outbound:wanted});
+  }
  }
  let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':'Other';
  if(m.mode=='rule')for(let g in m.groups)if(g.id=='Other' && g.selected=='block'){push(rules,{action:'reject'});final='direct';}

@@ -17,4 +17,4 @@
 - [Telegram 客户端配置](https://core.telegram.org/api/config)与[官方域名范围](https://core.telegram.org/bug-bounty)列出 `telegram.org`、`t.me`、`telegram.me`、`telesco.pe` 等官方域名。
 - [X API 官方文档](https://developer.x.com/en/support/twitter-api/error-troubleshooting)使用 `api.x.com`；预设同时保留服务迁移前仍在使用的 `twitter.com` 与 `twimg.com` 后缀。
 
-`Netflix`、`Disney+`、`Spotify` 与 `GitHub` 归入 `Proxy`，不再占用独立策略组。`Microsoft`、`Apple`、`Meta`、`Discord` 与 `Steam` 只在用户添加相应策略组后生成匹配规则。完整目录由 `model.uc` 的 `policyCatalog()` 返回，界面与后端应读取该目录，而不是复制一份列表。
+`Netflix`、`Disney+`、`Spotify` 与 `GitHub` 归入 `Proxy`，不再占用独立策略组。`Proxy` 的末尾内置规则使用整个预设目录域名的去重并集：已启用的业务组会在它之前先匹配；未启用的 `Microsoft`、`Apple`、`Meta`、`Discord`、`Steam`，以及被用户删除的默认业务组，则自然落入 `Proxy`，而不是 `Other`。完整目录由 `model.uc` 的 `policyCatalog()` 返回，界面与后端应读取该目录，而不是复制一份列表。
