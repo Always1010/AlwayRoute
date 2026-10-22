@@ -1,0 +1,4 @@
+#!/usr/bin/ucode
+'use strict';
+import { boot } from 'alwayroute.store';
+exit(boot()?0:1);

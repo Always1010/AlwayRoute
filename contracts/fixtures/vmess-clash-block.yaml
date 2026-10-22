@@ -1,0 +1,16 @@
+# Synthetic documentation-only VMess node; no real credential or reachable server.
+proxies:
+  - name: Example VMess
+    type: vmess
+    server: example.invalid
+    port: 443
+    uuid: 00000000-0000-4000-8000-000000000001
+    alterId: 0
+    cipher: auto
+    tls: true
+    servername: example.invalid
+    network: ws
+    ws-opts:
+      path: /vmess
+      headers:
+        Host: example.invalid

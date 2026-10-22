@@ -1,0 +1,5 @@
+#!/usr/bin/ucode
+'use strict';
+import { due } from 'alwayroute.store';
+// Timer writes only saved model. An update never silently applies forwarding.
+due();

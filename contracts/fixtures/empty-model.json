@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "revision": 0,
+  "mode": "rule",
+  "defaultOutbound": "Proxy",
+  "nodes": [],
+  "subscriptions": [],
+  "overrides": {},
+  "groups": [
+    {"id":"Proxy","name":"代理","selected":"direct"},
+    {"id":"OpenAI","name":"OpenAI","selected":"Proxy"},
+    {"id":"Netflix","name":"Netflix","selected":"Proxy"},
+    {"id":"Disney","name":"Disney+","selected":"Proxy"}
+  ],
+  "rules": []
+}

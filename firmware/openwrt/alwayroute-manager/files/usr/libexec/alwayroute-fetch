@@ -1,0 +1,15 @@
+#!/usr/bin/ucode
+'use strict';
+import * as fs from 'fs';
+// Isolated downloader process limits maximum output before reading it. The URL is
+// shell-quoted, never evaluated, and errors are suppressed to avoid credential logs.
+function quote(s){return "'"+replace(s,"'","'\\''")+"'";}
+let request=json(fs.readfile('/tmp/alwayroute/fetch.json'));
+if(type(request.url)!='string' || index(request.url,'https://')!=0)exit(1);
+let p=fs.popen('/usr/libexec/alwayroute-timeout 20 /bin/uclient-fetch -q -T 15 -O - '+quote(request.url)+' 2>/dev/null','r');
+if(!p)exit(1);
+let content=p.read(131073),status=p.close();
+fs.unlink('/tmp/alwayroute/fetch.json');
+if(status!=0 || !content || length(content)>131072)exit(1);
+let f=fs.open('/tmp/alwayroute/subscription.body','w',0600);if(!f)exit(1);
+fs.chmod('/tmp/alwayroute/subscription.body',0600);let n=f.write(content);f.close();exit(n==length(content)?0:1);

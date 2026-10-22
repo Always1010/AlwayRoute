@@ -1,0 +1,4 @@
+#!/usr/bin/ucode
+'use strict';
+import { started } from 'alwayroute.store';
+started();

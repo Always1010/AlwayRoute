@@ -1,0 +1,54 @@
+#!/bin/sh
+# The evaluation BusyBox has no timeout applet. Bound only our direct child,
+# without eval, background daemons, extra packages, or a persistent timer.
+limit="$1"
+case "$limit" in 3|20) ;; *) exit 2 ;; esac
+shift
+[ "$#" -gt 0 ] || exit 2
+"$@" &
+task=$!
+(
+ nap=''
+ stop_timer() {
+  trap '' TERM INT HUP
+  if [ -n "$nap" ]; then
+   kill -TERM "$nap" 2>/dev/null
+   wait "$nap" 2>/dev/null
+  fi
+  exit 0
+ }
+ trap stop_timer TERM INT HUP
+ sleep "$limit" &
+ nap=$!
+ wait "$nap"
+ kill -TERM "$task" 2>/dev/null
+ sleep 1 &
+ nap=$!
+ wait "$nap"
+ kill -KILL "$task" 2>/dev/null
+) &
+watchdog=$!
+terminate() {
+ code="$1"
+ trap '' TERM INT HUP
+ # Cancel the timer, but retain our own TERM -> KILL escalation. Cancelling
+ # both processes with only TERM would leak a TERM-resistant download child.
+ kill -TERM "$watchdog" 2>/dev/null
+ if [ -n "$task" ]; then
+  kill -TERM "$task" 2>/dev/null
+  sleep 1
+  kill -KILL "$task" 2>/dev/null
+  wait "$task" 2>/dev/null
+ fi
+ wait "$watchdog" 2>/dev/null
+ exit "$code"
+}
+trap 'terminate 143' TERM
+trap 'terminate 130' INT
+trap 'terminate 129' HUP
+wait "$task"
+status=$?
+task=''
+kill -TERM "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
+exit "$status"

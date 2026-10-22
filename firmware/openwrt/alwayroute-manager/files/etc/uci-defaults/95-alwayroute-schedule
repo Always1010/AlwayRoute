@@ -1,0 +1,8 @@
+#!/bin/sh
+# BusyBox crond reads root's crontab. Preserve unrelated entries.
+mkdir -p /etc/crontabs
+touch /etc/crontabs/root
+grep -Fq '/usr/libexec/alwayroute-scheduled' /etc/crontabs/root ||
+ printf '%s\n' '17 * * * * /usr/libexec/alwayroute-scheduled >/dev/null 2>&1' >> /etc/crontabs/root
+chmod 600 /etc/crontabs/root
+exit 0

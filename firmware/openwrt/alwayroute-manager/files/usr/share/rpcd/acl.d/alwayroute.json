@@ -1,0 +1,7 @@
+{
+  "luci-app-alwayroute": {
+    "description": "AlwayRoute authenticated management",
+    "read": {"ubus": {"alwayroute": ["capabilities", "status", "traffic", "job_status", "logs"]}},
+    "write": {"ubus": {"alwayroute": ["get", "save", "import", "refresh", "apply", "select", "rollback", "service", "export", "check"]}}
+  }
+}

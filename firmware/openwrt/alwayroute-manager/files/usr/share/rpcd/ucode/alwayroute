@@ -1,0 +1,15 @@
+'use strict';
+import { call } from 'alwayroute.store';
+const methods={};
+for(let method,args in {
+ capabilities:{}, get:{}, status:{}, traffic:{}, job_status:{},
+ save:{expectedRevision:0,model:{}}, refresh:{expectedRevision:0,subscriptionId:'',content:''},
+ apply:{expectedRevision:0}, select:{expectedRevision:0,group:'',nodeId:''},
+ rollback:{expectedRevision:0}, service:{action:''}, export:{includeSecrets:false},
+ import:{expectedRevision:0,content:''},
+ check:{nodeId:''}, logs:{limit:20}
+}) {
+ let name=method;
+ methods[name]={args,call:function(request){return call(name,request.args);}};
+}
+return {alwayroute:methods};
