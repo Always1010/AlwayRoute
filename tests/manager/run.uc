@@ -30,6 +30,8 @@ m.groups[0].selected=nodes[0].id;validate(m);
 let config=generate(m);check(config.outbounds[1].server_port==443,'typed VMess config');
 check(config.experimental.clash_api.external_controller=='127.0.0.1:9090','API loopback only');
 check(config.route.final=='Other' && outbound(config,'Other').default=='direct','Other is the rule-mode fallback and defaults direct');
+check(config.route.rules[0].action=='hijack-dns' && config.route.rules[0].port==53 && config.route.rules[1].action=='sniff' && join(',',config.route.rules[1].sniffer)=='tls,http,quic','DNS hijack precedes the limited rule-mode sniffers');
+check(join(',',outbound(config,'Proxy').outbounds)=='direct,'+nodes[0].id && join(',',outbound(config,'OpenAI').outbounds)=='direct,Proxy','selectors include only direct, the current choice and Proxy when needed');
 source.ps='Renamed';check(parse('vmess://'+b64enc(sprintf('%J',source)),'demo',sha256)[0].id==nodes[0].id,'name changes keep stable IDs');
 check(parse(b64enc(uri),'demo',sha256)[0].id==nodes[0].id,'base64 subscription');
 m.overrides[nodes[0].id]={name:'Local',patch:{port:8443}};check(effective(m)[0].port==8443 && effective(m)[0].name=='Local','independent override');
@@ -68,7 +70,15 @@ let withoutOpenAI=clone(m);withoutOpenAI.groups=filter(withoutOpenAI.groups,g=>g
 check(routeIndex(withoutOpenAIRules,'OpenAI')<0 && index(route(withoutOpenAIRules,'Proxy').domain_suffix,'openai.com')>=0,'deleted default service domains fall through to Proxy');
 let misplaced=clone(m);push(misplaced.groups,shift(misplaced.groups));rejected(()=>validate(misplaced),'Other must remain the final policy group');
 let blocked=clone(m);group(blocked,'Other').selected='block';let blockedConfig=generate(blocked);
-check(blockedConfig.route.final=='direct' && blockedConfig.route.rules[length(blockedConfig.route.rules)-1].action=='reject' && outbound(blockedConfig,'Other').default=='direct','Other block fallback becomes a terminal reject without invalid selector members');
+check(blockedConfig.route.final=='direct' && blockedConfig.route.rules[length(blockedConfig.route.rules)-1].action=='reject' && outbound(blockedConfig,'Other').default=='direct' && join(',',outbound(blockedConfig,'Other').outbounds)=='direct,Proxy','Other block fallback becomes a terminal reject without invalid selector members');
+
+let scale=clone(m);scale.nodes=[];scale.groups=[{id:'Proxy',name:'Proxy',selected:'n127'}];
+for(let i=0;i<128;i++){let n=clone(nodes[0]);n.id='n'+i;n.name='Node '+i;push(scale.nodes,n);}
+for(let i=0;i<14;i++)push(scale.groups,{id:'G'+i,name:'Group '+i,selected:i%2?'Proxy':'n'+i});
+push(scale.groups,{id:'Other',name:'Other',selected:'block'});
+let scaleConfig=generate(scale),selectorMembers=0,compact=true;
+for(let g in scale.groups){let o=outbound(scaleConfig,g.id),selected=g.selected=='block'?'direct':g.selected;selectorMembers+=length(o.outbounds);if(o.default!=selected || index(o.outbounds,selected)<0 || length(o.outbounds)>3)compact=false;for(let member in o.outbounds)if(member!='direct' && member!=selected && !(g.id!='Proxy' && member=='Proxy'))compact=false;}
+check(length(scaleConfig.outbounds)==145 && outbound(scaleConfig,'n127') && outbound(scaleConfig,'Proxy').default=='n127' && selectorMembers<=48 && compact,'128 nodes and 16 groups keep all nodes while selector membership stays linear in groups');
 
 let legacy=clone(m);delete legacy.policyVersion;legacy.defaultOutbound='Netflix';
 legacy.groups=[{id:'Proxy',name:'代理',selected:nodes[0].id},{id:'OpenAI',name:'OpenAI',selected:'Proxy'},
@@ -88,6 +98,6 @@ check(group(normalize(legacyBlock),'Other').selected=='block','legacy block fall
 let fullLegacy=clone(legacy);fullLegacy.groups=[{id:'Proxy',name:'代理',selected:'direct'}];
 for(let i=0;i<15;i++)push(fullLegacy.groups,{id:'Custom'+i,name:'自定义'+i,selected:'Proxy'});
 rejected(()=>normalize(fullLegacy),'full legacy group set is rejected instead of deleting a custom group');
-m.mode='global';check(length(generate(m).route.rules)==2 && generate(m).route.final=='Proxy','global mode bypasses user rules');
-m.mode='direct';check(length(generate(m).route.rules)==2 && generate(m).route.final=='direct' && generate(m).dns.final=='bootstrap','direct mode bypasses policy rules and proxy DNS');
+m.mode='global';let globalConfig=generate(m);check(length(globalConfig.route.rules)==1 && globalConfig.route.rules[0].action=='hijack-dns' && globalConfig.route.final=='Proxy','global mode keeps DNS hijack without sniff or user rules');
+m.mode='direct';let directConfig=generate(m);check(length(directConfig.route.rules)==1 && directConfig.route.rules[0].action=='hijack-dns' && directConfig.route.final=='direct' && directConfig.dns.final=='bootstrap','direct mode keeps DNS hijack without sniff, policy rules or proxy DNS');
 printf('PASS %d manager contract checks\n',checks);
