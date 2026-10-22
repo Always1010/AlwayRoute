@@ -2,7 +2,12 @@
 
 # Configure only the evaluation image during its own first boot.
 # No proxy core, DNS interception or forwarding rules are started here.
-uci -q batch <<'EOF'
+umask 077
+STATE_DIR=/etc/alwayroute
+MARKER="$STATE_DIR/management-initialized"
+[ -e "$MARKER" ] && exit 0
+
+if ! uci -q batch <<'EOF'
 set network.lan.ipaddr='192.0.2.1'
 set network.lan.netmask='255.255.255.0'
 set dropbear.@dropbear[0].Port='2222'
@@ -16,5 +21,13 @@ commit network
 commit dropbear
 commit uhttpd
 EOF
+then
+ exit 1
+fi
+
+mkdir -p "$STATE_DIR" || exit 1
+chmod 0700 "$STATE_DIR" || exit 1
+: > "$MARKER" || exit 1
+chmod 0600 "$MARKER" || { rm -f "$MARKER"; exit 1; }
 
 exit 0
