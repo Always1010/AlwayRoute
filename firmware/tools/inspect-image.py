@@ -201,7 +201,8 @@ if args.profile == 'manager':
         check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
     else:
         removed_packages = set(baseline_packages) - set(packages)
-        allowed_removed_packages = {'ip-full', 'libbpf', 'libelf1', 'zlib'}
+        # OpenWrt's ABI suffix is part of the manifest package name.
+        allowed_removed_packages = {'ip-full', 'libbpf1', 'libelf1', 'zlib'}
         expected_package_delta = {
             'added': sorted(manager_packages | {'ip-tiny'}),
             'removed_required': ['ip-full'],
