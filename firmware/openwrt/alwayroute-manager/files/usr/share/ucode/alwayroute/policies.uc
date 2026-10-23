@@ -15,7 +15,7 @@ export function loadPolicies() {
   if(type(name)!='string' || !match(name,/^[a-z0-9-]+\.json$/))die('ALWAYROUTE:POLICY_DATA_ERROR:服务文件名无效');
   let p=read(name);
   if(type(p)!='object' || type(p.id)!='string' || seen[p.id] || type(p.name)!='string' || type(p.description)!='string' || type(p.default)!='bool' || type(p.domains)!='array' || type(p.exactDomains)!='array')die('ALWAYROUTE:POLICY_DATA_ERROR:服务定义无效');
-  for(let values in [p.domains,p.exactDomains])for(let value in values)if(type(value)!='string' || !match(value,/^[A-Za-z0-9._-]{1,253}$/))die('ALWAYROUTE:POLICY_DATA_ERROR:服务域名无效');
+  for(let values in [p.domains,p.exactDomains])for(let value in values)if(type(value)!='string' || !length(value) || length(value)>253 || !match(value,/^[A-Za-z0-9._-]+$/))die('ALWAYROUTE:POLICY_DATA_ERROR:服务域名无效');
   seen[p.id]=true;
   push(result,{id:p.id,name:p.name,default:p.default,description:p.description,domains:p.domains,exactDomains:p.exactDomains});
  }
