@@ -14,13 +14,16 @@ git push origin v0.1.0
 
 在 Actions 中手动运行 `Build 4A firmware` 可调试冷构建，也可在默认分支预热缓存。手动运行只上传 Actions 产物，不创建 Release。tag 构建通过所有检查后自动创建对应 Release；含预发布后缀的版本标为 prerelease。发布任务仅在下载到已检查产物后取得 `contents: write`，编译任务只有仓库读取权限，使用临时 `GITHUB_TOKEN`，无需个人 PAT。重复创建同名 Release 会失败，不覆盖已发布文件。
 
-成功产物包括：
+Release只上传两个附件，加上GitHub自动提供的两个源码下载，页面共四个下载项：
 
-- `alwayroute-<版本>-xiaomi-4a-gigabit-bundle.zip`：解压获得下面的固件、工具和说明。
-- `*-sysupgrade.bin`、OpenWrt 包清单、`flash.py`、`FLASHING.md`。
-- `SHA256SUMS`、`build-manifest.json`、`image-inspection.json`、许可声明和发布说明。
+- `alwayroute-<版本>-xiaomi-4a-gigabit.zip`：首次安装或脚本刷机，解压后从`README.md`开始。
+- `alwayroute-<版本>-xiaomi-4a-gigabit-sysupgrade.bin`：方便已有OpenWrt的用户通过网页升级。
 
-ZIP 内的校验列表覆盖解压内容，Release 单独的列表还覆盖 ZIP 本身。刷机见[4A指南](devices/xiaomi-4a-flashing.md)。构建失败只留排障日志，不发布固件；Actions成功产物和日志分别保留30天、14天，Release 附件长期保留。
+ZIP中只有固件、`flash.py`、`SHA256SUMS`、`build-manifest.json`、`README.md`和`NOTICE.txt`六个文件。版本说明与刷机说明合并在README中；许可、版权、来源及原始许可全文归并到NOTICE，不再嵌套许可压缩包。刷机见[4A指南](devices/xiaomi-4a-flashing.md)。
+
+ZIP内部校验列表覆盖解压内容；ZIP和单独BIN的校验值显示在Release正文的折叠区域，不再单独上传校验文件。Actions中的`firmware-release`分为`public/`和`metadata/`，发布任务只上传public中的ZIP和BIN，metadata仅用于任务间校验和生成正文。详细镜像报告和包清单进入`firmware-build-logs`，不进入用户ZIP或Release附件。构建失败只留排障日志，不发布固件；Actions成功产物和日志分别保留30天、14天，Release附件长期保留。
+
+整理已有Release时，用原始tag的源码快照、已检查镜像及对应清单重新打包；保留固件哈希、源码提交和tag，不把工作区后续改动混入旧版本，也不重新编译。
 
 ## 构建输入和流程
 

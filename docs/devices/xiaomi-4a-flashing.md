@@ -4,7 +4,7 @@
 
 ## 准备
 
-1. 从 [Releases](https://github.com/Always1010/AlwayRoute/releases) 下载对应版本的固件与工具包 `.zip` 并解压，目录内应有 `*-sysupgrade.bin`、`flash.py`、`SHA256SUMS` 和 `build-manifest.json`。版本号以实际发布为准，下面的 `v0.1.0` 仅为示例。
+1. 从 [Releases](https://github.com/Always1010/AlwayRoute/releases) 下载对应版本的固件与工具包 `.zip` 并解压，先打开唯一的使用说明 `README.md`；目录内还有 `*-sysupgrade.bin`、`flash.py`、`SHA256SUMS`、`build-manifest.json` 和合并后的许可来源说明 `NOTICE.txt`。已有OpenWrt、准备通过网页升级时，可单独下载 `.bin`。版本号以实际发布为准，下面的 `v0.1.0` 仅为示例。
 2. 电脑已有 Python 3.10+ 和 OpenSSH 客户端即可；脚本只用标准库。电脑连接路由器 LAN，**首次刷机建议网线连接**。已有 Wi-Fi 可用于 SSH／上传，但新系统默认关闭无线，首启需要有线连接；保留配置升级后可重新连接已保留的 Wi-Fi。
 3. 确认 root SSH 已可登录，先用普通 `ssh` 登录并核对主机指纹。脚本保留严格主机检查，可使用已有密钥、SSH agent 或交互式口令；自定义端口使用 `--port`，密钥使用 `--identity`。不需要构建主机、跳板或个人实验拓扑。
 

@@ -15,10 +15,10 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
-import zipfile
 
 from release_inputs import FIRMWARE, input_identity, load_release, sha256
 from target_profile import load_device, seed_text
+from release_bundle import package_release
 
 ROOT = FIRMWARE.parent
 PACKAGES = ('alwayroute-core', 'alwayroute-manager', 'alwayroute-forwarding', 'luci-app-alwayroute')
@@ -172,63 +172,6 @@ def build(task, version):
         raise ValueError('Image inspection did not pass')
     manifest['source_date_epoch'] = int(epoch)
     package_release(task, ROOT / 'artifacts/release', version, device, image, inspection, manifest)
-
-
-def package_release(task, publish, version, device, image, inspection, manifest):
-    """Package only inspected public inputs; never archive a workspace."""
-    publish.mkdir(parents=True, exist_ok=False)
-    name = 'alwayroute-' + version + '-' + device['id']
-    shutil.copyfile(image, publish / (name + '-sysupgrade.bin'))
-    # Preserve the manifest name expected by OpenWrt tooling next to the renamed image.
-    shutil.copyfile(image.with_name(image.name.removesuffix(device['image']['manifest_suffix']) + '.manifest'),
-                    publish / (name + '.manifest'))
-    manifest.update(image_sha256=sha256(image), image_bytes=image.stat().st_size,
-                    inspection_checks=len(json.loads(inspection.read_text(encoding='utf-8'))['checks']))
-    json_file(publish / 'build-manifest.json', manifest)
-    shutil.copyfile(inspection, publish / 'image-inspection.json')
-    flash = ROOT / 'scripts/flash.py'
-    guide = ROOT / 'docs/devices/xiaomi-4a-flashing.md'
-    if not flash.is_file() or not guide.is_file():
-        raise ValueError('Release flashing tool and guide must be present')
-    shutil.copyfile(flash, publish / 'flash.py')
-    shutil.copyfile(guide, publish / 'FLASHING.md')
-    shutil.copyfile(ROOT / 'LICENSE.md', publish / 'LICENSE.md')
-    shutil.copyfile(ROOT / 'THIRD_PARTY_NOTICES.md', publish / 'THIRD_PARTY_NOTICES.md')
-    with zipfile.ZipFile(publish / 'LICENSES.zip', 'x', compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted((ROOT / 'LICENSES').glob('*.txt')):
-            archive.write(path, 'LICENSES/' + path.name)
-    commit_url = 'https://github.com/Always1010/AlwayRoute/blob/' + manifest['source_commit'] + '/'
-    for filename in ('LICENSE.md', 'THIRD_PARTY_NOTICES.md'):
-        text = (publish / filename).read_text(encoding='utf-8')
-        text = re.sub(r'\]\(([^):#]+)\)', lambda match: '](' + commit_url + match[1] + ')', text)
-        (publish / filename).write_text(text, encoding='utf-8')
-    (publish / 'SOURCES.md').write_text(
-        '# 构建来源\n\n项目源码与自有补丁：' + commit_url.replace('/blob/', '/tree/') + '\n\n'
-        '上游固定版本及源码下载：' + commit_url + 'firmware/sources.lock.json\n\n'
-        '构建步骤：' + commit_url + 'docs/github-build.md\n\n'
-        '分流源与许可证：' + commit_url + 'config/routing/sources.lock.json\n\n'
-        'OpenWrt包版本见同目录 .manifest；各包的源码地址、哈希及补丁由上述固定源码配方提供。'
-        '项目许可文本另附 LICENSES.zip，核心与规则的上游许可证同时保存在固件中。\n', encoding='utf-8')
-    (publish / 'RELEASE-NOTES.md').write_text(
-        '# AlwayRoute ' + version + '\n\n'
-        '仅适用于小米路由器4A千兆版第一版；不适用于百兆版或V2。\n\n'
-        '下载 sysupgrade.bin、flash.py 和 SHA256SUMS，按 FLASHING.md 操作。'
-        '沿用 OpenWrt 标准管理初始化，首次启动请使用有线连接并设置认证。\n\n'
-        '构建及静态镜像检查通过；本次产物尚未实机验收。'
-        'WAN 为 DHCP，不含 PPPoE。完整能力和限制见仓库 docs/status.md。\n', encoding='utf-8')
-    def checksums():
-        (publish / 'SHA256SUMS').write_text(''.join(
-            sha256(p) + '  ' + p.name + '\n' for p in sorted(publish.iterdir())
-            if p.is_file() and p.name != 'SHA256SUMS'), encoding='utf-8')
-    checksums()
-    # Internal sums cover extracted files; external sums also cover the ZIP.
-    bundle = task / (name + '-bundle.zip')
-    with zipfile.ZipFile(bundle, 'x', compression=zipfile.ZIP_STORED) as archive:
-        for path in sorted(publish.iterdir()):
-            archive.write(path, path.name)
-    shutil.copyfile(bundle, publish / bundle.name)
-    checksums()
-    print('Release files ready: ' + str(publish), flush=True)
 
 
 def main(argv=None):

@@ -82,6 +82,7 @@ jobs:
             ${{ env.TASK_ROOT }}/logs/
             ${{ env.TASK_ROOT }}/openwrt-build/native-build.log
             ${{ env.TASK_ROOT }}/openwrt-build/native-build-state.json
+            ${{ env.TASK_ROOT }}/release-diagnostics/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -104,9 +105,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd release
-          sha256sum --check SHA256SUMS
-          expected=$(python3 -c 'import json; print(json.load(open("build-manifest.json"))["source_commit"])')
+          cd release/public
+          sha256sum --check ../metadata/SHA256SUMS
+          expected=$(python3 -c 'import json; print(json.load(open("../metadata/build-manifest.json"))["source_commit"])')
           object=$(gh api "repos/$GH_REPO/git/ref/tags/$RELEASE_TAG")
           for i in 1 2 3 4 5; do
             type=$(jq -r '.object.type' <<< "$object")
@@ -116,7 +117,13 @@ jobs:
           done
           test "$type" = commit
           test "$sha" = "$expected"
-          args=(--verify-tag --title "AlwayRoute $RELEASE_TAG" --notes-file RELEASE-NOTES.md)
+          args=(--verify-tag --title "AlwayRoute $RELEASE_TAG" --notes-file ../metadata/release-notes.md)
           if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+          shopt -s nullglob
+          bundles=(./*.zip)
+          images=(./*-sysupgrade.bin)
+          test "${#bundles[@]}" -eq 1
+          test "${#images[@]}" -eq 1
+          test "$(find . -maxdepth 1 -type f | wc -l)" -eq 2
           # Creating an existing release fails; reruns never replace published assets.
-          gh release create "$RELEASE_TAG" ./* "${args[@]}"
+          gh release create "$RELEASE_TAG" "${bundles[0]}" "${images[0]}" "${args[@]}"

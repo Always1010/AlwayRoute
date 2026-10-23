@@ -46,7 +46,7 @@ class CiBuildTests(unittest.TestCase):
                     ci.prepare(task, load_release(), load_device(), 'v0.1.0')
             self.assertFalse(task.exists())
 
-    def test_zip_and_loose_release_files_are_accepted_by_the_flasher(self):
+    def test_release_has_only_zip_and_bin_and_bundle_is_accepted_by_flasher(self):
         with tempfile.TemporaryDirectory() as temp:
             task = Path(temp)
             device = load_device()
@@ -54,22 +54,64 @@ class CiBuildTests(unittest.TestCase):
             source.write_bytes(image())
             source.with_name(source.name.removesuffix(device['image']['manifest_suffix']) + '.manifest').write_text('alwayroute-core - 1.13.21\n')
             inspection = task / 'inspection.json'
-            inspection.write_text(json.dumps({'checks': {'synthetic': True}}))
+            inspection.write_text(json.dumps({'checks': {'synthetic': True}, 'device': device['id'], 'sha256': ci.sha256(source)}))
             manifest = {'schema_version': 1, 'device': device['id'], 'version': 'v0.1.0', 'source_commit': 'a'*40}
             publish = task / 'release'
             with contextlib.redirect_stdout(io.StringIO()):
                 ci.package_release(task, publish, 'v0.1.0', device, source, inspection, manifest)
-            candidate = next(publish.glob('*-sysupgrade.bin'))
-            flash.load_bundle(candidate)
-            bundle = next(publish.glob('*-bundle.zip'))
+            public = publish / 'public'
+            candidate = next(public.glob('*-sysupgrade.bin'))
+            bundle = next(public.glob('*.zip'))
+            self.assertEqual({p.name for p in public.iterdir()}, {candidate.name, bundle.name})
             with zipfile.ZipFile(bundle) as archive:
-                self.assertNotIn(bundle.name, archive.namelist())
+                self.assertEqual(set(archive.namelist()), {candidate.name, 'flash.py', 'SHA256SUMS',
+                                                        'build-manifest.json', 'README.md', 'NOTICE.txt'})
                 self.assertEqual(archive.read('flash.py'), (ROOT/'scripts/flash.py').read_bytes())
+                readme = archive.read('README.md').decode()
+                self.assertIn('本版本与下载选择', readme)
+                self.assertIn('原厂系统首次刷入', readme)
+                self.assertIn('NOTICE.txt', readme)
+                self.assertNotIn('FLASHING.md', readme)
+                notice = archive.read('NOTICE.txt').decode()
+                for license in (ROOT/'LICENSES').glob('*.txt'):
+                    self.assertTrue(license.read_text(encoding='utf-8') in notice, 'Missing license: ' + license.name)
                 archive.extractall(task/'extracted')
             flash.load_bundle(task/'extracted'/candidate.name)
-            for line in (publish/'SHA256SUMS').read_text().splitlines():
+            self.assertTrue((task/'release-diagnostics/image-inspection.json').is_file())
+            self.assertTrue(list((task/'release-diagnostics').glob('*.manifest')))
+            for line in (publish/'metadata/SHA256SUMS').read_text().splitlines():
                 expected,name=line.split('  ',1)
-                self.assertEqual(expected,ci.sha256(publish/name))
+                self.assertEqual(expected,ci.sha256(public/name))
+            notes=(publish/'metadata/release-notes.md').read_text(encoding='utf-8')
+            self.assertIn(ci.sha256(bundle),notes)
+            self.assertIn(ci.sha256(candidate),notes)
+
+    def test_repack_uses_original_source_snapshot_and_refuses_changed_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            task=Path(temp); device=load_device()
+            source=task/Path(device['image']['path']).name
+            source.write_bytes(image())
+            source.with_name(source.name.removesuffix(device['image']['manifest_suffix'])+'.manifest').write_text('test - 1\n')
+            inspection=task/'inspection.json'
+            inspection.write_text(json.dumps({'checks':{'synthetic':True},'device':device['id'],'sha256':ci.sha256(source)}))
+            manifest={'schema_version':1,'device':device['id'],'version':'v0.1.0-rc.1','source_commit':'a'*40}
+            snapshot=task/'original-source'
+            files={'scripts/flash.py':"print('original release tool')\n",
+                   'docs/devices/xiaomi-4a-flashing.md':'# 刷机\n\n## 准备\n使用 alwayroute-v0.1.0-xiaomi-4a-gigabit-sysupgrade.bin\n',
+                   'LICENSE.md':'Original scope\n','THIRD_PARTY_NOTICES.md':'Original sources\n',
+                   'LICENSES/original.txt':'Original license text\n'}
+            for name,content in files.items():
+                path=snapshot/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(content,encoding='utf-8',newline='\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                ci.package_release(task,task/'release','v0.1.0-rc.1',device,source,inspection,manifest,source_root=snapshot)
+            with zipfile.ZipFile(next((task/'release/public').glob('*.zip'))) as archive:
+                self.assertEqual(archive.read('flash.py'),files['scripts/flash.py'].encode())
+                self.assertIn('Original sources',archive.read('NOTICE.txt').decode())
+                self.assertIn('v0.1.0-rc.1-xiaomi',archive.read('README.md').decode())
+            source.write_bytes(source.read_bytes()+b'changed')
+            with self.assertRaisesRegex(ValueError,'uninspected image'):
+                ci.package_release(task,task/'refused','v0.1.0-rc.1',device,source,inspection,manifest,source_root=snapshot)
+            self.assertFalse((task/'refused').exists())
 
 
 if __name__ == '__main__':
