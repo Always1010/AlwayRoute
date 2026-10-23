@@ -373,6 +373,47 @@ test('non-rule modes hide group/rule controls and only global mode has a proxy n
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '停止').disabled, false);
 });
 
+test('rule editor converts legacy values into ordered deduplicated multi-value rules', () => {
+  const { view } = harness(async () => ({}));
+  view.capabilities = { limits: { rules: 512, ruleValues: 4 } };
+  const original = { id: 'r1', type: 'suffix', value: 'legacy.example', outbound: 'Proxy', enabled: true };
+  view.draft.rules.push(original);
+  let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  view.editRule(original);
+  const values = fieldInput(fields, '匹配值');
+  assert.equal(values.tag, 'textarea');
+  assert.equal(values.value, 'legacy.example');
+  values.value = ' ^first,part$ \n\n^second$\n^first,part$\r^third$ ';
+  fieldInput(fields, '匹配类型').value = 'regex';
+  commit(view.draft);
+  assert.deepEqual(view.draft.rules[0], { id: 'r1', type: 'regex', values: ['^first,part$', '^second$', '^third$'], outbound: 'Proxy', enabled: true });
+  assert.equal('value' in view.draft.rules[0], false);
+});
+
+test('rule editor enforces advertised value and rule limits while keeping edits available at capacity', () => {
+  const { view } = harness(async () => ({}));
+  view.capabilities = { limits: { rules: 1, ruleValues: 4 } };
+  view.draft.rules.push({ id: 'r1', type: 'regex', values: ['^one,part$', '^two$', '^three$', '^four$'], outbound: 'Proxy', enabled: true });
+  const card = view.render_rules();
+  assert.match(text(card), /已用 1 \/ 1 条/);
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '添加规则').disabled, true);
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '编辑规则').disabled, false);
+  assert.match(text(card), /正则表达式/);
+  assert.match(text(card), /共 4 项/);
+  assert.doesNotMatch(text(card), /\^four\$/);
+  assert.equal(find(card, n => n.tag === 'span' && n.attrs.title === '^one,part$\n^two$\n^three$\n^four$') != null, true);
+
+  let fields, commit;
+  view.capabilities.limits.ruleValues = 2;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  view.editRule();
+  fieldInput(fields, '匹配值').value = 'one\ntwo\nthree';
+  assert.throws(() => commit(view.draft), /最多支持 2 个匹配值/);
+  fieldInput(fields, '匹配值').value = 'one';
+  assert.throws(() => commit(view.draft), /最多支持 1 条自定义规则/);
+});
+
 test('asynchronous job stays busy until success and reloads persisted data; check result is preserved', async () => {
   const calls = []; let polls = 0;
   const { view, window } = harness(async method => {

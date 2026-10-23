@@ -770,22 +770,37 @@ return view.extend({
 		next.groups = next.groups.filter(function(g) { return g.id !== group.id; });
 		return true;
 	},
+	ruleLimit: function(name, fallback) {
+		var value = this.capabilities && this.capabilities.limits && Number(this.capabilities.limits[name]);
+		return Number.isInteger(value) && value > 0 ? value : fallback;
+	},
+	ruleValues: function(rule) {
+		if (Array.isArray(rule.values)) return rule.values.map(function(value) { return String(value); });
+		return rule.value == null ? [] : [String(rule.value)];
+	},
+	ruleValueSummary: function(rule) {
+		var values = this.ruleValues(rule), visible = values.slice(0, 3).map(function(value) {
+			return value.length > 64 ? value.slice(0, 61) + '…' : value;
+		});
+		return E('span', { title: values.join('\n') }, [visible.join('、') + (values.length > visible.length ? '（共 ' + values.length + ' 项）' : '')]);
+	},
 
 	render_rules: function() {
-		var self = this;
+		var self = this, ruleLimit = this.ruleLimit('rules', 128);
 		var rows = this.draft.rules.map(function(r, i) {
-			return [String(i + 1), r.enabled ? '启用' : '停用', ({ domain: '域名', suffix: '域名后缀', ip: 'IPv4', cidr: 'IPv4 网段' })[r.type] || r.type,
-				r.value, model.label(self.draft, r.outbound), E('div', { 'class': 'ar-actions' }, [
+			var values = self.ruleValues(r);
+			return [String(i + 1), r.enabled ? '启用' : '停用', ({ domain: '域名', suffix: '域名后缀', ip: 'IPv4', cidr: 'IPv4 网段', regex: '正则表达式' })[r.type] || r.type,
+				self.ruleValueSummary(r), model.label(self.draft, r.outbound), E('div', { 'class': 'ar-actions' }, [
 					self.button('编辑规则', '✎', function() { self.editRule(r); }),
 					self.button('提高优先级', '↑', function() { return self.moveRule(i, -1); }, { disabled: i === 0 }),
 					self.button('降低优先级', '↓', function() { return self.moveRule(i, 1); }, { disabled: i === self.draft.rules.length - 1 }),
-					self.button('删除规则', '×', function() { if (window.confirm('删除规则“' + r.value + '”？')) { return self.changeConfig(function(next) { next.rules.splice(i, 1); }, '规则已删除。'); } })])];
+					self.button('删除规则', '×', function() { if (window.confirm('删除规则“' + (values[0] || '') + (values.length > 1 ? '”等 ' + values.length + ' 项？' : '”？'))) { return self.changeConfig(function(next) { next.rules.splice(i, 1); }, '规则已删除。'); } })])];
 		});
 		return this.card('分流规则', [this.draft.mode !== 'rule' ? E('p', { 'class': 'alert-message notice' }, ['当前模式不使用分流规则，切换到规则分流后生效。']) : '',
-			E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['自定义规则优先，其后匹配服务规则、代理，最后进入 Other。']),
-				this.button('添加规则', '+', function() { self.editRule(); }, { text: true, primary: true })]),
+			E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['自定义规则优先，其后匹配服务规则、代理，最后进入 Other。已用 ' + this.draft.rules.length + ' / ' + ruleLimit + ' 条。']),
+				this.button('添加规则', '+', function() { self.editRule(); }, { text: true, primary: true, disabled: this.draft.rules.length >= ruleLimit })]),
 			rows.length ? this.table(['优先级', '状态', '匹配类型', '匹配值', '出口', '操作'], rows) : this.empty('暂无自定义规则，当前使用内置服务规则和 Other 兜底。'),
-			E('p', { 'class': 'ar-muted' }, ['支持域名、域名后缀和 IPv4 地址/网段。'])]);
+			E('p', { 'class': 'ar-muted' }, ['支持域名、域名后缀、正则表达式和 IPv4 地址/网段；每行一个匹配值。'])]);
 	},
 	moveRule: function(index, delta) {
 		var other = index + delta;
@@ -794,12 +809,22 @@ return view.extend({
 	},
 
 	editRule: function(original) {
-		var self = this, r = original || { type: 'suffix', value: '', outbound: 'Proxy', enabled: true };
-		var type = this.select(r.type, [['domain', '精确域名'], ['suffix', '域名后缀'], ['ip', 'IPv4 地址'], ['cidr', 'IPv4 CIDR 网段']]);
-		var value = this.input(r.value), outbound = this.select(r.outbound, this.outbounds({ groups: true, block: true })), enabled = this.input('', 'checkbox', { checked: r.enabled || undefined });
-		this.modal(original ? '编辑规则' : '添加规则', [this.field('匹配类型', type), this.field('匹配值', value), this.field('出口', outbound), this.field('启用规则', enabled)], function(next) {
-			if (!value.value.trim()) throw new Error('匹配值不能为空');
-			var item = { id: r.id || model.id('r'), type: type.value, value: value.value.trim(), outbound: outbound.value, enabled: enabled.checked };
+		var self = this, r = original || { type: 'suffix', values: [], outbound: 'Proxy', enabled: true };
+		var type = this.select(r.type, [['domain', '精确域名'], ['suffix', '域名后缀'], ['regex', '正则表达式'], ['ip', 'IPv4 地址'], ['cidr', 'IPv4 CIDR 网段']]);
+		var valueLimit = this.ruleLimit('ruleValues', 128), ruleLimit = this.ruleLimit('rules', 128);
+		var values = E('textarea', { rows: 8, 'class': 'cbi-input-textarea', autocomplete: 'off', spellcheck: 'false', maxlength: 131072 }, [this.ruleValues(r).join('\n')]);
+		values.value = this.ruleValues(r).join('\n');
+		var outbound = this.select(r.outbound, this.outbounds({ groups: true, block: true })), enabled = this.input('', 'checkbox', { checked: r.enabled || undefined });
+		this.modal(original ? '编辑规则' : '添加规则', [this.field('匹配类型', type), this.field('匹配值', values, '每行一个值；空行会忽略，重复值只保留第一次。'), this.field('出口', outbound), this.field('启用规则', enabled)], function(next) {
+			var normalized = [];
+			values.value.split(/\r\n|\n|\r/).forEach(function(value) {
+				value = value.trim();
+				if (value && normalized.indexOf(value) < 0) normalized.push(value);
+			});
+			if (!normalized.length) throw new Error('匹配值不能为空');
+			if (normalized.length > valueLimit) throw new Error('每条规则最多支持 ' + valueLimit + ' 个匹配值');
+			if (!original && next.rules.length >= ruleLimit) throw new Error('最多支持 ' + ruleLimit + ' 条自定义规则');
+			var item = { id: r.id || model.id('r'), type: type.value, values: normalized, outbound: outbound.value, enabled: enabled.checked };
 			if (original) next.rules[next.rules.findIndex(function(item) { return item.id === original.id; })] = item;
 			else next.rules.push(item);
 		});
