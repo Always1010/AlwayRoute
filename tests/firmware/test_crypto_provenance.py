@@ -68,6 +68,10 @@ info, embedded, elf = load(args.candidate)
 backend = 'mipsle-asm-r2'
 verify(info, embedded, elf, backend)
 checks += 1
+if info.get('tls_session_cache') is not None:
+    wrong_tls = json.loads(json.dumps(info))
+    wrong_tls['tls_session_cache']['capacity'] = 64
+    rejected(lambda: verify(wrong_tls, embedded, elf, backend), 'core_tls_session_cache_manifest')
 rejected(lambda: verify(info, embedded, elf, None), 'core_no_explicit_overlay')
 original_stage = Path(next(flag.split('=', 1)[1] for flag in info['command'] if flag.startswith('-overlay='))).parent
 wrong_replacement = embedded.replace('\t=>\t' + str(original_stage / 'module'), '\t=>\t' + str(original_stage / 'other-module'))
@@ -92,6 +96,12 @@ with tempfile.TemporaryDirectory(prefix='crypto-provenance-test-') as temporary:
     fixture_embedded = embedded.replace(str(original_stage), str(stage))
     verify(fixture, fixture_embedded, elf, backend)
     checks += 1
+    if fixture.get('tls_session_cache') is not None:
+        tls_source = stage / 'tls-session-std_client.go'
+        original_tls = tls_source.read_bytes()
+        tls_source.write_bytes(original_tls + b'\n')
+        rejected(lambda: verify(fixture, fixture_embedded, elf, backend), 'core_tls_session_cache_replacement')
+        tls_source.write_bytes(original_tls)
     extra = stage / 'module/chacha20poly1305/unreviewed.go'
     extra.write_text('package chacha20poly1305\n')
     rejected(lambda: verify(fixture, fixture_embedded, elf, backend), 'core_crypto_module_snapshot_unchanged')
