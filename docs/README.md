@@ -9,6 +9,7 @@
 | 修改自有代码 | [仓库结构](repository-structure.md)、[接口契约](../contracts/v1.md)、[测试入口](../tests/README.md) |
 | 配置开发和联调环境 | [环境说明](operations/environments.md)、[首启部署策略](../config/deployment/README.md)、[访问与只读检查](operations/access.md) |
 | 同步与构建 | [开发流程](development-workflow.md)、[上游源码获取](upstream-sources.md)、[固件构建](../firmware/README.md) |
+| 用GitHub编译发布4A固件 | [tag构建与发布](github-build.md)，含手动调试、输入锁定与产物下载 |
 | 选择正式开发工具 | [开发工具清单](developer-tools.md) |
 | 准备公开仓库 | [公开边界与发布审查](privacy-and-publication.md)、[许可范围](../LICENSE.md)、[第三方声明](../THIRD_PARTY_NOTICES.md) |
 | 维护分流数据 | [规则维护与来源](../config/routing/README.md)、[管理后端](../firmware/openwrt/alwayroute-manager/README.md) |

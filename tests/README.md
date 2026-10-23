@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `tools/test_flash.py` | 发布文件校验、错误硬件拒绝、只读默认值、升级预检及断连不重试 | 已有 Python，合成镜像与 SSH 替身 |
 | `firmware/test_release_inputs.py` | 公开发布输入身份、PGO／优化参数及篡改拒绝 | 已有 Python，不构建或连接设备 |
+| `firmware/test_ci_build.py` | CI离线预览／本机拒绝及ZIP产物与独立刷机脚本的兼容性 | 已有 Python，合成镜像，不下载或构建 |
 | `ui/ui.test.cjs` | LuCI 模块契约、前端模型、API 和页面逻辑 | 已有 Node，可在电脑运行 |
 | `firmware/test_deployment_policy.py` | 当前首启脚本逐字节保留、可选部署参数与镜像显式选择 | 已有Python，不调用UCI或连接设备 |
 | `firmware/test_target_profiles.py` | 4A原配方等价、架构隔离、镜像边界及错误设备拒绝 | 已有Python，合成输入，不构建或访问设备 |

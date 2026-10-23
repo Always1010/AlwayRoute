@@ -4,6 +4,7 @@
 
 ```text
 AlwayRoute/
+├── .github/workflows/         # tag触发的4A托管构建与发布
 ├── AGENTS.md                  # 协作、提交、同步与缓存约定
 ├── README.md                  # 项目概览和常用入口
 ├── contracts/                 # 模型、RPC契约、合成样本
@@ -14,6 +15,8 @@ AlwayRoute/
 ├── firmware/
 │   ├── README.md              # 当前构建配方与检查入口
 │   ├── sources.lock.json      # 上游版本、提交、来源与树哈希
+│   ├── release.json           # 4A发布工具链、优化和PGO选择
+│   ├── pgo/                   # 经公开审查的编译输入
 │   ├── devices/               # 设备参数、设备seed与补丁选择
 │   ├── openwrt/               # 自有四包、seed、首启脚本、补丁
 │   ├── tools/                 # 核心构建、overlay、监督、镜像检查

@@ -4,6 +4,7 @@
 
 | 入口 | 用途与边界 |
 | --- | --- |
+| `firmware/tools/ci-build.py` | 默认只打印4A发布构建计划；apply限定GitHub Linux临时Runner，准备锁定输入、构建及打包，不连接个人主机或设备 |
 | `scripts/flash.py` | 独立4A发布刷机入口；默认校验和只读预检，显式 apply 才私有备份、暂存及一次写入；原厂与OpenWrt分支严格区分 |
 | `scripts/fetch-sources.py` | 锁定上游源码获取／校验；保持独立于设备连接 |
 | `scripts/build-routing.py` | 构建主机校验固定规则源并生成本地 `.srs` 与来源清单；显式允许下载，默认 IPv4，不安装工具或改写既有产物 |
