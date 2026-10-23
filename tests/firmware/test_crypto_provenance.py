@@ -1,33 +1,35 @@
-"""Exercise crypto provenance against existing Rock artifacts, without execution.
+"""Exercise crypto provenance against explicitly selected artifacts, without execution.
 
-Run with Python on Rock; this reads ELF metadata and uses temporary source copies.
+Run with Python on the build host; reads ELF metadata and temporary source copies.
 No image build, router access, cache edits, or target binary execution.
 """
 import argparse
-import ast
+import importlib.util
 import hashlib
 import json
 from pathlib import Path
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 
 
+tools = Path(__file__).resolve().parents[2] / 'firmware/tools'
+sys.path.insert(0, str(tools))
+from build_context import build_context
+
 parser = argparse.ArgumentParser(description=__doc__)
-root = Path('/srv/alwayroute')
-parser.add_argument('--candidate', type=Path, default=root / 'artifacts/alwayroute-crypto-20261023/sing-box-r2-repro-mipsle')
-parser.add_argument('--standard', type=Path, default=root / 'artifacts/alwayroute-bottleneck-20261023/sing-box-full-pgo-final-mipsle')
+parser.add_argument('--env', type=Path, help='Environment JSON on the build host; default: existing Rock layout')
+parser.add_argument('--candidate', type=Path, required=True, help='mipsle-asm-r2 ELF, with adjacent .build-info.json and original overlay stage')
+parser.add_argument('--standard', type=Path, required=True, help='Standard ELF, with adjacent .build-info.json')
 args = parser.parse_args()
-inspector = Path(__file__).resolve().parents[2] / 'firmware/tools/inspect-image.py'
-# Load only the local validator and imports; importing the image CLI would run it.
-tree = ast.parse(inspector.read_text())
-definitions = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
-               or isinstance(node, ast.FunctionDef) and node.name == 'validate_crypto_provenance']
-namespace = {'__file__': str(inspector)}
-exec(compile(ast.Module(body=definitions, type_ignores=[]), str(inspector), 'exec'), namespace)
-validate = namespace['validate_crypto_provenance']
-pinned = root / 'sources/sing-box-1.13.21'
+context = build_context(args.env)
+spec = importlib.util.spec_from_file_location('image_inspector', tools / 'inspect-image.py')
+inspector = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(inspector)
+validate = inspector.validate_crypto_provenance
+pinned = context['sing_box_source']
 checks = 0
 
 
@@ -35,7 +37,9 @@ def verify(info, embedded, elf, backend):
     def check(name, ok):
         if not ok:
             raise ValueError(name)
-    validate(info, embedded, elf, backend, pinned, check)
+    validate(info, embedded, elf, backend, pinned, check,
+             module_root=context['cache_root'] / 'gomodcache/golang.org/x/crypto@v0.48.0',
+             go_root=context['go_root'])
 
 
 def rejected(action, expected):
@@ -53,7 +57,7 @@ def load(path):
     info = json.loads(path.with_suffix('.build-info.json').read_text())
     elf = path.read_bytes()
     assert hashlib.sha256(elf).hexdigest() == info['input_elf_sha256']
-    embedded = subprocess.check_output([str(root / 'toolchains/go1.27.3/go/bin/go'), 'version', '-m', str(path)], text=True)
+    embedded = subprocess.check_output([str(context['go']), 'version', '-m', str(path)], text=True)
     return info, embedded, elf
 
 
