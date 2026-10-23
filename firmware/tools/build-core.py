@@ -57,6 +57,8 @@ def main(argv=None):
     parser.add_argument('--architecture', choices=tuple(ARCHITECTURES), help='Override for a standalone core; does not declare device compatibility')
     parser.add_argument('--output', type=Path, required=True, help='Fresh ELF destination on this build host')
     parser.add_argument('--pgo', type=Path, help='Device CPU profile; keeps all features and the pinned compiler')
+    parser.add_argument('--tls-session-cache', action='store_true',
+                        help='Candidate: enable a bounded per-outbound standard TLS session cache')
     parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
                         help='Explicit candidate only; retains full core and never modifies upstream trees')
     compiler = parser.add_mutually_exclusive_group()
@@ -104,6 +106,7 @@ def main(argv=None):
     command = [str(go), 'build', '-p', str(context['jobs']), '-trimpath', '-buildvcs=false', '-tags', TAGS,
                '-pgo', str(args.pgo.resolve()) if args.pgo else 'off']
     crypto = None
+    overlay_path = None
     if args.experimental_crypto:
         legacy = args.experimental_crypto == 'poly1305-32'
         helper_path = Path(__file__).with_name('poly1305-32bit-overlay.py' if legacy else 'crypto-assembly-overlay.py')
@@ -116,6 +119,7 @@ def main(argv=None):
         modfile.write_text((source / 'go.mod').read_text() + '\nreplace golang.org/x/crypto => ' + str(stage / 'module') + '\n')
         shutil.copyfile(source / 'go.sum', stage / 'core.sum')
         command += ['-overlay=' + str(stage / 'overlay.json'), '-modfile=' + str(modfile)]
+        overlay_path = stage / 'overlay.json'
         asmflags = []
         if args.experimental_crypto == 'mipsle-asm-r2':
             # MT7621 1004Kc implements MIPS32r2. Limit this macro to ChaCha's two
@@ -129,6 +133,25 @@ def main(argv=None):
                   'manifest': json.loads((stage / manifest_name).read_text()),
                   'overlay_sha256': hashlib.sha256((stage / 'overlay.json').read_bytes()).hexdigest(),
                   'modfile_sha256': hashlib.sha256(modfile.read_bytes()).hexdigest()}
+    tls_sessions = None
+    if args.tls_session_cache:
+        helper_path = Path(__file__).with_name('tls-session-overlay.py')
+        spec = importlib.util.spec_from_file_location('tls_session_candidate', helper_path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        if overlay_path is None:
+            stage = output.parent / (output.name + '.tls-stage')
+            if stage.exists():
+                raise SystemExit('TLS overlay stage already exists')
+            overlay_path = stage / 'overlay.json'
+            overlay = {'Replace': {}}
+            command += ['-overlay=' + str(overlay_path)]
+        else:
+            overlay = json.loads(overlay_path.read_text())
+        tls_sessions = helper.add_overlay(source, overlay_path.parent, overlay)
+        overlay_path.write_text(json.dumps(overlay, indent=2) + '\n')
+        if crypto is not None:
+            crypto['overlay_sha256'] = hashlib.sha256(overlay_path.read_bytes()).hexdigest()
     command += ['-gcflags='+flag for flag in gcflags]
     command += ['-ldflags', '-s -w -buildid= -X internal/godebug.defaultGODEBUG=multipathtcp=0 '
                 '-checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.13.21-alwayroute-router',
@@ -145,6 +168,7 @@ def main(argv=None):
                 'registry_sha256': hashlib.sha256((source/'include/registry.go').read_bytes()).hexdigest(),
                 'registry_patch_sha256': None, 'command': command,
                 'crypto_candidate': crypto,
+                'tls_session_cache': tls_sessions,
                 'build_environment': {k: env[k] for k in ['GOFLAGS','GOENV','GOWORK','GOEXPERIMENT','GOROOT','GOTOOLCHAIN','GOPROXY']},
                 'pgo_sha256': hashlib.sha256(args.pgo.read_bytes()).hexdigest() if args.pgo else None,
                 'embedded_build_info': subprocess.check_output([str(go), 'version', '-m', str(output)], env=env, text=True),

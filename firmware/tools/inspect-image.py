@@ -35,6 +35,18 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
     command = build_info.get('command', [])
     overlay_flags = [str(flag) for flag in command if str(flag).startswith(('-overlay', '-modfile'))]
     candidate = build_info.get('crypto_candidate')
+    tls_sessions = build_info.get('tls_session_cache')
+    tls_target = None
+    if tls_sessions is not None:
+        tls_flags = [s for s in overlay_flags if s.startswith('-overlay=')]
+        check('core_tls_session_cache_overlay_argument', len(tls_flags) == 1)
+        tls_overlay_path = pathlib.Path(tls_flags[0].split('=', 1)[1])
+        check('core_tls_session_cache_overlay_available', tls_overlay_path.is_absolute() and tls_overlay_path.is_file())
+        tls_overlay = json.loads(tls_overlay_path.read_text())
+        spec = importlib.util.spec_from_file_location('tls_session_candidate', pathlib.Path(__file__).with_name('tls-session-overlay.py'))
+        tls_helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tls_helper)
+        tls_target = tls_helper.validate_overlay(pinned, tls_overlay, tls_sessions, check)
     dependencies, current = [], None
     settings = {}
     for line in embedded.splitlines():
@@ -53,7 +65,8 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
     dependency = crypto_deps[0]
     checksum = 'h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts='
     if not backend:
-        check('core_no_explicit_overlay', not overlay_flags and not candidate)
+        check('core_no_explicit_overlay', not candidate and (not overlay_flags if tls_target is None else
+              len(overlay_flags) == 1 and tls_overlay == {'Replace': {tls_target: tls_overlay['Replace'][tls_target]}}))
         check('core_crypto_standard_dependency', dependency['replacement'] is None and dependency['checksum'] == checksum)
         check('core_crypto_standard_assembler', '-asmflags' not in settings
               and not any(str(flag).startswith('-asmflags') for flag in command))
@@ -110,6 +123,8 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
         expected_manifest = json.loads((stage / name).read_text())
         check('core_crypto_exact_generated_sources', manifest.get('output_sha256') == expected_manifest['output_sha256'])
         expected_overlay = json.loads((stage / 'overlay.json').read_text().replace(str(stage), str(original_stage)))
+        if tls_target is not None:
+            expected_overlay['Replace'][tls_target] = tls_overlay['Replace'][tls_target]
         check('core_crypto_exact_overlay_scope', json.loads(overlay_path.read_text()) == expected_overlay)
         check('core_crypto_generated_files_unchanged', all(
             hashlib.sha256((original_stage / name).read_bytes()).hexdigest() == digest

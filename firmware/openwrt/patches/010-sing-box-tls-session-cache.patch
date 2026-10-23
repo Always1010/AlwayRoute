@@ -1,0 +1,12 @@
+--- a/common/tls/std_client.go
++++ b/common/tls/std_client.go
+@@ -88,6 +88,9 @@
+ 	var tlsConfig tls.Config
+ 	tlsConfig.Time = ntp.TimeFuncFromContext(ctx)
+ 	tlsConfig.RootCAs = adapter.RootPoolFromContext(ctx)
++	// Keep tickets within this outbound's TLS configuration and bound memory.
++	// This enables ordinary session resumption, not TLS early data.
++	tlsConfig.ClientSessionCache = tls.NewLRUClientSessionCache(4)
+ 	if !options.DisableSNI {
+ 		tlsConfig.ServerName = serverName
+ 	}
