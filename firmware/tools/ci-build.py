@@ -92,13 +92,13 @@ def prepare(task, spec, device, version):
     # The source fetcher verifies locked Git tree hashes before extraction.
     run([sys.executable, ROOT / 'scripts/fetch-sources.py', 'fetch',
          '--dest', task / 'snapshots', '--cache', task / 'caches/downloads'], ROOT, logs, 'fetch-sources')
-    shutil.copytree(task / 'snapshots/sing-box', task / 'sources/sing-box-1.13.21')
+    shutil.copytree(task / 'snapshots/sing-box', task / 'sources/sing-box-1.13.21', symlinks=True)
     locks = json.loads((FIRMWARE / 'sources.lock.json').read_text())['sources']
     core_lock = next(s for s in locks if s['name'] == 'sing-box')
     shutil.copyfile(task / ('caches/downloads/sing-box-' + core_lock['tree'] + '.tar.gz'),
                     task / 'artifacts/sing-box-v1.13.21-source.tar.gz')
     tree = task / 'openwrt-build/source'
-    shutil.copytree(task / 'snapshots/openwrt', tree)
+    shutil.copytree(task / 'snapshots/openwrt', tree, symlinks=True)
     (tree / 'dl').symlink_to(task / 'caches/openwrt-dl', target_is_directory=True)
     (tree / 'feeds.conf').write_text(''.join(
         'src-link ' + name + ' ' + str(task / 'snapshots' / name) + '\n'
