@@ -19,6 +19,8 @@
 
 ## 访问和维护
 
+普通用户安装与升级见[简明刷机指南](xiaomi-4a-flashing.md)，只需要电脑、路由器和对应发布文件。
+
 开发联调使用[环境与访问说明](../operations/access.md)选择管理路径；SSH别名、地址、指纹文件、私钥路径、SSID和备份位置仅存私有资料。新增环境不自动修改SSH配置、已信任主机或网络设置。
 
 保留配置升级前核对持久marker、认证和外置备份，不能重跑首启默认值覆盖已配置LAN／SSH／Web。部署与恢复前提分别见[部署](../operations/deployment.md)和[恢复](../operations/recovery.md)。

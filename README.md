@@ -11,6 +11,7 @@ AlwayRoute 面向 OpenWrt 路由器，提供基于 sing-box 的代理管理与�
 ## 从这里开始
 
 - [支持设备](docs/devices/README.md)：目前仅验证小米路由器 4A 千兆版第一版，其他型号和修订不能混刷。
+- [下载与刷机](docs/devices/xiaomi-4a-flashing.md)：获取发布固件，区分原厂首刷和 OpenWrt 保留配置升级。
 - [当前能力与限制](docs/status.md)：功能、性能和尚待实机验收的范围。
 - [开发与构建](docs/README.md)：开发指南、固件构建、接口与测试入口。
 - [历史记录](docs/reports/README.md)：历次验证、失败实验及替代关系；一次性仓库整理见本地环境资料。

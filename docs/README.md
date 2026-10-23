@@ -4,6 +4,7 @@
 
 | 目的 | 入口 |
 | --- | --- |
+| 下载并刷入4A固件 | [4A简明刷机指南](devices/xiaomi-4a-flashing.md)，包含原厂首刷及OpenWrt升级 |
 | 了解范围及剩余工作 | [需求与A1–A9验收](requirements.md)、[实施计划](implementation-plan.md) |
 | 修改自有代码 | [仓库结构](repository-structure.md)、[接口契约](../contracts/v1.md)、[测试入口](../tests/README.md) |
 | 配置开发和联调环境 | [环境说明](operations/environments.md)、[首启部署策略](../config/deployment/README.md)、[访问与只读检查](operations/access.md) |

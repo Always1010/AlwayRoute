@@ -4,6 +4,7 @@
 
 | 目录／入口 | 检查内容 | 执行环境 |
 | --- | --- | --- |
+| `tools/test_flash.py` | 发布文件校验、错误硬件拒绝、只读默认值、升级预检及断连不重试 | 已有 Python，合成镜像与 SSH 替身 |
 | `firmware/test_release_inputs.py` | 公开发布输入身份、PGO／优化参数及篡改拒绝 | 已有 Python，不构建或连接设备 |
 | `ui/ui.test.cjs` | LuCI 模块契约、前端模型、API 和页面逻辑 | 已有 Node，可在电脑运行 |
 | `firmware/test_deployment_policy.py` | 当前首启脚本逐字节保留、可选部署参数与镜像显式选择 | 已有Python，不调用UCI或连接设备 |
