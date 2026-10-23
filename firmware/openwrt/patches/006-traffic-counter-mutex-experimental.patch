@@ -1,0 +1,100 @@
+--- a/experimental/clashapi/trafficontrol/manager.go
++++ b/experimental/clashapi/trafficontrol/manager.go
+@@ -3,7 +3,6 @@
+ import (
+ 	"runtime"
+ 	"sync"
+-	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/sagernet/sing-box/common/compatible"
+@@ -36,8 +35,8 @@
+ const closedConnectionsLimit = 1000
+ 
+ type Manager struct {
+-	uploadTotal   atomic.Int64
+-	downloadTotal atomic.Int64
++	uploadTotal   TrafficCounter
++	downloadTotal TrafficCounter
+ 
+ 	connections             compatible.Map[uuid.UUID, Tracker]
+ 	closedConnectionsAccess sync.Mutex
+--- a/experimental/clashapi/trafficontrol/tracker.go
++++ b/experimental/clashapi/trafficontrol/tracker.go
+@@ -2,7 +2,6 @@
+ 
+ import (
+ 	"net"
+-	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/sagernet/sing-box/adapter"
+@@ -20,8 +19,8 @@
+ 	Metadata     adapter.InboundContext
+ 	CreatedAt    time.Time
+ 	ClosedAt     time.Time
+-	Upload       *atomic.Int64
+-	Download     *atomic.Int64
++	Upload       *TrafficCounter
++	Download     *TrafficCounter
+ 	Chain        []string
+ 	Rule         adapter.Rule
+ 	Outbound     string
+@@ -145,8 +144,8 @@
+ 		}
+ 		next = group.Now()
+ 	}
+-	upload := new(atomic.Int64)
+-	download := new(atomic.Int64)
++	upload := new(TrafficCounter)
++	download := new(TrafficCounter)
+ 	tracker := &TCPConn{
+ 		ExtendedConn: bufio.NewCounterConn(conn, []N.CountFunc{func(n int64) {
+ 			upload.Add(n)
+@@ -226,8 +225,8 @@
+ 		}
+ 		next = group.Now()
+ 	}
+-	upload := new(atomic.Int64)
+-	download := new(atomic.Int64)
++	upload := new(TrafficCounter)
++	download := new(TrafficCounter)
+ 	trackerConn := &UDPConn{
+ 		PacketConn: bufio.NewCounterPacketConn(conn, []N.CountFunc{func(n int64) {
+ 			upload.Add(n)
+--- /dev/null
++++ b/experimental/clashapi/trafficontrol/counter.go
+@@ -0,0 +1,33 @@
++package trafficontrol
++
++import "sync"
++
++// TrafficCounter retains immediate, full-width statistics without the single
++// process-wide runtime lock used by atomic.Int64 on 32-bit MIPS. Every access
++// holds this counter's own mutex; its zero value is ready for use.
++// A TrafficCounter must not be copied after first use.
++type TrafficCounter struct {
++	access sync.Mutex
++	value  int64
++}
++
++func (c *TrafficCounter) Load() int64 {
++	c.access.Lock()
++	value := c.value
++	c.access.Unlock()
++	return value
++}
++
++func (c *TrafficCounter) Store(value int64) {
++	c.access.Lock()
++	c.value = value
++	c.access.Unlock()
++}
++
++func (c *TrafficCounter) Add(delta int64) int64 {
++	c.access.Lock()
++	c.value += delta
++	value := c.value
++	c.access.Unlock()
++	return value
++}
