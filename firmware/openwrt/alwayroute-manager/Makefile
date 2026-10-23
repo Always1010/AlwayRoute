@@ -2,13 +2,15 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=4
-PKG_LICENSE:=MIT
+PKG_RELEASE:=5
+PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
+ROUTING_INPUT:=$(TOPDIR)/alwayroute-input/routing
+PKG_FILE_DEPENDS:=$(ROUTING_INPUT)/domestic-domain.srs $(ROUTING_INPUT)/manifest.json $(ROUTING_INPUT)/LICENSE
 
 include $(INCLUDE_DIR)/package.mk
 
-# package.mk tracks CURDIR recursively, including the installed policies JSON.
+# package.mk tracks the owned policies; PKG_FILE_DEPENDS tracks compiled data.
 
 define Package/alwayroute-manager
   SECTION:=net
@@ -21,6 +23,11 @@ define Package/alwayroute-manager/conffiles
 /etc/alwayroute/
 endef
 
+define Build/Prepare
+	$(INSTALL_DIR) $(PKG_BUILD_DIR)/routing
+	$(CP) $(ROUTING_INPUT)/domestic-domain.srs $(ROUTING_INPUT)/manifest.json $(ROUTING_INPUT)/LICENSE $(PKG_BUILD_DIR)/routing/
+endef
+
 define Build/Compile
 endef
 
@@ -28,6 +35,8 @@ define Package/alwayroute-manager/install
 	$(INSTALL_DIR) $(1)/usr/share/ucode/alwayroute $(1)/usr/share/rpcd/ucode $(1)/usr/share/rpcd/acl.d $(1)/usr/libexec $(1)/etc/init.d $(1)/etc/uci-defaults
 	$(INSTALL_DIR) $(1)/usr/share/alwayroute/policies
 	$(INSTALL_DATA) ./files/usr/share/alwayroute/policies/*.json $(1)/usr/share/alwayroute/policies/
+	$(INSTALL_DIR) $(1)/usr/share/alwayroute/rules
+	$(INSTALL_DATA) $(PKG_BUILD_DIR)/routing/* $(1)/usr/share/alwayroute/rules/
 	$(INSTALL_DATA) ./files/usr/share/ucode/alwayroute/*.uc $(1)/usr/share/ucode/alwayroute/
 	$(INSTALL_DATA) ./files/usr/share/rpcd/ucode/alwayroute $(1)/usr/share/rpcd/ucode/
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/alwayroute.json $(1)/usr/share/rpcd/acl.d/

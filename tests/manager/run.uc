@@ -114,10 +114,15 @@ migratedProfile.rules[0]=edited;push(migratedProfile.rules,{id:'manual',enabled:
 let profileResult=normalize(migratedProfile);
 check(profileResult.policyVersion==2 && length(profileResult.rules)==2 && profileResult.rules[0].id==editedId && profileResult.rules[1].id=='manual','migration removes only unchanged generated service rules and preserves edited or manual overrides');
 let native=generate(profileResult);
-check(index(route(native.route.rules,'YouTube').domain_suffix,'ggpht.com')>=0 && index(route(native.route.rules,'YouTube').domain,'youtubei.googleapis.com')>=0 && length(route(native.route.rules,'TikTok').domain_suffix)==30 && length(route(native.route.rules,'Domestic').domain_suffix)==72,'complete service data produces grouped native rules without consuming custom slots');
+check(index(route(native.route.rules,'YouTube').domain_suffix,'ggpht.com')>=0 && index(route(native.route.rules,'YouTube').domain,'youtubei.googleapis.com')>=0 && length(route(native.route.rules,'TikTok').domain_suffix)==30 && join(',',route(native.route.rules,'Domestic').domain_suffix)=='cn','service data uses native rules without embedding domestic application lists');
+let domesticSet=native.route.rule_set[0],lastDomainRule=native.route.rules[length(native.route.rules)-1],lastDns=native.dns.rules[length(native.dns.rules)-1];
+check(length(native.route.rule_set)==1 && domesticSet.type=='local' && domesticSet.tag=='domestic-domain' && domesticSet.path=='/usr/share/alwayroute/rules/domestic-domain.srs','domestic community data loads from one local binary rule set');
+check(lastDomainRule.rule_set[0]=='domestic-domain' && lastDomainRule.outbound=='Domestic' && lastDns.rule_set[0]=='domestic-domain' && lastDns.server=='bootstrap','route and DNS share the same domain set after explicit services and overrides');
+let followDomestic=clone(profileResult);group(followDomestic,'Domestic').selected='Proxy';let followConfig=generate(followDomestic);
+check(followConfig.dns.rules[length(followConfig.dns.rules)-1].server=='proxy-dns','community domain DNS follows Domestic selection through Proxy');
 check(index(route(native.route.rules,'Proxy').domain_suffix,'cn')<0,'disabled domestic group cannot make the Proxy fallback claim all cn domains');
 let noDomestic=clone(profileResult);noDomestic.groups=filter(noDomestic.groups,g=>g.id!='Domestic');
-check(routeIndex(generate(noDomestic).route.rules,'Domestic')<0 && normalize(noDomestic).groups[length(noDomestic.groups)-1].id=='Other','current policy version does not re-add a deleted domestic group');
+check(routeIndex(generate(noDomestic).route.rules,'Domestic')<0 && length(generate(noDomestic).route.rule_set)==0 && normalize(noDomestic).groups[length(noDomestic.groups)-1].id=='Other','deleted domestic group does not load or apply community data and is not re-added');
 let noYouTube=clone(profileResult);noYouTube.rules=[];noYouTube.groups=filter(noYouTube.groups,g=>g.id!='YouTube');let fallbackRules=generate(noYouTube).route.rules;
 check(routeIndex(fallbackRules,'Proxy')<routeIndex(fallbackRules,'Domestic') && index(route(fallbackRules,'Proxy').domain_suffix,'ggpht.cn')>=0,'known overseas cn domains retain Proxy fallback when a dedicated service group is deleted');
 

@@ -175,7 +175,7 @@ export function validate(m) {
 };
 export function generate(m) {
  validate(m);
- let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[];
+ let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[],ruleSets=[];
  let selections={};for(let g in m.groups)selections[g.id]=g.selected;
  function domainDns(rule, target) {
   // Validation permits only one group reference: a non-Proxy group may follow Proxy.
@@ -214,11 +214,17 @@ export function generate(m) {
     domainDns(matched,wanted);
    }
   }
+  if(groupIds.Domestic) {
+   // Keep the shared community data out of the model and capabilities response.
+   push(ruleSets,{type:'local',tag:'domestic-domain',format:'binary',path:'/usr/share/alwayroute/rules/domestic-domain.srs'});
+   push(rules,{rule_set:['domestic-domain'],action:'route',outbound:'Domestic'});
+   domainDns({rule_set:['domestic-domain']},'Domestic');
+  }
  }
  let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':'Other';
  if(m.mode=='rule')for(let g in m.groups)if(g.id=='Other' && g.selected=='block'){push(rules,{action:'reject'});final='direct';}
  return {log:{disabled:true},inbounds:[{type:'mixed',tag:'local-mixed',listen:'127.0.0.1',listen_port:7890},
  {type:'tproxy',tag:'lan-tproxy',listen:'0.0.0.0',listen_port:7893}],outbounds,
  dns:{servers:[{type:'local',tag:'bootstrap'},{type:'https',tag:'proxy-dns',server:'1.1.1.1',tls:{enabled:true,server_name:'cloudflare-dns.com'},detour:'Proxy'}],rules:dnsRules,final:m.mode=='direct'?'bootstrap':'proxy-dns',reverse_mapping:true,strategy:'ipv4_only',cache_capacity:512},
- route:{rules,final,auto_detect_interface:true,default_domain_resolver:'bootstrap'},experimental:{clash_api:{external_controller:'127.0.0.1:9090',default_mode:m.mode=='direct'?'Direct':m.mode=='global'?'Global':'Rule'}}};
+ route:{rules,rule_set:ruleSets,final,auto_detect_interface:true,default_domain_resolver:'bootstrap'},experimental:{clash_api:{external_controller:'127.0.0.1:9090',default_mode:m.mode=='direct'?'Direct':m.mode=='global'?'Global':'Rule'}}};
 };

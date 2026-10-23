@@ -1,43 +1,34 @@
-# 分流数据来源与历史记录
+# 分流规则来源与维护
 
-正式服务规则的唯一数据源是管理包的 [policies 目录](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/)，随 `alwayroute-manager` 安装到设备 `/usr/share/alwayroute/policies/`。本目录只保留 [sources.lock.json](sources.lock.json) 和来源说明，不保存另一套业务规则或按日期命名的部署配置。
+正式服务元数据位于管理包的 `files/usr/share/alwayroute/policies/`，随包安装到 `/usr/share/alwayroute/policies/`。`catalog.json` 决定界面顺序；实际路由与 DNS 优先级由后端统一生成。`domains` 表示后缀，`exactDomains` 表示精确主机，两者不能互相扩大范围。
 
-## 正式服务目录
+## 国内集合
 
-[catalog.json](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/catalog.json) 是按界面显示顺序排列的简单文件名数组；后端据此读取同目录服务文件。顺序为 Proxy、OpenAI、Claude、Google、YouTube、TikTok、X、Telegram、Domestic、Other、Microsoft、Apple、Meta、Discord、Steam。显示顺序与编译路由时的匹配优先级分别由后端处理；尤其 `.cn` 不能遮蔽 YouTube、TikTok 等明确业务。
+国内策略组使用通用社区国内域名集合与国家顶级域补充，不在项目中维护针对特定国内应用的清单、测试样例或专属策略组。数据来源及版本固定在本目录唯一的 [sources.lock.json](sources.lock.json)。其中 `files` 保留其他服务的审查参考；`ruleSets` 是必须构建和安装的国内集合输入，不能把二者混为仅供参考的链接。
 
-每个服务使用独立小写文件名，例如 `youtube.json`、`tiktok.json`、`domestic.json`，统一字段为 `id`、`name`、`default`、`description`、`domains` 和 `exactDomains`。`domains` 是域名后缀，`exactDomains` 是精确域名；两个列表独立保存，避免把共享云或 CDN 的精确主机扩大成整个后缀。`default` 表示初始启用服务组，出口选择由模型负责。Other 的列表为空，作为最终出口。文件不含节点、订阅或设备凭据。
+首版域名基础来自 MetaCubeX 发布的 `geolocation-cn`，并非该项目覆盖范围更大的 `cn`。集合的精确域名、后缀和正则语义均由同版本 sing-box 编译保留。第三方源 JSON、编译产物和缓存不加入 Git，设备只安装本地二进制 `.srs`、来源清单和第三方许可证，不在启动时下载规则。
 
-| 服务文件 | 后缀 | 精确域名 | 说明 |
-| --- | --- | --- | --- |
-| [youtube.json](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/youtube.json) | 7 | 2 | 主站、短链、视频、静态内容、头像及移动 API 的完整服务数据 |
-| [tiktok.json](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/tiktok.json) | 30 | 8 | TikTok 主站、API、区域 CDN、直播及已确认关联主机 |
-| [domestic.json](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/domestic.json) | 72 | 6 | 常用国内业务、明确资源主机和 `.cn` 后缀 |
+手工规则先于正式业务；明确业务及境外聚合先于国内集合；未命中流量仍交给 Other。路由和 DNS 引用同一个域名规则集，DNS 依据国内组的实际出口选择。删除国内组或使用全局／直连模式时，不加载也不应用国内规则集。新增集合不占用户手工规则额度，不改变已有节点、组选择、配置版本或 Other 的出口。
 
-其余 12 个原有服务的数据保持原有后缀列表，并显式提供空 `exactDomains`。正式 JSON 随包升级替换，不属于 `/etc/alwayroute/` 的 conffiles；修改包内数据会触发 OpenWrt `package.mk` 对包目录的递归增量依赖检查，无需单独下载或拷贝业务清单。
+## 构建与增量输入
 
-## 来源与审查范围
+在构建主机的独立源码副本中，使用已有的 sing-box 1.13.21 主机 CLI：
 
-上游参考统一锁定在 [sources.lock.json](sources.lock.json)，固定 V2Fly domain-list-community 提交 `5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83` 的 33 个文件 URL 和 SHA-256。这些是审查参考，正式服务数据是项目选择性维护的集合，设备不自动下载上游全量规则。来源锁仅供仓库维护，不随包安装；服务 JSON 无指向仓库的设备无效相对路径。
+```sh
+python3 scripts/build-routing.py --sing-box /path/to/host/sing-box \
+  --cache /path/to/private/routing-cache --output /path/to/new/routing-output --fetch
+```
 
-- YouTube 参考 `youtube`；`ggpht.com`、`ggpht.cn`、`yt3.googleusercontent.com`、`youtubei.googleapis.com` 已合并进完整 YouTube 服务文件。原封面故障未复现，不能据此宣称已经确定故障根因。
-- TikTok 参考 `tiktok`；`p19-oec-va.ibyteimg.com` 和 `roovza.cdn-settings.appsflyersdk.com` 来自 2026-10-23 设备连接采样，只保留精确主机，不扩展共享域名后缀。
-- 国内服务参考 `tencent`、`alibaba`、`jd`、`pinduoduo`、`douyin`、`doubao`、`bytedance`、`bilibili`、`bilibili-cdn`、`xiaohongshu`、`kuaishou`、`iqiyi`、`youku`、`hunantv`、`baidu`、`netease`、`meituan`、`eleme`、`amap`、`didi`、`ctrip`、`kingsoft`、`wps`、`dingtalk`、`feishu`、`zhihu`、`sina`、`xiaomi`、`cmb`、`ccb`、`geolocation-cn`。`mon.zijieapi.com`、`dig.bdurl.net` 为与豆包连接同时出现的采样主机。淘宝只保留 `img.alicdn.com`、`imgextra.alicdn.com`、`gw.alicdn.com`、`g.alicdn.com` 四个精确主机。
+`--fetch` 显式允许下载固定提交的输入；不带该选项时只读已缓存内容。脚本校验 SHA-256、输入字段和基础范围，输出必须是新目录；失败不会覆盖既有产物或自动修复损坏缓存。源码 JSON 留在输出的 `sources/` 供审查和复现，不安装到设备。
 
-共享云和 CDN 不整段归入直连，例如不把整个 `ibyteimg.com`、`alicdn.com`、`aliyuncs.com` 设为直连。WPS 的国内 `.cn` 域名与 `wpscdn.com` 属于国内范围，未将国际主站 `wps.com` 整体直连。规则只在规则模式生效，选择性覆盖不保证每个 App 的所有请求或服务器地理位置。DNS 由后端依据规则顺序及策略组实际出口生成；组选择变更通过 `configure` 应用。
+审查生成的 `manifest.json` 后，把输出中的 `*.srs`、`manifest.json` 和 `LICENSE` 放入所选 OpenWrt 树的 `alwayroute-input/routing/`，不复制 `sources/`。管理包用 `PKG_FILE_DEPENDS` 跟踪这些外部输入，并在 Prepare 阶段保存构建快照；不能只替换源文件却复用旧包。
 
-## 历史部署与维护
+本机源码、同步预览、构建缓存及部署边界仍遵循 [开发流程](../../docs/development-workflow.md)。规则生成与包构建在构建主机执行，不安装本机依赖，不清理工具链或下载缓存。
 
-历史部署事实与验证结果统一放入 [docs/reports](../../docs/README.md)，不作为当前配置数据。revision 20 的旧值和顺序可从 Git 提交 `1e27197a89b31ee9e73a6c7c98ad619218b0086b` 的旧 profiles 还原，设备部署事实见[当次报告](../../docs/reports/2026-10-23-domestic-tiktok-routing.md)。
+## 更新和验证
 
-新增和维护业务只修改正式 `policies/` 服务文件，必要时更新 `catalog.json`；更新参考来源时修改本目录唯一的来源锁并核对上述审查说明。新的部署、迁移和测试结果写入报告，不再生成带日期的配置清单，也不复制业务规则。
+建议每周检查上游变动，审查差异后更新锁定提交与哈希，重新生成并验证，再随已审阅的包或固件发布。此维护建议不创建定时任务。固定输入哈希只能确认版本完整性，不能证明上游分类绝对准确；扩大共享平台、正则或顶级域范围必须单独审查。
 
-## 匹配、默认值与覆盖边界
+验证使用合成域名保护手工覆盖、业务优先级、组出口、模式隔离和缺失文件拒绝等边界；设备连接及 DNS 采样保存在私有目录，公开报告仅记录脱敏的数量、类别和结果。不能以域名命中、配置校验或一次 HTTP 成功代替完整应用与长期负载验收。
 
-自定义规则先于正式服务；明确业务先于Proxy聚合，明确境外预设先于Domestic宽泛后缀；Domestic不并入Proxy并集。Other负责最终未命中出口。界面顺序不等于编译匹配顺序，两者由后端统一处理，不在前端复制目录。
-
-新建模型Other默认为直连；实际已保存配置的选择由用户模型决定，不能以默认值覆盖。旧defaultOutbound迁移到Other时保留真实出口，阻断仍为拒绝；没有容量安全新增或合并组时明确拒绝迁移，不静默删除组。
-
-服务清单是选择性覆盖，无法保证语音、游戏、推送、所有CDN及动态IP请求都归入同一组。漏分流先用明确域名／精确主机或合适手工规则确认，不将共享云后缀整段改成直连。手工正则由核心check校验，复杂度和资源仍受设备限制。
-
-原始少量预设还参考[OpenAI网络建议](https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps)、[Microsoft365端点](https://learn.microsoft.com/office365/enterprise/urls-and-ip-address-ranges)、[Apple网络主机](https://support.apple.com/101555)、[Telegram域名](https://core.telegram.org/bug-bounty)等服务商资料。它们提供覆盖边界参考，不表示项目复制或动态跟随其完整清单；需要复核的当前数据以正式JSON和来源锁为准。
+历史部署事实见 [报告索引](../../docs/reports/README.md)，旧版人工选择性覆盖的历史数量不代表当前规则规模。
