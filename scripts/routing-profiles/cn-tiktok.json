@@ -1,0 +1,475 @@
+{
+  "schema": 1,
+  "description": "TikTok代理、常用国内软件直连、YouTube已知遗漏补充；Other保持代理。共享云/CDN不整段直连。",
+  "reviewedOn": "2026-10-23",
+  "sources": {
+    "repository": "https://github.com/v2fly/domain-list-community",
+    "commit": "5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83",
+    "files": [
+      {
+        "name": "tiktok",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/tiktok",
+        "sha256": "e57322c704e4fe5ef3b202e4b86e82767fbe7f1af2c01f065fde4764205d0e4f"
+      },
+      {
+        "name": "youtube",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/youtube",
+        "sha256": "9ffb657176fdffed567953749c137bb3d8a216ce4e839b3831b626c752902213"
+      },
+      {
+        "name": "tencent",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/tencent",
+        "sha256": "09042c7860e9173031fd264727ca30ce30b96cc04fe7850eb39dbd953dc2333a"
+      },
+      {
+        "name": "alibaba",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/alibaba",
+        "sha256": "f05b4013437f1805dd8283d5f7b163783551e128719ea097c840e4d4d810fd5c"
+      },
+      {
+        "name": "jd",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/jd",
+        "sha256": "da3188b01f825f549c553268d723f025a97969f50ee2a42821409d04e01c7eb5"
+      },
+      {
+        "name": "pinduoduo",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/pinduoduo",
+        "sha256": "34a408854534aecbe62286522b70be5cc6f630bfbaa7023890a2ab2c89f275df"
+      },
+      {
+        "name": "douyin",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/douyin",
+        "sha256": "4cc0f40fdf3b30314ce1739e24dc83ed1fe1df4eed7d43a44466b77a3bbd75db"
+      },
+      {
+        "name": "doubao",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/doubao",
+        "sha256": "b501f28fcaeca55a569c6193d12415ef6d62addbe6f8373799fc5c3005ad5db6"
+      },
+      {
+        "name": "bytedance",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/bytedance",
+        "sha256": "f7084016918288fe58dbe18d862762a471c49e7e4f3c0b388a801d54f5448b4c"
+      },
+      {
+        "name": "bilibili",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/bilibili",
+        "sha256": "dbe560654836a368cf5c36ed3962f5fe983f07d0f160aa8ca7e48f63cbec527b"
+      },
+      {
+        "name": "bilibili-cdn",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/bilibili-cdn",
+        "sha256": "13f3606396902e6b405afb3c8741ef3a1b574845f366a9181645acb57e60565d"
+      },
+      {
+        "name": "xiaohongshu",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/xiaohongshu",
+        "sha256": "c02829a3660e6ddcc24e53a86b33735accf42613d493757564b59d217a06065d"
+      },
+      {
+        "name": "kuaishou",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/kuaishou",
+        "sha256": "e6df8faca7cd967eed30475a368a3c808b2c0614fc146a4c11e935c8d5e6619e"
+      },
+      {
+        "name": "iqiyi",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/iqiyi",
+        "sha256": "563c34ce31ef43cfaee07d87f6ed24dea2b3778e15a59bdf09e302d24ac0e688"
+      },
+      {
+        "name": "youku",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/youku",
+        "sha256": "b63643e7a86a9fe844a952f06289efa42735fbf16e8b24fe72bc3e14533dcfdb"
+      },
+      {
+        "name": "hunantv",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/hunantv",
+        "sha256": "892977f97011d101107ed3bd522d14093a17d878b136a3e1125315d72af30553"
+      },
+      {
+        "name": "baidu",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/baidu",
+        "sha256": "6e300f11f8fcc5ad5bdc51f8669f7680e6076d0c361f8ee745897c5a661f8ac3"
+      },
+      {
+        "name": "netease",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/netease",
+        "sha256": "a6a89b93efe33f686bcd017c36e862f2bc5f5c269f5c6c1eb094f9cadbd8ec12"
+      },
+      {
+        "name": "meituan",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/meituan",
+        "sha256": "83c6d9e67f918bd59080eaa0d8670dbf7009f38f00b5919131e1c473d6385b8f"
+      },
+      {
+        "name": "eleme",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/eleme",
+        "sha256": "1ef74dbcc0e5e1ce24b37c47e829b9b86a27e2c51fa10721e265f41092750760"
+      },
+      {
+        "name": "amap",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/amap",
+        "sha256": "9c9400a024d117fae4f2906286fc7f52e0e86b349af05b4972a490be47db4aee"
+      },
+      {
+        "name": "didi",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/didi",
+        "sha256": "86e1750aa2aac5905627557bdcba9550e23d7a4b492789a7e84e7764058a7b53"
+      },
+      {
+        "name": "ctrip",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/ctrip",
+        "sha256": "908c305e648970b29a02a1fdd4fc05489178a00ffa76ab3dd35c03753265caab"
+      },
+      {
+        "name": "kingsoft",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/kingsoft",
+        "sha256": "24e4b5f0917f09fa31f1f359743c3fabb2ca9b2beb6cb8e2459153b735f770c8"
+      },
+      {
+        "name": "wps",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/wps",
+        "sha256": "6749064762e9b1d6f4a0c4defe2023b72b26da5329bf57dd628b6036d0b46607"
+      },
+      {
+        "name": "dingtalk",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/dingtalk",
+        "sha256": "3e067a02023add491519aa6d0d6714b74e073c01e6572de42e01cca69582da45"
+      },
+      {
+        "name": "feishu",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/feishu",
+        "sha256": "2af60550b0ee46ac2eae75b7bb9f2a5dbb3ff502dce2d24ba4db4c6e67bbaf85"
+      },
+      {
+        "name": "zhihu",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/zhihu",
+        "sha256": "d7a8012fea2dbec0f3487866a391cff6e758c5570bde76015aa8cddc75ca135d"
+      },
+      {
+        "name": "sina",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/sina",
+        "sha256": "dd016016fa2f45e1b8c3f91b42cdc2e0e0a20f85dcaf7d5bf137e111685a9ed6"
+      },
+      {
+        "name": "xiaomi",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/xiaomi",
+        "sha256": "d5cd946c6081d139fc8906e25a1e025afadf70395209b7e29507458b122e019a"
+      },
+      {
+        "name": "cmb",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/cmb",
+        "sha256": "3d4f76c8c328f272556f6a2622ee595c2e28407f9f070b6b3d7784341b54041f"
+      },
+      {
+        "name": "ccb",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/ccb",
+        "sha256": "f8c168e3be3b6064fafd1c779179727c8c5b02d3040785e2b53c028cea420064"
+      },
+      {
+        "name": "geolocation-cn",
+        "url": "https://raw.githubusercontent.com/v2fly/domain-list-community/5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83/data/geolocation-cn",
+        "sha256": "c38419846262aa2e08d451468cc4d3b2a482695d5aa10fdb3308a59d449d1e13"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "id": "TikTok",
+      "name": "TikTok",
+      "selected": "Proxy"
+    },
+    {
+      "id": "Domestic",
+      "name": "国内直连",
+      "selected": "direct"
+    }
+  ],
+  "routes": [
+    {
+      "category": "YouTube遗漏域名和移动API",
+      "outbound": "YouTube",
+      "type": "suffix",
+      "values": [
+        "ggpht.com",
+        "ggpht.cn"
+      ]
+    },
+    {
+      "category": "YouTube专用子域",
+      "outbound": "YouTube",
+      "type": "domain",
+      "values": [
+        "yt3.googleusercontent.com",
+        "youtubei.googleapis.com"
+      ]
+    },
+    {
+      "category": "TikTok专用域名",
+      "outbound": "TikTok",
+      "type": "suffix",
+      "values": [
+        "bytedapm.com",
+        "muscdn.com",
+        "musical.ly",
+        "tik-tokapi.com",
+        "tiktok-minis.com",
+        "tiktok-row.net",
+        "tiktok.com",
+        "tiktokcdn-eu.com",
+        "tiktokcdn-us.com",
+        "tiktokcdn.com",
+        "tiktokd.net",
+        "tiktokd.org",
+        "tiktokeu-cdn.com",
+        "tiktokglobalshopv.com",
+        "tiktokminis.us",
+        "tiktokrow-cdn.com",
+        "tiktokv.com",
+        "tiktokv.eu",
+        "tiktokv.us",
+        "tiktokw.eu",
+        "tiktokw.us",
+        "ttcdn-us.com",
+        "ttlivecdn.com",
+        "ttoverseaus.net",
+        "ttwstatic.com",
+        "tiktokcdn-us.com.edgesuite.net",
+        "tiktokcdn.com.akamaized.net",
+        "tiktokcdn.com.edgesuite.net",
+        "tiktokv.com.edgekey.net",
+        "tiktokv.com.edgesuite.net"
+      ]
+    },
+    {
+      "category": "TikTok共享CDN上的精确主机",
+      "outbound": "TikTok",
+      "type": "domain",
+      "values": [
+        "p16-tiktokcdn-com.akamaized.net",
+        "p16-tiktok-dm-sticker-sign-sg.ibyteimg.com",
+        "roovza-launches.appsflyersdk.com",
+        "roovza.inapps.appsflyersdk.com",
+        "roovza.launches.appsflyersdk.com",
+        "roovza.skadsdk.appsflyersdk.com"
+      ]
+    },
+    {
+      "category": "设备采样中的TikTok关联资源",
+      "outbound": "TikTok",
+      "type": "domain",
+      "values": [
+        "p19-oec-va.ibyteimg.com",
+        "roovza.cdn-settings.appsflyersdk.com"
+      ],
+      "evidence": "2026-10-23设备连接采样；不扩展共享域名后缀"
+    },
+    {
+      "category": "腾讯、微信和QQ",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "qq.com",
+        "weixin.com",
+        "wechat.com",
+        "gtimg.com",
+        "servicewechat.com",
+        "tenpay.com"
+      ]
+    },
+    {
+      "category": "淘宝、天猫和支付宝",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "taobao.com",
+        "tmall.com",
+        "alipay.com",
+        "alipayobjects.com"
+      ]
+    },
+    {
+      "category": "京东和拼多多",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "jd.com",
+        "360buyimg.com",
+        "pinduoduo.com",
+        "yangkeduo.com",
+        "pddpic.com"
+      ]
+    },
+    {
+      "category": "抖音",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "douyin.com",
+        "douyincdn.com",
+        "douyinpic.com",
+        "douyinstatic.com",
+        "douyinvod.com",
+        "amemv.com"
+      ]
+    },
+    {
+      "category": "豆包",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "doubao.com",
+        "doubaocdn.com"
+      ]
+    },
+    {
+      "category": "哔哩哔哩",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "bilibili.com",
+        "bilivideo.com",
+        "hdslb.com",
+        "biliapi.net",
+        "acgvideo.com"
+      ]
+    },
+    {
+      "category": "小红书和快手",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "xiaohongshu.com",
+        "xhscdn.com",
+        "xhslink.com",
+        "kuaishou.com",
+        "gifshow.com",
+        "ksapisrv.com"
+      ]
+    },
+    {
+      "category": "国内长视频",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "iqiyi.com",
+        "iqiyipic.com",
+        "qiyi.com",
+        "youku.com",
+        "ykimg.com",
+        "mgtv.com",
+        "hunantv.com"
+      ]
+    },
+    {
+      "category": "百度和网盘",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "baidu.com",
+        "bdstatic.com",
+        "bdimg.com",
+        "baidupcs.com"
+      ]
+    },
+    {
+      "category": "网易邮箱和音乐",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "163.com",
+        "126.com",
+        "127.net",
+        "126.net"
+      ]
+    },
+    {
+      "category": "美团、点评和饿了么",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "meituan.com",
+        "meituan.net",
+        "dianping.com",
+        "dpfile.com",
+        "sankuai.com",
+        "ele.me"
+      ]
+    },
+    {
+      "category": "地图、出行和购票",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "amap.com",
+        "didichuxing.com",
+        "xiaojukeji.com",
+        "ctrip.com"
+      ]
+    },
+    {
+      "category": "办公和协作",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "wpscdn.com",
+        "dingtalk.com",
+        "feishucdn.com",
+        "feishuimg.com",
+        "feishuapp.com"
+      ]
+    },
+    {
+      "category": "社区",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "zhihu.com",
+        "zhimg.com",
+        "weibo.com"
+      ]
+    },
+    {
+      "category": "小米和银行",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "mi.com",
+        "xiaomi.com",
+        "cmbchina.com",
+        "ccb.com"
+      ]
+    },
+    {
+      "category": "豆包设备采样关联主机",
+      "outbound": "Domestic",
+      "type": "domain",
+      "values": [
+        "mon.zijieapi.com",
+        "dig.bdurl.net"
+      ],
+      "evidence": "2026-10-23与豆包连接同时出现的主机；使用精确域名"
+    },
+    {
+      "category": "淘宝常见图片和静态主机",
+      "outbound": "Domestic",
+      "type": "domain",
+      "values": [
+        "img.alicdn.com",
+        "imgextra.alicdn.com",
+        "gw.alicdn.com",
+        "g.alicdn.com"
+      ],
+      "evidence": "只匹配明确主机，不直连整个alicdn.com"
+    },
+    {
+      "category": "国内域名补充",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "cn"
+      ],
+      "evidence": "排在明确服务例外之后；域名后缀不能保证服务器的地理位置"
+    }
+  ]
+}
