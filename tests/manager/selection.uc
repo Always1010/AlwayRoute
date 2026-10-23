@@ -1,5 +1,5 @@
 'use strict';
-import { empty, clone, generate } from 'alwayroute.model';
+import { empty, clone, generate, validate } from 'alwayroute.model';
 import { selectionPlan } from 'alwayroute.selection';
 
 let m=empty(),checks=0;
@@ -21,4 +21,7 @@ changed=clone(next);changed.groups[0].name='Renamed';
 check(selectionPlan(m,changed,generate(m))==null,'mixed metadata and selection edits use complete transaction');
 check(selectionPlan(m,next,generate(next))==null,'stale or foreign runtime config cannot enter hot path');
 check(selectionPlan(m,m,generate(m))==null,'unchanged selection is not a hot switch');
+let patched=clone(m);patched.overrides.n1={patch:{port:0}};let rejected=false;
+try{validate(patched);}catch(e){rejected=true;}
+check(rejected,'avoiding duplicate source validation still fully validates patched node fields');
 printf('PASS %d selection planning checks\n',checks);

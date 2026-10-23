@@ -114,7 +114,9 @@ export function effective(m, validated) {
   if (o?.excluded) continue;
   if (o?.name != null) n.name = o.name;
   if (o?.patch) for (let k,v in o.patch) n[k] = v;
-   if(validated!==true)node(n);
+   // validate() already checked every source node. Only a patch can invalidate
+   // those fields; its optional name was checked separately in the override.
+   if(validated!==true && !(validated=='base' && !o?.patch))node(n);
   if (n.enabled) push(result,n);
  }
  return result;
@@ -141,7 +143,7 @@ export function validate(m) {
   require(o.name == null || text(o.name,128),'覆盖名称无效');
   if(o.patch) fields(o.patch,['server','port','uuid','security','alterId','tls','transport']);
  }
- let usable={direct:true,block:true}; for(let n in effective(m)) usable[n.id]=true;
+ let usable={direct:true,block:true}; for(let n in effective(m,'base')) usable[n.id]=true;
  let groupIds={};
  for (let g in m.groups) {
   fields(g,['id','name','selected']); require(id(g.id) && !ids[g.id] && !groupIds[g.id] && text(g.name,128),'策略组标识重复或无效');
