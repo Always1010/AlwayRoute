@@ -157,6 +157,15 @@ export function validate(m) {
 export function generate(m) {
  validate(m);
  let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[];
+ let selections={};for(let g in m.groups)selections[g.id]=g.selected;
+ function domainDns(rule, target) {
+  // Validation permits only one group reference: a non-Proxy group may follow Proxy.
+  target=selections[target] ?? target;
+  if(target=='Proxy')target=selections.Proxy;
+  let d={server:target=='direct'?'bootstrap':'proxy-dns'};
+  for(let key,value in rule)d[key]=value;
+  push(dnsRules,d);
+ }
  for(let n in effective(m)) {
   let o={type:'vmess',tag:n.id,server:n.server,server_port:n.port,uuid:n.uuid,security:n.security ?? 'auto',alter_id:n.alterId ?? 0};
   if(n.tls?.enabled) o.tls={enabled:true,server_name:n.tls.serverName ?? n.server};
@@ -173,13 +182,16 @@ export function generate(m) {
   let rule={}; rule[r.type=='domain'?'domain':r.type=='suffix'?'domain_suffix':'ip_cidr']=[r.type=='ip'?r.value+'/32':r.value];
   if(r.outbound=='block') rule.action='reject'; else {rule.action='route';rule.outbound=r.outbound;}
   push(rules,rule);
-  if((r.type=='domain' || r.type=='suffix') && r.outbound=='direct') {let d={server:'bootstrap'};d[r.type=='domain'?'domain':'domain_suffix']=[r.value];push(dnsRules,d);}
+  if(r.type=='domain' || r.type=='suffix') {let d={};d[r.type=='domain'?'domain':'domain_suffix']=[r.value];domainDns(d,r.outbound);}
  }
  if(m.mode=='rule') {
   let groupIds={};for(let g in m.groups)groupIds[g.id]=true;
   for(let wanted in ['OpenAI','Claude','YouTube','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Proxy']) {
    let domains=policyDomains(wanted);
-   if(groupIds[wanted] && length(domains))push(rules,{domain_suffix:domains,action:'route',outbound:wanted});
+   if(groupIds[wanted] && length(domains)) {
+    push(rules,{domain_suffix:domains,action:'route',outbound:wanted});
+    domainDns({domain_suffix:domains},wanted);
+   }
   }
  }
  let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':'Other';

@@ -62,6 +62,22 @@ check(generate(m).route.rules[2].action=='reject','block uses sing-box route act
 let orderedRules=generate(m).route.rules;
 check(orderedRules[3].outbound=='direct' && routeIndex(orderedRules,'YouTube')>3,'custom domain rule precedes matching built-in service');
 check(routeIndex(orderedRules,'YouTube')<routeIndex(orderedRules,'Google') && routeIndex(orderedRules,'Proxy')>routeIndex(orderedRules,'Telegram'),'YouTube precedes Google and Proxy follows business groups');
+let dnsModel=clone(m),dnsOther=pop(dnsModel.groups);
+push(dnsModel.groups,{id:'Domestic',name:'国内直连',selected:'direct'});push(dnsModel.groups,dnsOther);
+dnsModel.rules=[{id:'exception',enabled:true,type:'domain',value:'overseas.example.cn',outbound:'YouTube'},
+ {id:'domestic',enabled:true,type:'suffix',value:'cn',outbound:'Domestic'},
+ {id:'disabled',enabled:false,type:'suffix',value:'disabled.invalid',outbound:'direct'},
+ {id:'ip',enabled:true,type:'cidr',value:'192.0.2.0/24',outbound:'direct'}];
+let dnsConfig=generate(dnsModel);
+check(dnsConfig.dns.rules[0].domain[0]=='overseas.example.cn' && dnsConfig.dns.rules[0].server=='proxy-dns' && dnsConfig.dns.rules[1].domain_suffix[0]=='cn' && dnsConfig.dns.rules[1].server=='bootstrap','DNS preserves a proxy exception before a direct custom group suffix');
+check(length(dnsConfig.dns.rules)==length(dnsConfig.route.rules)-3,'disabled and IP rules do not become domain DNS rules');
+group(dnsModel,'Domestic').selected='Proxy';group(dnsModel,'Proxy').selected='direct';
+check(generate(dnsModel).dns.rules[1].server=='bootstrap','DNS follows a custom group through Proxy to direct');
+group(dnsModel,'Proxy').selected=nodes[0].id;
+check(generate(dnsModel).dns.rules[1].server=='proxy-dns','DNS follows a changed group selection back to proxy');
+group(dnsModel,'YouTube').selected='direct';dnsConfig=generate(dnsModel);
+check(dnsConfig.dns.rules[0].server=='bootstrap' && dnsConfig.dns.rules[4].domain_suffix[0]=='youtube.com' && dnsConfig.dns.rules[4].server=='bootstrap','built-in direct groups and explicit overrides use local DNS in routing order');
+for(let mode in ['global','direct']){dnsModel.mode=mode;check(length(generate(dnsModel).dns.rules)==0,'DNS custom and service rules are omitted in '+mode+' mode');}
 let optional=clone(m),other=pop(optional.groups);push(optional.groups,{id:'Discord',name:'Discord',selected:'Proxy'});push(optional.groups,other);
 check(routeIndex(generate(optional).route.rules,'Discord')>0,'optional catalog group emits its domain rule when present');
 let baseRules=generate(m).route.rules;
