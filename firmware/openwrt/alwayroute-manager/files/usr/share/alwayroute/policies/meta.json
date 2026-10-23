@@ -1,0 +1,17 @@
+{
+  "id": "Meta",
+  "name": "Meta",
+  "default": false,
+  "description": "Meta、Facebook、Instagram 与 WhatsApp",
+  "domains": [
+    "meta.com",
+    "facebook.com",
+    "fb.com",
+    "fbcdn.net",
+    "instagram.com",
+    "cdninstagram.com",
+    "whatsapp.com",
+    "whatsapp.net"
+  ],
+  "exactDomains": []
+}

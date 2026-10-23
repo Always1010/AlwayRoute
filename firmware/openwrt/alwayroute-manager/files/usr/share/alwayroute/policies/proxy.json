@@ -1,0 +1,30 @@
+{
+  "id": "Proxy",
+  "name": "代理",
+  "default": true,
+  "description": "未命中业务组的常用境外网站",
+  "domains": [
+    "github.com",
+    "githubassets.com",
+    "githubusercontent.com",
+    "github.io",
+    "netflix.com",
+    "nflxext.com",
+    "nflximg.com",
+    "nflxso.net",
+    "nflxvideo.net",
+    "disneyplus.com",
+    "disney-plus.net",
+    "dssott.com",
+    "spotify.com",
+    "scdn.co",
+    "reddit.com",
+    "redd.it",
+    "wikipedia.org",
+    "wikimedia.org",
+    "twitch.tv",
+    "medium.com",
+    "stackoverflow.com"
+  ],
+  "exactDomains": []
+}

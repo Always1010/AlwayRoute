@@ -2,11 +2,13 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=MIT
 PKGARCH:=all
 
 include $(INCLUDE_DIR)/package.mk
+
+# package.mk tracks CURDIR recursively, including the installed policies JSON.
 
 define Package/alwayroute-manager
   SECTION:=net
@@ -24,6 +26,8 @@ endef
 
 define Package/alwayroute-manager/install
 	$(INSTALL_DIR) $(1)/usr/share/ucode/alwayroute $(1)/usr/share/rpcd/ucode $(1)/usr/share/rpcd/acl.d $(1)/usr/libexec $(1)/etc/init.d $(1)/etc/uci-defaults
+	$(INSTALL_DIR) $(1)/usr/share/alwayroute/policies
+	$(INSTALL_DATA) ./files/usr/share/alwayroute/policies/*.json $(1)/usr/share/alwayroute/policies/
 	$(INSTALL_DATA) ./files/usr/share/ucode/alwayroute/*.uc $(1)/usr/share/ucode/alwayroute/
 	$(INSTALL_DATA) ./files/usr/share/rpcd/ucode/alwayroute $(1)/usr/share/rpcd/ucode/
 	$(INSTALL_DATA) ./files/usr/share/rpcd/acl.d/alwayroute.json $(1)/usr/share/rpcd/acl.d/

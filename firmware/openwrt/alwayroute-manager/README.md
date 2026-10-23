@@ -9,6 +9,10 @@ LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重�
 
 包安装 root-only 配置库 `/etc/alwayroute/`、rpcd ACL、init 脚本及每小时第17分的
 订阅更新 cron。cron 只更新保存配置，管理员须显式应用，避免定时改变现有转发。
+正式服务规则随包安装到 `/usr/share/alwayroute/policies/`，由 `catalog.json` 文件名数组索引，
+每个服务独立 JSON 保存域名后缀与精确域名。该目录不列入 conffiles，随包升级替换；
+来源锁与历史组合只保留在仓库 [config/routing/](../../../config/routing/README.md)。
+包目录由 OpenWrt `package.mk` 递归追踪，修改服务数据参与增量重建。
 下载默认仅 HTTPS、默认验证证书、20秒总时限、128KiB上限；不使用公共转换服务。
 每个订阅可由管理员显式设置`allowHttp:true`，仅为该来源允许http://输入；
 缺字段、false或非布尔true均不构成许可。HTTP没有传输加密，不全局放开，也不允许其他scheme。

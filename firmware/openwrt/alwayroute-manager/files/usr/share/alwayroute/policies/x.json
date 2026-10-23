@@ -1,0 +1,13 @@
+{
+  "id": "X",
+  "name": "X",
+  "default": true,
+  "description": "X（原 Twitter）页面、短链与静态内容",
+  "domains": [
+    "x.com",
+    "twitter.com",
+    "t.co",
+    "twimg.com"
+  ],
+  "exactDomains": []
+}

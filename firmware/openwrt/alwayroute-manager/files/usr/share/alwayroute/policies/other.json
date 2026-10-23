@@ -1,0 +1,8 @@
+{
+  "id": "Other",
+  "name": "Other",
+  "default": true,
+  "description": "所有规则均未命中时的最终出口",
+  "domains": [],
+  "exactDomains": []
+}

@@ -1,0 +1,17 @@
+[
+  "proxy.json",
+  "openai.json",
+  "claude.json",
+  "google.json",
+  "youtube.json",
+  "tiktok.json",
+  "x.json",
+  "telegram.json",
+  "domestic.json",
+  "other.json",
+  "microsoft.json",
+  "apple.json",
+  "meta.json",
+  "discord.json",
+  "steam.json"
+]

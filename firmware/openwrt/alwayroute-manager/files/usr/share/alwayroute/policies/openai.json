@@ -1,0 +1,13 @@
+{
+  "id": "OpenAI",
+  "name": "OpenAI",
+  "default": true,
+  "description": "OpenAI、ChatGPT 及静态内容",
+  "domains": [
+    "openai.com",
+    "chatgpt.com",
+    "oaistatic.com",
+    "oaiusercontent.com"
+  ],
+  "exactDomains": []
+}

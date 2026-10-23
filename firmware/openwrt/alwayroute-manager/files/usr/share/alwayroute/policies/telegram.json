@@ -1,0 +1,15 @@
+{
+  "id": "Telegram",
+  "name": "Telegram",
+  "default": true,
+  "description": "Telegram 官方网页与公开链接",
+  "domains": [
+    "telegram.org",
+    "telegram.me",
+    "telegram.dog",
+    "t.me",
+    "telesco.pe",
+    "telegra.ph"
+  ],
+  "exactDomains": []
+}

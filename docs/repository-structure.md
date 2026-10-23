@@ -14,7 +14,7 @@ AlwayRoute/
 │   ├── v1.md                          # 配置模型与 RPC 契约
 │   └── fixtures/                      # 合成配置、订阅输入样本
 ├── config/
-│   └── routing/                       # 分流数据：业务清单、来源锁文件和部署组合
+│   └── routing/                       # 分流数据来源锁与历史部署组合
 ├── firmware/
 │   ├── README.md                      # 固定构建输入、集成步骤和限制
 │   ├── sources.lock.json              # 上游来源、版本、下载入口与源码树哈希
@@ -56,7 +56,8 @@ AlwayRoute/
 | 位置 | 保存内容 | 维护时同时关注 |
 | --- | --- | --- |
 | `contracts/v1.md`、`contracts/fixtures/` | 管理模型、接口约定及合成样本 | 前后端实现、权限和对应测试 |
-| `config/routing/` | `profiles/` 按业务保存分流数据，`sources.lock.json` 锁定公共来源，`deployments/` 记录组合顺序 | 规则优先级、来源引用、组合数量及部署报告；不是接口契约样本 |
+| `config/routing/` | `sources.lock.json` 锁定公共参考来源，`deployments/` 记录历史组合并引用正式服务数据和 Git 提交 | 历史数量、顺序、来源与部署报告；不保存第二套业务规则 |
+| `firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/` | 唯一正式服务规则：`catalog.json` 文件名索引，各服务独立 JSON 保存后缀与精确域名 | 后端目录加载、规则优先级、来源说明及包安装；随包升级替换 |
 | `firmware/openwrt/alwayroute-core/Makefile` | 外部核心 ELF、来源信息与许可证的安装配方 | 外部输入哈希及增量构建依赖 |
 | `firmware/openwrt/alwayroute-manager/files/usr/share/ucode/alwayroute/` | `model.uc`、`subscription.uc`、`store.uc`：模型生成、订阅解析与配置事务 | `contracts/`、`tests/manager/` |
 | `firmware/openwrt/alwayroute-manager/files/usr/share/rpcd/` | RPC 实现和 `acl.d/` 权限 | 前端 `api.js` 与接口边界检查 |
@@ -81,14 +82,14 @@ AlwayRoute/
 2. 接口或配置语义写入 `contracts/`；可共享样本放入 `contracts/fixtures/`，使用合成域名和身份值，不保存真实订阅或节点凭证。
 3. 测试按 `manager/`、`integration/`、`ui/` 归属存放；测试桩与预览模拟器保留在 `tests/`，不混入生产包。
 4. 与固件构建、镜像检查直接相关的工具放入 `firmware/tools/`；跨组件工作流脚本放入 `scripts/`；一次性本机诊断文件放入 `.local/`，复用前再审查归档。
-   公开配置数据放入 `config/` 的对应业务目录，不放进 `scripts/`。分流规则按业务命名并拆分，共用来源只维护一个锁文件；组合记录引用清单，不复制规则。真实设备配置仍属于私有数据，不因配置目录存在而纳入 Git。
+   正式服务分流数据放入管理包 `files/usr/share/alwayroute/policies/`，按完整服务独立管理，由 `catalog.json` 索引并随包安装；不可使用补丁式业务文件或在 `config/` 保存另一份规则。来源锁与历史组合保留在 `config/routing/`，组合记录引用正式服务文件和 Git 提交，不复制规则。其他公开配置放入 `config/` 对应目录；真实设备配置仍属于私有数据，不因目录存在而纳入 Git。
 5. 文档按[文档导航中的维护规则](README.md#维护规则)归档；根目录保留项目入口和仓库级规则。
 6. 改名或移动前检查全部引用，特别是测试中的仓库相对路径、包安装路径和文档链接。源码同步不使用 `--delete`，Rock 残留旧文件必须单独审查处理。
 7. 完成修改后运行与改动相称的检查，按 `AGENTS.md` 创建中文 Conventional Commit；不同目的分开提交，远程推送需用户在当前请求中明确要求。
 
 ## 2026-10-23 命名与归属复核
 
-检查了整理前全部 92 个受 Git 管理文件的路径与目录职责，并搜索了分流数据、脚本、测试和实验补丁的引用。确认的问题是 `scripts/routing-profiles/cn-tiktok.json` 名称只突出国内和 TikTok，却还包含 YouTube 补充，且静态配置数据混入脚本目录；现已迁到 `config/routing/`，按三个业务拆分，来源锁定与部署组合独立维护。此次整理没有改动分流行为、规则数量或运行设备。
+检查了整理前全部 92 个受 Git 管理文件的路径与目录职责，并搜索了分流数据、脚本、测试和实验补丁的引用。确认的问题是 `scripts/routing-profiles/cn-tiktok.json` 名称只突出国内和 TikTok，却还包含 YouTube 补充，且静态配置数据混入脚本目录；该文件曾迁到 `config/routing/profiles/`。正式项目整理进一步将完整服务规则统一到管理包 `policies/`：保留原有 13 个服务域名，加入 TikTok 与 Domestic，将 YouTube 已知补充合入完整 YouTube 服务；`config/routing/` 只保留来源锁与实际历史部署记录。revision 20 的 120 条自定义规则及部署事实按历史 Git 提交还原，当前正式文件不充当历史快照。
 
 其他目录没有发现需要批量移动的同类混放。OpenWrt 包的 `files/`、`root/`、`htdocs/` 是安装布局；`firmware/tests/` 的 Go 文件是实验 overlay 的构建输入，而 `tests/firmware/` 检查主机工具，保留两者并补全索引。`docs/reports/evidence/` 保存报告使用的脱敏证据，保持关联；按日期命名的历史报告保留当时观察和原补丁名称，不因候选撤回而改写历史或给现存补丁重新编号。
 

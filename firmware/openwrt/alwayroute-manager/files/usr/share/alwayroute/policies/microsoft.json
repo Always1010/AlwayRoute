@@ -1,0 +1,22 @@
+{
+  "id": "Microsoft",
+  "name": "Microsoft",
+  "default": false,
+  "description": "Microsoft、Microsoft 365 与常用消费服务",
+  "domains": [
+    "microsoft.com",
+    "microsoftonline.com",
+    "live.com",
+    "office.com",
+    "office365.com",
+    "outlook.com",
+    "windows.com",
+    "azure.com",
+    "bing.com",
+    "xbox.com",
+    "cloud.microsoft",
+    "static.microsoft",
+    "usercontent.microsoft"
+  ],
+  "exactDomains": []
+}

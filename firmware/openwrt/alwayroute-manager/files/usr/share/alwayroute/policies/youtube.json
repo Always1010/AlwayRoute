@@ -1,0 +1,19 @@
+{
+  "id": "YouTube",
+  "name": "YouTube",
+  "default": true,
+  "description": "YouTube 页面、短链、视频与静态内容",
+  "domains": [
+    "youtube.com",
+    "youtu.be",
+    "youtube-nocookie.com",
+    "googlevideo.com",
+    "ytimg.com",
+    "ggpht.com",
+    "ggpht.cn"
+  ],
+  "exactDomains": [
+    "yt3.googleusercontent.com",
+    "youtubei.googleapis.com"
+  ]
+}

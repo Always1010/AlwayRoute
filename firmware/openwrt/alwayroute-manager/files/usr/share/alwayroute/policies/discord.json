@@ -1,0 +1,13 @@
+{
+  "id": "Discord",
+  "name": "Discord",
+  "default": false,
+  "description": "Discord 页面、API 与内容分发",
+  "domains": [
+    "discord.com",
+    "discord.gg",
+    "discordapp.com",
+    "discordapp.net"
+  ],
+  "exactDomains": []
+}

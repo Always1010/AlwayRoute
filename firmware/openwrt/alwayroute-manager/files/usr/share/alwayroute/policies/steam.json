@@ -1,0 +1,16 @@
+{
+  "id": "Steam",
+  "name": "Steam",
+  "default": false,
+  "description": "Steam 商店、社区、内容与 API",
+  "domains": [
+    "steampowered.com",
+    "steamcommunity.com",
+    "steamstatic.com",
+    "steamcontent.com",
+    "steamserver.net",
+    "steam-api.com",
+    "valvesoftware.com"
+  ],
+  "exactDomains": []
+}

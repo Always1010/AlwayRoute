@@ -1,0 +1,17 @@
+{
+  "id": "Apple",
+  "name": "Apple",
+  "default": false,
+  "description": "Apple、iCloud、商店与静态内容",
+  "domains": [
+    "apple.com",
+    "icloud.com",
+    "icloud-content.com",
+    "itunes.apple.com",
+    "apps.apple.com",
+    "mzstatic.com",
+    "cdn-apple.com",
+    "apple-dns.net"
+  ],
+  "exactDomains": []
+}

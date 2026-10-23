@@ -1,0 +1,12 @@
+{
+  "id": "Claude",
+  "name": "Claude",
+  "default": true,
+  "description": "Anthropic 与 Claude",
+  "domains": [
+    "anthropic.com",
+    "claude.ai",
+    "claude.com"
+  ],
+  "exactDomains": []
+}
