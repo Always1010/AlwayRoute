@@ -738,7 +738,7 @@ return view.extend({
 		this.modal('添加服务策略', [this.field('服务', selection), E('p', { 'class': 'cbi-section-descr' }, ['同时启用对应的内置域名规则。'])], function(next) {
 			var preset = available.find(function(p) { return p.id === selection.value; });
 			if (next.groups.length >= 16 || next.groups.some(function(g) { return g.id === preset.id; })) throw new Error('策略组已存在或数量已满');
-			next.groups.splice(next.groups.findIndex(function(g) { return g.id === 'Other'; }), 0, { id: preset.id, name: preset.name, selected: 'Proxy' });
+			next.groups.splice(next.groups.findIndex(function(g) { return g.id === 'Other'; }), 0, { id: preset.id, name: preset.name, selected: preset.id === 'Domestic' ? 'direct' : 'Proxy' });
 		});
 	},
 

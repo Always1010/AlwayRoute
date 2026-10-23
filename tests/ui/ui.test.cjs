@@ -220,6 +220,26 @@ test('custom groups preserve references on rename and block deleting primary or 
   assert.equal(view.draft.groups.some(g => g.id === id), false);
 });
 
+test('service presets default Domestic to direct and other services to Proxy', () => {
+  const { view } = harness(async () => { throw new Error('Adding a service must not call RPC before confirmation'); });
+  view.capabilities = { policyPresets: [
+    { id: 'Domestic', name: '国内服务' },
+    { id: 'YouTube', name: 'YouTube' }
+  ] };
+  let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+
+  view.addService();
+  fieldInput(fields, '服务').value = 'Domestic';
+  commit(view.draft);
+  assert.equal(view.draft.groups.find(g => g.id === 'Domestic').selected, 'direct');
+
+  view.addService();
+  fieldInput(fields, '服务').value = 'YouTube';
+  commit(view.draft);
+  assert.equal(view.draft.groups.find(g => g.id === 'YouTube').selected, 'Proxy');
+});
+
 test('runtime refresh preserves strategy controls and never promotes draft choices to actual choices', async () => {
   let actual = 'direct', lastError = null;
   const { view } = harness(async method => method === 'status' ? { state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified', lastError }, service: { running: true }, core: { available: true, groups: { Proxy: { now: actual } } } } : { available: true, upload: 1, download: 2 });
