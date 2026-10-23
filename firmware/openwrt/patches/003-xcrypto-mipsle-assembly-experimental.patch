@@ -1,0 +1,542 @@
+From: stffabi <stffabi@users.noreply.github.com>
+Subject: [EXPERIMENTAL, DEFAULT OFF] MIPSLE ChaCha20 / Poly1305 assembly
+
+Source: https://go-review.googlesource.com/c/crypto/+/585755
+Fixed revision: 45132dae57e76146e71cc1cda14e3a75dffe2457 (patch set 2)
+GitHub PR: https://github.com/golang/crypto/pull/294
+Upstream status when imported: NEW / unmerged; no crypto reviewer approval.
+
+The assembly files and ChaCha Go glue are byte-for-byte copies of that
+revision. The sole Poly1305 Go glue adaptation renames the declaration
+parameter msg to D to match the original assembly D_base/D_len operands;
+this passes asmdecl vet with no ABI or computation change. Preserve the
+Go BSD and Linux/WireGuard GPL-2.0 OR MIT provenance notices. The two
+noasm constraints are rebased onto x/crypto v0.48.0. No algorithm or
+original assembly instruction is changed. The default
+MIPS32r1 shift/or path is used; no GOMIPS ISA extension is enabled here.
+
+This is a review/test candidate, not production acceptance. It changes
+neither cipher, rounds, authentication nor protocol features. Validate
+upstream vectors, overflow, overlap, unaligned and streaming cases plus
+assembly-versus-generic differential tests on actual MIPSLE hardware.
+Apply only through an explicit temporary Go overlay; never edit the Go
+module cache or GOROOT. No default build selects this patch.
+
+--- /dev/null
++++ b/chacha20/chacha_mipsle.go
+@@ -0,0 +1,16 @@
++// Copyright 2024 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build gc && !purego
++
++package chacha20
++
++const bufSize = blockSize
++
++//go:noescape
++func xorKeyStream(dst, src []byte, key *[8]uint32, nonce *[3]uint32, counter *uint32)
++
++func (s *Cipher) xorKeyStreamBlocks(dst, src []byte) {
++	xorKeyStream(dst, src, &s.key, &s.nonce, &s.counter)
++}
+--- /dev/null
++++ b/chacha20/chacha_mipsle.s
+@@ -0,0 +1,185 @@
++// Copyright 2024 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++// Ported from https://github.com/torvalds/linux/blob/1b294a1f35616977caddaddf3e9d28e576a1adbc/arch/mips/crypto/chacha-core.S
++// which is licensed under:
++// # ====================================================================
++// # SPDX-License-Identifier: GPL-2.0 OR MIT
++// #
++// # Copyright (C) 2016-2018 René van Dorst <opensource@vdorst.com>. All Rights Reserved.
++// # Copyright (C) 2015-2019 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
++// # ====================================================================
++
++//go:build gc && !purego
++
++#include "textflag.h"
++
++#define X0	R1
++#define X1	R2
++#define X2	R3
++#define X3	R4
++#define X4	R5
++#define X5	R6
++#define X6	R7
++#define X7	R8
++#define X8	R9
++#define X9	R10
++#define X10	R11
++#define X11	R12
++#define X12	R13
++#define X13	R14
++#define X14	R15
++#define X15	R16
++
++#define DST 		R17
++#define SRC 		R18
++#define SRC_LEN 	R19
++#define KEY			R20
++#define NONCE 		R21
++#define CTR			R22
++
++#define LOOP_I		R24
++#define TMP			R25
++
++#ifdef GOMIPS_r2
++#define hasROTR
++#endif
++#ifdef GOMIPS_r5
++#define hasROTR
++#endif
++
++#ifdef hasROTR
++#define ROTL(S, R) 			\
++	ROTR	$(32-S), R
++#else
++#define ROTL(S, R) 			\
++	SLL		$(S), R, TMP	\
++	SRL		$(32-S), R 		\
++	OR 		TMP, R
++#endif
++
++#define AXR(A, B, C, D,  K, L, M, N,  V, W, Y, Z,  S) \
++	ADDU	K, A 	\
++	ADDU	L, B 	\
++	ADDU	M, C 	\
++	ADDU	N, D 	\
++	XOR		A, V 	\
++	XOR		B, W 	\
++	XOR		C, Y 	\
++	XOR		D, Z 	\
++	ROTL	(S, V) 	\
++	ROTL	(S, W) 	\
++	ROTL	(S, Y) 	\
++	ROTL	(S, Z)
++
++#define FOR_STATE(OP, OP_MEM) \
++	OP (    $0x61707865,	X0 ) 	\ // expa
++	OP (    $0x3320646e,	X1 ) 	\ // nd 3
++	OP (    $0x79622d32, 	X2 ) 	\ // 2-by
++	OP (	$0x6b206574,	X3 ) 	\ // te k
++	OP_MEM (	0(KEY), 	X4 ) 	\
++	OP_MEM (    4(KEY), 	X5 ) 	\
++	OP_MEM (    8(KEY), 	X6 ) 	\
++	OP_MEM (    12(KEY), 	X7 ) 	\
++	OP_MEM (    16(KEY), 	X8 ) 	\
++	OP_MEM (    20(KEY), 	X9 ) 	\
++	OP_MEM (    24(KEY),	X10 ) 	\
++	OP_MEM (    28(KEY),	X11 ) 	\
++	OP (    	CTR,		X12 ) 	\
++	OP_MEM (    0(NONCE),	X13 ) 	\
++	OP_MEM (    4(NONCE),	X14 ) 	\
++	OP_MEM (    8(NONCE),	X15 )
++
++#define movw(x, y) \
++	MOVW x, y
++
++#define ADD(V, REG)  \
++	ADDU	V, REG
++
++#define ADD_MEM(ADDR, REG)  \
++	MOVW    ADDR, TMP 		\
++	ADDU	TMP, REG
++
++// XOR_STREAM_WORD works with unaligned memory, this is quite important since the strams might not be aligned.
++// Especially during the use in TLS the memory is often unaligned.
++#define XOR_STREAM_WORD( OFF, REG) 	\
++	MOVWL	(4*OFF + 3)(SRC), TMP 	\
++	MOVWR	(4*OFF)(SRC), TMP 		\
++	XOR		REG, TMP				\ 
++	MOVWL	TMP, (4*OFF + 3)(DST) 	\
++	MOVWR	TMP, (4*OFF)(DST)
++
++// func xorKeyStream(dst, src []byte, key *[8]uint32, nonce *[3]uint32, counter *uint32)
++TEXT ·xorKeyStream(SB), NOSPLIT|NOFRAME, $0
++	MOVW	dst+0(FP), 		DST
++	MOVW	src+12(FP), 	SRC
++	MOVW	src_len+16(FP), SRC_LEN
++	MOVW	key+24(FP),		KEY
++	MOVW	nonce+28(FP),	NONCE
++	MOVW	counter+32(FP), CTR
++
++	// load counter
++	MOVW	(CTR), CTR
++
++chacha:
++
++	// load initial State into X*
++	FOR_STATE ( movw, movw )
++
++	// set number of rounds
++	MOVW	$20, LOOP_I
++
++loop:
++	AXR( X0,X1,X2,X3,		X4,X5,X6,X7,		X12,X13,X14,X15,	16)
++	AXR( X8,X9,X10,X11,		X12,X13,X14,X15,	X4,X5,X6,X7,		12)
++	AXR( X0,X1,X2,X3,		X4,X5,X6,X7,		X12,X13,X14,X15,	8)
++	AXR( X8,X9,X10,X11,		X12,X13,X14,X15,	X4,X5,X6,X7,  		7)
++	AXR( X0,X1,X2,X3,		X5,X6,X7,X4,		X15,X12,X13,X14,	16)
++	AXR( X10,X11,X8,X9,		X15,X12,X13,X14,	X5,X6,X7,X4, 		12)
++	AXR( X0,X1,X2,X3,		X5,X6,X7,X4,		X15,X12,X13,X14,	8)
++	AXR( X10,X11,X8,X9,		X15,X12,X13,X14,	X5,X6,X7,X4,  		7)
++
++	ADDU	$-2, LOOP_I
++	BNE     LOOP_I, loop
++
++	// add back the initial state to generate the key stream
++	FOR_STATE ( ADD, ADD_MEM )
++
++	// xor the key stream with the source and write out the result
++	XOR_STREAM_WORD (0, X0)
++	XOR_STREAM_WORD (1, X1)
++	XOR_STREAM_WORD (2, X2)
++	XOR_STREAM_WORD (3, X3)
++	XOR_STREAM_WORD (4, X4)
++	XOR_STREAM_WORD (5, X5)
++	XOR_STREAM_WORD (6, X6)
++	XOR_STREAM_WORD (7, X7)
++	XOR_STREAM_WORD (8, X8)
++	XOR_STREAM_WORD (9, X9)
++	XOR_STREAM_WORD (10, X10)
++	XOR_STREAM_WORD (11, X11)
++	XOR_STREAM_WORD (12, X12)
++	XOR_STREAM_WORD (13, X13)
++	XOR_STREAM_WORD (14, X14)
++	XOR_STREAM_WORD (15, X15)
++
++	// decrement length
++	ADDU	$-64, SRC_LEN, SRC_LEN
++
++	// increment pointers
++	MOVW 	$64(DST), DST
++	MOVW	$64(SRC), SRC
++
++	// increment counter
++	ADDU	$1, CTR
++
++	// loop if there's still data
++	BNE     SRC_LEN, chacha
++
++	// store Counter
++	MOVW	counter+32(FP), TMP
++	MOVW	CTR, (TMP)
++	
++	RET
++
+--- /dev/null
++++ b/internal/poly1305/sum_mipsle.go
+@@ -0,0 +1,53 @@
++// Copyright 2024 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++//go:build gc && !purego
++
++package poly1305
++
++// mac is a wrapper for macGeneric that redirects calls that would have gone to
++// updateGeneric to update.
++//
++// Its Write and Sum methods are otherwise identical to the macGeneric ones, but
++// using function pointers would carry a major performance cost.
++type mac struct{ macGeneric }
++
++func (h *mac) Write(p []byte) (int, error) {
++	nn := len(p)
++	if h.offset > 0 {
++		n := copy(h.buffer[h.offset:], p)
++		if h.offset+n < TagSize {
++			h.offset += n
++			return nn, nil
++		}
++		p = p[n:]
++		h.offset = 0
++		update(&h.macState, h.buffer[:], 1)
++	}
++	if n := len(p) - (len(p) % TagSize); n > 0 {
++		update(&h.macState, p[:n], 1)
++		p = p[n:]
++	}
++	if len(p) > 0 {
++		h.offset += copy(h.buffer[h.offset:], p)
++	}
++	return nn, nil
++}
++
++func (h *mac) Sum(out *[16]byte) {
++	state := h.macState
++	if n := h.offset; n > 0 {
++		h.buffer[n] = 1
++		n++
++		for ; n < TagSize; n++ {
++			h.buffer[n] = 0
++		}
++
++		update(&state, h.buffer[:], 0)
++	}
++	finalize(out, &state.h, &state.s)
++}
++
++//go:noescape
++func update(state *macState, D []byte, padbit uint32)
+--- /dev/null
++++ b/internal/poly1305/sum_mipsle.s
+@@ -0,0 +1,230 @@
++// Copyright 2024 The Go Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++// Ported from https://github.com/WireGuard/wireguard-monolithic-historical/blob/edad0d6e99e5133b1e8e865d727a25fff6399cb4/src/crypto/zinc/poly1305/poly1305-mips.S
++// which is licensed under:
++// # ====================================================================
++// # SPDX-License-Identifier: GPL-2.0 OR MIT
++// #
++// # Copyright (C) 2016-2018 René van Dorst <opensource@vdorst.com>. All Rights Reserved.
++// # Copyright (C) 2015-2019 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
++// # ====================================================================
++
++//go:build gc && !purego
++
++#include "textflag.h"
++
++#define MADDU(rs, rt) \
++	WORD $(0x70000001 + (rs << 21) + (rt << 16));
++
++#define ADDU_C(CA, D, H)\
++	ADDU	CA, H 		\
++	SGTU	CA, H, CA  	\
++	ADDU	D, H  		\
++	SGTU	D, H, D  	\
++	ADDU	D, CA
++
++#define ADDU_CA(CA, H) 	\
++	ADDU	CA, H 		\
++	SGTU	CA, H, CA
++
++#define PTR_POLY1305_H(n) (n*4)(STATE)
++#define PTR_POLY1305_R(n) ( 24 + (n*4))(STATE)
++
++#define P_H0 	R1
++#define P_H0_n 	1
++#define P_H1 	R2
++#define P_H1_n 	2
++#define P_H2	R3
++#define P_H2_n	3
++#define P_H3 	R4
++#define P_H3_n 	4
++#define P_H4 	R5
++#define P_H4_n 	5
++
++#define P_R0 	R6
++#define P_R0_n 	6
++#define P_R1 	R7
++#define P_R1_n 	7
++#define P_R2 	R8
++#define P_R2_n 	8
++#define P_R3 	R9
++#define P_R3_n 	9
++
++#define P_S1 	R10
++#define P_S1_n 	10
++#define P_S2 	R11
++#define P_S2_n 	11
++#define P_S3 	R12
++#define P_S3_n 	12
++
++#define STATE	R13
++#define MSG		R14
++#define MSG_LEN	R15
++
++#define D_0 	R16
++#define D_1 	R17
++#define D_2 	R18
++#define D_3 	R19
++
++#define CA		R20
++#define CA_n	20
++#define SC		R21
++#define SC_n	21
++
++#define TMP		R22
++
++#define MSB 3
++#define LSB 0
++
++// func update(state *[7]uint64, msg []byte, padbit uint32)
++TEXT ·update(SB), NOSPLIT|NOFRAME, $0
++	MOVW state+0(FP), STATE
++	MOVW D_base+4(FP), MSG
++	MOVW D_len+8(FP), MSG_LEN
++
++	/* load Rx */
++	MOVW	PTR_POLY1305_R(0), P_R0
++	MOVW	PTR_POLY1305_R(1), P_R1
++	MOVW	PTR_POLY1305_R(2), P_R2
++	MOVW	PTR_POLY1305_R(3), P_R3
++
++	/* load Hx */
++	MOVW	PTR_POLY1305_H(0), P_H0
++	MOVW	PTR_POLY1305_H(1), P_H1
++	MOVW	PTR_POLY1305_H(2), P_H2
++	MOVW	PTR_POLY1305_H(3), P_H3
++	MOVW	PTR_POLY1305_H(4), P_H4
++
++	/* Sx = Rx + (Rx >> 2) */
++	SRL		$2, P_R1, P_S1
++	SRL		$2, P_R2, P_S2
++	SRL		$2, P_R3, P_S3
++	ADDU	P_R1, P_S1
++	ADDU	P_R2, P_S2
++	ADDU	P_R3, P_S3
++
++	MOVW	$1, SC
++
++	// The following code up to loop is needed to fix some tests:
++	// - Override initial state to ensure large h (subject to h < 2(2¹³⁰ - 5)) is deserialized from the state correctly.
++	//
++	// For those tests we need to calc the modulus before starting, normally we do that at the end but there are tests
++	// that come with a larger h.
++	/* c = (h4 >> 2) + (h4 & ~3U); */
++	SRL		$2, P_H4, CA
++	SLL		$2, CA, TMP
++	ADDU	TMP, CA
++	/* h4 &= 3 */
++	AND		$3,	P_H4
++
++loop:
++	MOVWL	 0+MSB(MSG), D_0
++	MOVWL	 4+MSB(MSG), D_1
++	MOVWL	 8+MSB(MSG), D_2
++	MOVWL	12+MSB(MSG), D_3
++	MOVWR	 0+LSB(MSG), D_0
++	MOVWR	 4+LSB(MSG), D_1
++	MOVWR	 8+LSB(MSG), D_2
++	MOVWR	12+LSB(MSG), D_3
++
++	/* h0 = (u32)(d0 = (u64)h0 + inp[0]); */
++	ADDU_C	(CA, D_0, P_H0)
++	
++	/* h1 = (u32)(d1 = (u64)h1 + (d0 >> 32) + inp[4]); */
++	ADDU_C	(CA, D_1, P_H1)
++
++	/* h2 = (u32)(d2 = (u64)h2 + (d1 >> 32) + inp[8]); */
++	ADDU_C	(CA, D_2, P_H2)
++
++	/* h3 = (u32)(d3 = (u64)h3 + (d2 >> 32) + inp[12]); */
++	ADDU_C	(CA, D_3, P_H3)
++
++	/* h4 += (u32)(d3 >> 32) + padbit; */
++	MOVW	padbit+16(FP), TMP
++	ADDU	TMP, P_H4
++	ADDU	CA, P_H4
++
++	/* D0 */
++	MULU	P_H0, P_R0
++	MADDU	(P_H1_n, P_S3_n)
++	MADDU	(P_H2_n, P_S2_n)
++	MADDU	(P_H3_n, P_S1_n)
++	MOVW	HI,	CA
++	MOVW	LO, D_0
++
++	/* D1 */
++	MULU	P_H0, P_R1
++	MADDU	(P_H1_n, P_R0_n)
++	MADDU	(P_H2_n, P_S3_n)
++	MADDU	(P_H3_n, P_S2_n)
++	MADDU	(P_H4_n, P_S1_n)
++	MADDU	(CA_n, SC_n)
++	MOVW	HI, CA
++	MOVW	LO, D_1
++
++	/* D2 */
++	MULU	P_H0, P_R2
++	MADDU	(P_H1_n, P_R1_n)
++	MADDU	(P_H2_n, P_R0_n)
++	MADDU	(P_H3_n, P_S3_n)
++	MADDU	(P_H4_n, P_S2_n)
++	MADDU	(CA_n, SC_n)
++	MOVW	HI, CA
++	MOVW	LO, D_2
++
++	/* D3 */
++	MULU	P_H0, P_R3
++	MADDU	(P_H1_n, P_R2_n)
++	MADDU	(P_H2_n, P_R1_n)
++	MADDU	(P_H3_n, P_R0_n)
++	MADDU	(P_H4_n, P_S3_n)
++	MADDU	(CA_n, SC_n)
++	MOVW	HI, CA
++	MOVW	LO, D_3
++
++	/* D4 */
++	MULU	P_H4, P_R0
++	MADDU	(CA_n, SC_n)
++	MOVW	LO, P_H4
++
++	MOVW	D_0, P_H0
++	MOVW	D_1, P_H1
++	MOVW	D_2, P_H2
++	MOVW	D_3, P_H3
++	/* P_H4 has been directly assigned in D4 step */
++	
++	/* c = (h4 >> 2) + (h4 & ~3U); */
++	SRL		$2, P_H4, CA
++	SLL		$2, CA, TMP
++	ADDU	TMP, CA
++
++	/* h4 &= 3 */
++	AND		$3,	P_H4
++
++	/* decrement length */
++	ADDU	$-16, MSG_LEN, MSG_LEN
++
++	/* increment pointers */
++	MOVW 	$16(MSG), MSG
++
++	/* able to do a 16 byte block. */
++	BNE     MSG_LEN, loop
++
++	/* h += c; */
++	ADDU_CA	(CA, P_H0)
++	ADDU_CA	(CA, P_H1)
++	ADDU_CA	(CA, P_H2)
++	ADDU_CA	(CA, P_H3)
++	ADDU_CA	(CA, P_H4)
++
++	/* store Hx */
++	MOVW	P_H0, PTR_POLY1305_H(0)
++	MOVW	P_H1, PTR_POLY1305_H(1)
++	MOVW	P_H2, PTR_POLY1305_H(2)
++	MOVW	P_H3, PTR_POLY1305_H(3)
++	MOVW	P_H4, PTR_POLY1305_H(4)
++	MOVW	$0, PTR_POLY1305_H(5)
++
++	RET
+--- a/chacha20/chacha_noasm.go
++++ b/chacha20/chacha_noasm.go
+@@ -2,7 +2,7 @@
+ // Use of this source code is governed by a BSD-style
+ // license that can be found in the LICENSE file.
+ 
+-//go:build (!arm64 && !s390x && !ppc64 && !ppc64le) || !gc || purego
++//go:build (!arm64 && !s390x && !ppc64 && !ppc64le && !mipsle) || !gc || purego
+ 
+ package chacha20
+ 
+--- a/internal/poly1305/mac_noasm.go
++++ b/internal/poly1305/mac_noasm.go
+@@ -2,7 +2,7 @@
+ // Use of this source code is governed by a BSD-style
+ // license that can be found in the LICENSE file.
+ 
+-//go:build (!amd64 && !loong64 && !ppc64le && !ppc64 && !s390x) || !gc || purego
++//go:build (!amd64 && !loong64 && !ppc64le && !ppc64 && !s390x && !mipsle) || !gc || purego
+ 
+ package poly1305
+ 
