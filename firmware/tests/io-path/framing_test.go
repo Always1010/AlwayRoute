@@ -142,6 +142,135 @@ func TestAlwayRouteFramingExtendedRead(t *testing.T) {
 	t.Fatal("reader did not terminate")
 }
 
+const longFramingCount = 1<<16 + 4
+
+func longFramingPayload(frame int, storage []byte) []byte {
+	payload := storage[:1+frame%len(storage)]
+	for i := range payload {
+		payload[i] = byte(frame>>16) ^ byte(frame>>8) ^ byte(frame) ^ byte(i*31)
+	}
+	return payload
+}
+
+func TestAlwayRouteFramingLongStream(t *testing.T) {
+	for _, masked := range []bool{false, true} {
+		for _, padded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("mask=%v/pad=%v", masked, padded), func(t *testing.T) {
+				// Use the pinned writer as the wire producer. Keep both readers and
+				// all SHAKE states alive across every frame; buffer only one frame.
+				var wire, oldWire bytes.Buffer
+				state := maskingReader(nil, masked, padded)
+				writer := NewStreamChunkWriter(&wire, state.chunkMasking, state.globalPadding)
+				candidate := bufio.NewChunkReader(maskingReader(&wire, masked, padded), ReadChunkSize)
+				baseline := bufio.NewChunkReader(legacyReader{maskingReader(&oldWire, masked, padded)}, ReadChunkSize)
+				leftBuffer, rightBuffer := buf.NewSize(29), buf.NewSize(29)
+				defer leftBuffer.Release()
+				defer rightBuffer.Release()
+				var storage [47]byte
+				var leftSmall, rightSmall [17]byte
+				readIndex := 0
+				for frame := 0; frame < longFramingCount; frame++ {
+					want := longFramingPayload(frame, storage[:])
+					if n, err := writer.Write(want); err != nil || n != len(want) {
+						t.Fatalf("frame %d write: %d bytes, %v", frame, n, err)
+					}
+					oldWire.Write(wire.Bytes())
+					for offset := 0; offset < len(want); readIndex++ {
+						var left, right []byte
+						var e1, e2 error
+						if readIndex%2 == 0 {
+							var n1, n2 int
+							n1, e1 = candidate.Read(leftSmall[:])
+							n2, e2 = baseline.Read(rightSmall[:])
+							left, right = leftSmall[:n1], rightSmall[:n2]
+						} else {
+							leftBuffer.Reset()
+							rightBuffer.Reset()
+							e1, e2 = candidate.ReadBuffer(leftBuffer), baseline.ReadBuffer(rightBuffer)
+							left, right = leftBuffer.Bytes(), rightBuffer.Bytes()
+						}
+						if e1 != nil || e2 != nil || len(left) == 0 || !bytes.Equal(left, right) ||
+							len(left) > len(want)-offset || !bytes.Equal(left, want[offset:offset+len(left)]) || wire.Len() != oldWire.Len() {
+							t.Fatalf("frame %d offset %d: payload %x/%x, errors %v/%v, wire remaining %d/%d", frame, offset, left, right, e1, e2, wire.Len(), oldWire.Len())
+						}
+						offset += len(left)
+					}
+					if wire.Len() != 0 || oldWire.Len() != 0 {
+						t.Fatalf("frame %d left unread wire bytes", frame)
+					}
+				}
+				// No synthesized terminator: only the actual exhausted input may EOF.
+				n1, e1 := candidate.Read(leftSmall[:])
+				n2, e2 := baseline.Read(rightSmall[:])
+				if n1 != 0 || n2 != 0 || e1 != io.EOF || e2 != io.EOF {
+					t.Fatalf("terminal read: (%d,%v)/(%d,%v)", n1, e1, n2, e2)
+				}
+			})
+		}
+	}
+}
+
+func TestAlwayRouteFramingAEADNonceWrap(t *testing.T) {
+	for _, masked := range []bool{false, true} {
+		for _, padded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("mask=%v/pad=%v", masked, padded), func(t *testing.T) {
+				// Exercise the actual protocol factories and cipher, not a copied
+				// nonce/encryption implementation. This verifies current round-trip
+				// behavior across uint16 wrap, not the cryptographic safety of reuse.
+				key, nonce := []byte("0123456789abcdef"), []byte("fedcba9876543210")
+				option := byte(RequestOptionChunkStream)
+				if masked {
+					option |= RequestOptionChunkMasking
+				}
+				if padded {
+					option |= RequestOptionGlobalPadding
+				}
+				var wire, oldWire bytes.Buffer
+				writer := CreateWriter(&wire, nil, key, nonce, key, nonce, SecurityTypeChacha20Poly1305, option)
+				candidate := CreateReader(&wire, nil, key, nonce, key, nonce, SecurityTypeChacha20Poly1305, option).(*AEADReader)
+				oldFraming := CreateReader(&oldWire, nil, key, nonce, key, nonce, SecurityTypeNone, option).(*StreamChunkReader)
+				baseline := NewChacha20Poly1305Reader(legacyReader{oldFraming}, key, nonce)
+				leftBuffer, rightBuffer := buf.NewSize(ReadChunkSize), buf.NewSize(ReadChunkSize)
+				defer leftBuffer.Release()
+				defer rightBuffer.Release()
+				leftRead, rightRead := make([]byte, ReadChunkSize), make([]byte, ReadChunkSize)
+				var storage [47]byte
+				for frame := 0; frame < longFramingCount; frame++ {
+					want := longFramingPayload(frame, storage[:])
+					if n, err := writer.Write(want); err != nil || n != len(want) {
+						t.Fatalf("frame %d write: %d bytes, %v", frame, n, err)
+					}
+					oldWire.Write(wire.Bytes())
+					var left, right []byte
+					var e1, e2 error
+					if frame%2 == 0 {
+						var n1, n2 int
+						n1, e1 = candidate.Read(leftRead)
+						n2, e2 = baseline.Read(rightRead)
+						left, right = leftRead[:n1], rightRead[:n2]
+					} else {
+						leftBuffer.Reset()
+						rightBuffer.Reset()
+						e1, e2 = candidate.ReadBuffer(leftBuffer), baseline.ReadBuffer(rightBuffer)
+						left, right = leftBuffer.Bytes(), rightBuffer.Bytes()
+					}
+					if e1 != nil || e2 != nil || !bytes.Equal(left, want) || !bytes.Equal(right, want) || wire.Len() != 0 || oldWire.Len() != 0 {
+						t.Fatalf("frame %d: payload %x/%x want %x, errors %v/%v, wire remaining %d/%d", frame, left, right, want, e1, e2, wire.Len(), oldWire.Len())
+					}
+					if frame >= 65534 && (candidate.nonceCount != uint16(frame+1) || baseline.nonceCount != uint16(frame+1)) {
+						t.Fatalf("frame %d did not cross nonce boundary: %d/%d", frame, candidate.nonceCount, baseline.nonceCount)
+					}
+				}
+				n1, e1 := candidate.Read(leftRead)
+				n2, e2 := baseline.Read(rightRead)
+				if n1 != 0 || n2 != 0 || e1 != io.EOF || e2 != io.EOF {
+					t.Fatalf("terminal read: (%d,%v)/(%d,%v)", n1, e1, n2, e2)
+				}
+			})
+		}
+	}
+}
+
 func BenchmarkAlwayRouteFraming(b *testing.B) {
 	for _, size := range []int{64, 15000} {
 		for _, legacy := range []bool{true, false} {
