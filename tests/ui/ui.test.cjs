@@ -488,6 +488,74 @@ test('loading a running check renders immediately with a resumable job', async (
   assert.deepEqual(calls, ['job_status', 'get', 'capabilities']);
 });
 
+test('node selection follows visible eligible rows and preserves hidden choices with explicit batch scopes', async () => {
+  const { view } = harness(async () => { throw new Error('selection must not call RPC'); });
+  view.state.appliedRevision = 0;
+  view.draft.subscriptions = [{ id: 'sub', name: '订阅' }];
+  view.draft.nodes = [Object.assign(node('manual'), { name: '手动甲' }), Object.assign(node('sub1', 'sub'), { name: '订阅乙' }),
+    Object.assign(node('disabled'), { name: '停用', enabled: false }), Object.assign(node('excluded', 'sub'), { name: '排除' })];
+  view.draft.overrides.excluded = { excluded: true };
+  const root = view.render_nodes(), byLabel = label => find(root, n => n.attrs['aria-label'] === label);
+  const all = byLabel('全选当前筛选结果中的可检测节点'), source = byLabel('节点来源');
+  assert.equal(byLabel('检查所选').disabled, true);
+  assert.equal(byLabel('选择节点 停用').disabled, true); assert.equal(byLabel('选择节点 排除').disabled, true);
+  source.value = '@manual'; source.events.change(); all.checked = true; all.events.change();
+  assert.deepEqual(Object.keys(view.selectedNodes), ['manual']);
+  source.value = 'sub'; source.events.change(); assert.equal(all.checked, false);
+  all.checked = true; all.events.change(); assert.deepEqual(Object.keys(view.selectedNodes), ['manual', 'sub1']);
+  source.value = ''; source.events.change(); assert.equal(all.checked, true);
+  byLabel('选择节点 订阅乙').checked = false; byLabel('选择节点 订阅乙').events.change();
+  assert.equal(all.indeterminate, true);
+  const query = byLabel('搜索节点名称'); query.value = '不存在'; query.events.input(); assert.equal(all.disabled, true);
+  assert.equal(byLabel('检查所选').disabled, false);
+  const calls = []; view.startCheck = (...args) => { calls.push(args); return Promise.resolve(); };
+  await view.checkSelected(); await view.checkAll(false); await view.checkAll(true);
+  assert.deepEqual(calls, [['', '', ['manual'], 'selected', false], ['', '', [], 'all', false], ['', '', [], 'all', true]]);
+  view.selectedNodes = {}; assert.throws(() => view.checkSelected(), /先选择/);
+  view.selectedNodes = { manual: true, vanished: true }; view.draft.nodes[0].enabled = false; view.render_nodes();
+  assert.deepEqual(Object.keys(view.selectedNodes), []);
+});
+
+test('running checks publish row results and times through lightweight job polling and retain partial failures', async () => {
+  const saved = empty(); saved.nodes.push(node('n1'), node('n2'));
+  const calls = [], outcome = { nodeId: 'n1', checkedRevision: 0, healthy: 'failed', available: false, reason: '超时', time: 1700000000 };
+  let polls = 0, resume;
+  const { view, window } = harness(async method => {
+    calls.push(method);
+    if (method === 'job_status') return { ok: true, job: { id: 'resume', method: 'check', status: ++polls === 1 ? 'running' : 'failed',
+      progress: { scope: 'all', total: 2, completed: 1, currentNodeId: 'n2', failed: 1 }, checks: { n1: outcome }, error: { code: 'JOB_INTERRUPTED', message: '后台中断' } } };
+    throw new Error('only job_status is needed while checking');
+  });
+  window.setTimeout = (fn, ms) => ms === 1000 ? (resume = fn) : setTimeout(fn, ms);
+  view.state.appliedRevision = 0; view.draft = saved; view.tab = 'nodes';
+  const task = view.observeCheck({ id: 'resume', method: 'check', status: 'running', checks: { n1: outcome } });
+  assert.equal(view.checks.n1.healthy, 'failed');
+  resume(); await new Promise(setImmediate);
+  assert.match(text(view.root), /不可用：超时/); assert.match(text(view.root), /正在检测/);
+  assert.match(text(view.root), new RegExp(new Date(outcome.time * 1000).toLocaleString().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '仅重试失败').disabled, true);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '全选当前筛选结果中的可检测节点').disabled, true);
+  resume(); await task;
+  assert.deepEqual(calls, ['job_status', 'job_status']); assert.equal(view.checks.n1.healthy, 'failed');
+  assert.equal(view.uncertain, true); assert.match(view.message.text, /后台中断/);
+});
+
+test('batch check actions preserve busy, read-only and revision protections', async () => {
+  const { view } = harness(async () => { throw new Error('blocked checks must not call RPC'); });
+  view.draft.nodes.push(node()); view.state.appliedRevision = 0;
+  view.checks.n1 = { healthy: 'failed', checkedRevision: 0 };
+  for (const flag of ['busy', 'readonly', 'dirty', 'conflict', 'uncertain']) {
+    view[flag] = true;
+    const root = view.render_nodes();
+    for (const label of ['检查所选', '扫描全部', '仅重试失败']) assert.equal(find(root, n => n.attrs['aria-label'] === label).disabled, true, `${flag}: ${label}`);
+    view[flag] = false;
+  }
+  view.state.savedRevision = 1;
+  assert.throws(() => view.checkAll(false), /先启动服务/);
+  view.state.savedRevision = 0; view.readonly = true; await assert.rejects(view.checkAll(false), /读取权限/);
+  view.readonly = false; view.busy = true; await assert.rejects(view.checkAll(false), /另一项操作/);
+});
+
 test('status restores only node checks belonging to the currently applied revision', async () => {
   let applied = 2;
   const { view } = harness(async method => method === 'status' ? {

@@ -7,7 +7,7 @@ var definitions = {
 	refresh: ['expectedRevision', 'subscriptionId', 'content', 'activate'],
 	apply: ['expectedRevision'], select: ['expectedRevision', 'group', 'nodeId'],
 	rollback: ['expectedRevision'], service: ['action'], status: [], traffic: [],
-	export: ['includeSecrets'], job_status: [], check: ['nodeId', 'subscriptionId'], cancel_check: ['jobId'], logs: ['limit']
+	export: ['includeSecrets'], job_status: [], check: ['nodeId', 'subscriptionId', 'nodeIds', 'scope', 'retryFailed'], cancel_check: ['jobId'], logs: ['limit']
 };
 var calls = {};
 Object.keys(definitions).forEach(function(method) {

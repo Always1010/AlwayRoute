@@ -99,7 +99,7 @@ for(let i=0;i<4;i++){let item=clone(draft.nodes[0]);item.id='b'+i;item.source='d
 batchModel.nodes[0].id='n1';batchModel.overrides={b3:{excluded:true}};
 files['/etc/alwayroute/current.json']=sprintf('%J',batchModel);
 let batchBefore=delayCalls,beforeGuards=guardCalls,beforeStops=stopCalls,beforeRuntime=files['/tmp/alwayroute/runtime.json'];
-onDelay=function(){let p=call('job_status',{}).job.progress;assert(locked && p.completed==delayCalls-batchBefore-1,'progress published before serial probe');return delayCalls-batchBefore==2?'{}':null;};
+onDelay=function(){let observed=call('job_status',{}).job,p=observed.progress;assert(locked && p.completed==delayCalls-batchBefore-1 && length(keys(observed.checks))==p.completed,'progress and completed results published before serial probe');return delayCalls-batchBefore==2?'{}':null;};
 call('check',{subscriptionId:'demo'});work();onDelay=null;let batchJob=call('job_status',{}).job;
 check(batchJob.status=='succeeded' && batchJob.progress.total==2 && batchJob.progress.completed==2 && batchJob.result.passed==1 && batchJob.result.failed==1 && delayCalls-batchBefore==2,'subscription check skips disabled/excluded nodes and continues after a failed probe');
 check(guardCalls==beforeGuards && stopCalls==beforeStops && active && files['/tmp/alwayroute/runtime.json']==beforeRuntime && files['/etc/alwayroute/current.json']==sprintf('%J',batchModel),'detection leaves forwarding, runtime and persistent configuration untouched');
@@ -110,6 +110,28 @@ check(batchJob.status=='cancelled' && batchJob.result.completed==1 && batchJob.r
 check(call('cancel_check',{jobId:'test-job'}).ok==false && !files['/tmp/alwayroute/check-cancel-test-job'],'finished jobs reject cancel and marker is cleaned');
 batchBefore=delayCalls;call('check',{nodeId:'n1'});call('cancel_check',{jobId:'test-job'});work();
 check(call('job_status',{}).job.status=='cancelled' && delayCalls==batchBefore,'queued cancellation prevents even the first probe');
+let manual=clone(batchModel.nodes[0]);manual.id='manual';manual.source=null;push(batchModel.nodes,manual);
+files['/etc/alwayroute/current.json']=sprintf('%J',batchModel);
+batchBefore=delayCalls;
+call('check',{scope:'selected',nodeIds:['manual','manual','b2','b3']});work();batchJob=call('job_status',{}).job;
+check(batchJob.status=='succeeded' && batchJob.result.scope=='selected' && batchJob.result.total==1 && batchJob.result.skipped==2 && delayCalls-batchBefore==1 && batchJob.result.checks.manual.delay==9,'selected check deduplicates IDs and skips disabled/excluded nodes');
+batchBefore=delayCalls;
+for(let args in [{},{scope:'selected',nodeIds:[]},{scope:'all',nodeId:'n1'},{scope:'all',subscriptionId:'demo'},
+ {scope:'all',nodeIds:['n1']},{scope:'selected',nodeIds:'n1'},{scope:'selected',nodeIds:['missing']},{scope:'all',nodeIds:null},{scope:'all',retryFailed:null},
+ {scope:'selected',nodeIds:['n1/escape']},{nodeId:5},{subscriptionId:[]},{scope:'all',retryFailed:'true'},
+ {nodeId:'n1',subscriptionId:'demo'}]) {
+ call('check',args);work();check(call('job_status',{}).job.status=='failed' && delayCalls==batchBefore,'invalid or ambiguous check request never probes or accidentally scans all');
+}
+onDelay=function(command){return index(command,'/b1/delay')>=0?'{}':null;};
+call('check',{scope:'all'});work();onDelay=null;batchJob=call('job_status',{}).job;
+check(batchJob.status=='succeeded' && batchJob.result.scope=='all' && batchJob.result.total==3 && batchJob.result.skipped==2 && batchJob.result.checks.manual && batchJob.result.checks.b1.healthy=='failed','all check covers subscriptions and manual nodes');
+let stale=clone(json(files['/tmp/alwayroute/checks.json']));stale.manual.healthy='failed';stale.manual.checkedRevision=0;files['/tmp/alwayroute/checks.json']=sprintf('%J',stale);
+batchBefore=delayCalls;
+call('check',{scope:'all',retryFailed:true});work();batchJob=call('job_status',{}).job;
+check(batchJob.status=='succeeded' && batchJob.result.retryFailed && batchJob.result.total==1 && batchJob.result.checks.b1 && !batchJob.result.checks.manual && delayCalls-batchBefore==1,'retry targets only current-revision failed eligible nodes');
+batchBefore=delayCalls;call('check',{scope:'all',retryFailed:true});work();
+check(call('job_status',{}).job.error.code=='NO_NODES' && delayCalls==batchBefore,'retry without failed current nodes never becomes full scan');
+check(files['/etc/alwayroute/current.json']==sprintf('%J',batchModel) && files['/tmp/alwayroute/runtime.json']==beforeRuntime && guardCalls==beforeGuards && stopCalls==beforeStops,'batch checks do not change configuration, exit or service');
 files['/etc/alwayroute/current.json']=originalModel;
 draft=call('get',{}).model;draft.nodes[0].name='Renamed';r=call('save',{expectedRevision:1,model:draft});
 check(r.model.revision==2 && r.state.appliedRevision==1,'draft save does not apply');

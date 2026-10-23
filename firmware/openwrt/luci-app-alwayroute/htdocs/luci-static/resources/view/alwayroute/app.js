@@ -163,7 +163,7 @@ return view.extend({
 				var current = result.job;
 				if (!current || current.id !== job.id) { var changed = new Error('后台任务记录已变化，请重新检查实际状态'); changed.code = 'STATE_UNCONFIRMED'; throw changed; }
 				self.activeJob = current;
-				if (job.method === 'check') { self.pendingJob = current; self.paint(); }
+				if (job.method === 'check') { self.pendingJob = current; self.acceptChecks(current.result || { checks: current.checks }); }
 				if (current.status === 'running') {
 					continue;
 				}
@@ -392,6 +392,7 @@ return view.extend({
 			var progress = checkJob.progress || {}, currentNode = this.draft.nodes.find(function(n) { return n.id === progress.currentNodeId; });
 			content.push(E('div', { 'class': 'ar-operation-status', role: 'status', 'aria-live': 'polite' }, [
 				E('span', {}, [(this.cancelling ? '正在取消检测' : '正在串行检测') + ' · ' + (progress.completed || 0) + ' / ' + (progress.total || '…') +
+					' · ' + (({ node: '单节点', subscription: '此订阅', selected: '所选节点', all: '全部来源（含手动）' })[progress.scope] || '正在确认范围') + (progress.retryFailed ? ' · 仅失败节点' : '') +
 					' · 通过 ' + (progress.passed || 0) + ' · 失败 ' + (progress.failed || 0) + (currentNode ? ' · ' + currentNode.name : '')]),
 				this.button('取消检测', '■', function() { return self.cancelCheck(); }, { duringCheck: true, recovery: true, disabled: this.cancelling })
 			]));
@@ -466,23 +467,47 @@ return view.extend({
 	},
 
 	render_nodes: function() {
-		var self = this, searchable = [];
+		var self = this, searchable = [], selected = this.selectedNodes || Object.create(null), eligible = Object.create(null);
+		var locked = !!(this.busy || this.uncertain || this.readonly), blocked = this.dirty || this.conflict || this.state.appliedRevision == null || this.state.savedRevision !== this.state.appliedRevision;
+		this.draft.nodes.forEach(function(raw) { var n = model.effectiveNode(self.draft, raw); if (n.enabled && !n.excluded) eligible[n.id] = true; });
+		Object.keys(selected).forEach(function(id) { if (!eligible[id]) delete selected[id]; });
+		this.selectedNodes = selected;
+		var selectAll = this.input('', 'checkbox', { 'aria-label': '全选当前筛选结果中的可检测节点', disabled: locked || undefined });
+		var selection = E('span', { 'class': 'ar-muted', role: 'status' }, []), boxes = [], visibleIds = [];
+		var checkSelected = this.button('检查所选', '', function() { return self.checkSelected(); }, { text: true, disabled: blocked || !Object.keys(selected).length });
+		function updateSelection() {
+			var count = Object.keys(selected).length, visibleSelected = visibleIds.filter(function(id) { return selected[id]; }).length;
+			selection.textContent = '已选 ' + count + ' 个节点（跨筛选保留）';
+			selectAll.checked = visibleIds.length > 0 && visibleSelected === visibleIds.length;
+			selectAll.indeterminate = visibleSelected > 0 && visibleSelected < visibleIds.length;
+			selectAll.disabled = locked || !visibleIds.length;
+			checkSelected.disabled = locked || !!blocked || !count;
+			boxes.forEach(function(item) { item.box.checked = !!selected[item.id]; });
+		}
+		selectAll.addEventListener('change', function() {
+			visibleIds.forEach(function(id) { if (selectAll.checked) selected[id] = true; else delete selected[id]; }); updateSelection();
+		});
 		var rows = this.draft.nodes.map(function(raw) {
 			var n = model.effectiveNode(self.draft, raw), override = self.draft.overrides[raw.id];
-			searchable.push({ name: n.name.toLowerCase(), source: raw.source || '@manual' });
+			searchable.push({ id: n.id, name: n.name.toLowerCase(), source: raw.source || '@manual' });
 			var source = raw.source && self.draft.subscriptions.filter(function(s) { return s.id === raw.source; })[0];
 			var result = self.checks[n.id];
 			var check = result && self.state.appliedRevision != null && result.checkedRevision === self.state.appliedRevision ? self.checkLabel(result) : null;
-			return [E('strong', {}, [n.name]),
+			var checkbox = self.input('', 'checkbox', { 'aria-label': '选择节点 ' + n.name, 'data-node-id': n.id, checked: selected[n.id] || undefined, disabled: locked || !eligible[n.id] || undefined });
+			checkbox.addEventListener('change', function() { if (checkbox.checked) selected[n.id] = true; else delete selected[n.id]; updateSelection(); });
+			boxes.push({ id: n.id, box: checkbox });
+			var current = (self.activeJob || self.pendingJob || {}).progress;
+			return [checkbox, E('strong', {}, [n.name]),
 				n.type.toUpperCase(), source ? source.name + (override ? ' · 本地覆盖' : '') : '手动',
 				n.excluded ? '已排除' : n.enabled ? '启用' : '停用',
-				check ? check : '未检查',
+				E('div', {}, [current && current.currentNodeId === n.id ? E('span', {}, ['正在检测… ']) : '', check || '未检查',
+					check && result.time ? E('small', { 'class': 'ar-muted' }, [' · ' + new Date(result.time * 1000).toLocaleString()]) : '']),
 				E('div', { 'class': 'ar-actions' }, [
 					self.button('编辑节点', '✎', function() { self.editNode(raw); }),
 					self.button('检查此节点', '◉', function() { return self.checkNode(n.id); }, { disabled: self.dirty || self.conflict || self.state.appliedRevision == null || self.state.savedRevision !== self.state.appliedRevision || n.excluded || !n.enabled })
 				])];
 		});
-		var list = this.table(['名称', '协议', '来源', '状态', '节点检查', '操作'], rows);
+		var list = this.table([selectAll, '名称', '协议', '来源', '状态', '节点检查', '操作'], rows);
 		var search = this.input(this.nodeQuery || '', 'search', { placeholder: '搜索节点名称', 'aria-label': '搜索节点名称' });
 		var sources = [['', '全部来源'], ['@manual', '手动节点']].concat(this.draft.subscriptions.map(function(s) { return [s.id, s.name]; }));
 		var sourceFilter = this.select(this.nodeSource || '', sources); sourceFilter.setAttribute('aria-label', '节点来源');
@@ -490,11 +515,14 @@ return view.extend({
 		function filter() {
 			self.nodeQuery = search.value; self.nodeSource = sourceFilter.value;
 			var query = search.value.trim().toLowerCase(), visible = 0, elements = list.children[0].children[1].children;
+			visibleIds = [];
 			searchable.forEach(function(node, i) {
 				var matches = node.name.indexOf(query) !== -1 && (!sourceFilter.value || node.source === sourceFilter.value);
 				elements[i].hidden = !matches; if (matches) visible++;
+				if (matches && eligible[node.id]) visibleIds.push(node.id);
 			});
 			count.textContent = visible + ' / ' + rows.length + ' 个节点';
+			updateSelection();
 		}
 		// A removed subscription must not leave a stale filter selecting no source.
 		if (!sources.some(function(s) { return s[0] === self.nodeSource; })) { sourceFilter.value = ''; this.nodeSource = ''; }
@@ -503,8 +531,11 @@ return view.extend({
 			E('div', { 'class': 'ar-actions' }, [this.button('导入节点', '⇧', function() {
 				self.showImport('导入为手动节点', function(content) { return self.activateMutation('import', [self.revision, content, true], '节点已导入并生效。'); });
 			}, { text: true, disabled: this.dirty || this.conflict }), this.button('添加节点', '+', function() { self.editNode(); }, { text: true, primary: true })])]),
+			E('div', { 'class': 'ar-toolbar' }, [E('div', { 'class': 'ar-actions' }, [checkSelected,
+				this.button('扫描全部', '', function() { return self.checkAll(false); }, { text: true, disabled: blocked || !Object.keys(eligible).length }),
+				this.button('仅重试失败', '', function() { return self.checkAll(true); }, { text: true, disabled: blocked || !Object.keys(eligible).some(function(id) { var r = self.checks[id]; return r && r.checkedRevision === self.state.appliedRevision && r.healthy === 'failed'; }) })]), selection]),
 			rows.length ? list : this.empty('暂无节点，请添加节点或订阅。'), count,
-			E('p', { 'class': 'ar-muted' }, ['在代理策略页选择出口。服务运行且当前配置已生效后，可检查节点。'])]);
+			E('p', { 'class': 'ar-muted' }, ['表头只选择当前筛选结果；检查所选包含筛选外已选节点。扫描全部及仅重试失败覆盖所有来源（含手动），均跳过停用、排除节点；重试只检查当前配置的失败结果。检测保持当前出口。'])]);
 	},
 
 	input: function(value, type, attrs) { return E('input', Object.assign({ type: type || 'text', value: value == null ? '' : String(value), 'class': 'cbi-input-text' }, attrs || {})); },
@@ -595,24 +626,35 @@ return view.extend({
 	checkSubscription: function(id) {
 		return this.startCheck('', id);
 	},
+	checkSelected: function() {
+		var ids = Object.keys(this.selectedNodes || {});
+		if (!ids.length) throw new Error('请先选择要检查的节点');
+		return this.startCheck('', '', ids, 'selected', false);
+	},
+	checkAll: function(retryFailed) {
+		return this.startCheck('', '', [], 'all', retryFailed === true);
+	},
 	checkSummary: function(result) {
-		return (result.cancelled ? '检测已取消' : '检测完成') + ' · ' + (result.completed || 0) + ' / ' + (result.total || 1) +
-			' · 通过 ' + (result.passed || 0) + ' · 失败 ' + (result.failed || 0) + '；当前出口保持不变。';
+		var scope = ({ node: '单节点', subscription: '此订阅', selected: '所选节点', all: '全部来源（含手动）' })[result.scope] || '';
+		return (result.cancelled ? '检测已取消' : '检测完成') + (scope ? ' · ' + scope : '') + (result.retryFailed ? ' · 仅失败节点' : '') + ' · ' + (result.completed || 0) + ' / ' + (result.total || 1) +
+			' · 通过 ' + (result.passed || 0) + ' · 失败 ' + (result.failed || 0) + ' · 跳过停用/排除 ' + (result.skipped || 0) + '；当前出口保持不变。';
 	},
 	acceptChecks: function(result) {
 		var checks = Object.assign({}, this.checks, result.checks || {});
 		if (result.nodeId) checks[result.nodeId] = result;
 		this.keepChecks(checks); this.paint();
 	},
-	startCheck: function(nodeId, subscriptionId) {
+	startCheck: function(nodeId, subscriptionId, nodeIds, scope, retryFailed) {
 		var self = this;
 		if (this.dirty || this.conflict || this.state.savedRevision !== this.state.appliedRevision || this.state.appliedRevision == null) throw new Error('请先启动服务并确认当前配置已生效，再执行节点检查');
 		this.cancelling = false;
-		return this.mutate('check', [nodeId, subscriptionId], function(result) { return self.checkSummary(result); }).then(function(result) { self.acceptChecks(result); return result; });
+		var args = scope ? [nodeId, subscriptionId, nodeIds, scope, retryFailed] : [nodeId, subscriptionId];
+		return this.mutate('check', args, function(result) { return self.checkSummary(result); }).then(function(result) { self.acceptChecks(result); return result; });
 	},
 	observeCheck: function(job) {
 		var self = this;
 		this.busy = true; this.operationMethod = 'check'; this.cancelling = false;
+		this.acceptChecks({ checks: job.checks || (job.result || {}).checks });
 		return this.waitJob(job).then(function(result) { self.accept(result); self.acceptChecks(result); self.message = { type: 'success', text: self.checkSummary(result) }; })
 			.catch(function(error) { self.uncertain = true; self.error(error); })
 			.finally(function() { self.busy = false; self.paint(); });

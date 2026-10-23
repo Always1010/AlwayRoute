@@ -175,20 +175,36 @@ function cancelCheck(args) {
  return {ok:true,jobId:job.id,cancelling:true};
 }
 function checkNodes(args,m) {
- let current=state(m),nodes=effective(m),batch=type(args.subscriptionId)=='string' && length(args.subscriptionId)>0;
+ for(let key,kind in {nodeId:'string',subscriptionId:'string',nodeIds:'array',scope:'string',retryFailed:'bool'})if(index(keys(args),key)>=0 && type(args[key])!=kind)fail('INVALID_CHECK','检测范围或参数类型无效');
+ let nodeId=args.nodeId ?? '',subscriptionId=args.subscriptionId ?? '',ids=args.nodeIds ?? [],scope=args.scope ?? '',retry=args.retryFailed ?? false;
+ if(type(nodeId)!='string' || type(subscriptionId)!='string' || type(scope)!='string' || type(ids)!='array' || type(retry)!='bool' || length(ids)>modelLimits().nodes)fail('INVALID_CHECK','检测范围或参数类型无效');
+ if(length(nodeId) && !match(nodeId,/^[A-Za-z0-9_-]{1,64}$/) || length(subscriptionId) && !match(subscriptionId,/^[A-Za-z0-9_-]{1,64}$/))fail('INVALID_CHECK','检测标识无效');
+ let wanted={};
+ for(let id in ids) {
+  if(type(id)!='string' || !match(id,/^[A-Za-z0-9_-]{1,64}$/))fail('INVALID_NODE','节点标识无效');
+  if(!length(filter(m.nodes,n=>n.id==id)))fail('INVALID_NODE','所选节点不存在，请重新读取');
+  wanted[id]=true;
+ }
+ if(!length(scope))scope=length(nodeId)?'node':length(subscriptionId)?'subscription':'';
+ if(index(['node','subscription','selected','all'],scope)<0 ||
+    scope=='node' && (!length(nodeId) || length(subscriptionId) || length(ids)) ||
+    scope=='subscription' && (!length(subscriptionId) || length(nodeId) || length(ids)) ||
+    scope=='selected' && (!length(ids) || length(nodeId) || length(subscriptionId)) ||
+    scope=='all' && (length(nodeId) || length(subscriptionId) || length(ids)))fail('INVALID_CHECK','请明确选择单节点、订阅、非空节点列表或全部节点，不能混合范围');
+ if(scope=='node' && !length(filter(m.nodes,n=>n.id==nodeId)))fail('INVALID_NODE','节点不存在');
+ if(scope=='subscription' && !length(filter(m.subscriptions,s=>s.id==subscriptionId)))fail('INVALID_SUBSCRIPTION','订阅不存在');
+ let current=state(m),nodes=effective(m),checks=read(TMP+'/checks.json',{}),candidates=filter(m.nodes,n=>scope=='all' || scope=='node' && n.id==nodeId || scope=='subscription' && n.source==subscriptionId || scope=='selected' && wanted[n.id]);
  if(current.appliedRevision==null || current.savedRevision!==current.appliedRevision || !running())fail('NOT_APPLIED','请先启动服务并应用当前配置，再检查节点');
- if(batch && length(args.nodeId ?? ''))fail('INVALID_NODE','请选择单节点或单个订阅检测');
- if(batch) {
-  if(!length(filter(m.subscriptions,s=>s.id==args.subscriptionId)))fail('INVALID_SUBSCRIPTION','订阅不存在');
-  nodes=filter(nodes,n=>n.source==args.subscriptionId);
- }else nodes=filter(nodes,n=>n.id==args.nodeId);
- if(!length(nodes))fail(batch?'NO_NODES':'INVALID_NODE',batch?'此订阅没有已启用且未排除的节点':'节点不存在或已停用');
- let job=read(TMP+'/job.json',null),owned=args._jobId!=null && job?.id==args._jobId && job.method=='check',checks=read(TMP+'/checks.json',{});
- let progress={total:length(nodes),completed:0,passed:0,failed:0,currentNodeId:null},outcomes={},cancelled=false;
+ nodes=filter(nodes,n=>length(filter(candidates,c=>c.id==n.id)));
+ let skipped=length(candidates)-length(nodes);
+ if(retry)nodes=filter(nodes,n=>checks[n.id]?.checkedRevision===current.appliedRevision && checks[n.id]?.healthy=='failed');
+ if(!length(nodes))fail(scope=='node'?'INVALID_NODE':'NO_NODES',retry?'此范围没有当前配置下已失败的可检测节点':'此范围没有已启用且未排除的节点');
+ let job=read(TMP+'/job.json',null),owned=args._jobId!=null && job?.id==args._jobId && job.method=='check';
+ let progress={scope,retryFailed:retry,skipped,total:length(nodes),completed:0,passed:0,failed:0,currentNodeId:null},outcomes={},cancelled=false;
  for(let n in nodes) {
   if(owned && fs.readfile(TMP+'/check-cancel-'+job.id)!=null){cancelled=true;break;}
   progress.currentNodeId=n.id;
-  if(owned){job.progress=clone(progress);write(TMP+'/job.json',job);}
+  if(owned){job.progress=clone(progress);job.checks=clone(outcomes);write(TMP+'/job.json',job);}
   let r=fetchJson('/proxies/'+n.id+'/delay?timeout=2000&url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204'),passed=type(r?.delay)=='int' && r.delay>0;
   let outcome={ok:true,nodeId:n.id,available:passed,delay:passed?r.delay:null,healthy:passed?'passed':'failed',reason:passed?null:'探测失败或超时',checkedRevision:current.appliedRevision,time:time()};
   checks[n.id]=outcome;outcomes[n.id]=outcome;progress.completed++;
@@ -196,15 +212,15 @@ function checkNodes(args,m) {
   for(let key in keys(checks))if(!length(filter(m.nodes,item=>item.id==key)))delete checks[key];
   write(TMP+'/checks.json',checks);
   progress.currentNodeId=null;
-  if(owned){job.progress=clone(progress);write(TMP+'/job.json',job);}
+  if(owned){job.progress=clone(progress);job.checks=clone(outcomes);write(TMP+'/job.json',job);}
  }
  if(owned && fs.readfile(TMP+'/check-cancel-'+job.id)!=null)cancelled=true;
- let response={ok:true,cancelled,checks:outcomes,total:progress.total,completed:progress.completed,passed:progress.passed,failed:progress.failed};
- if(!batch && outcomes[args.nodeId])for(let key,value in outcomes[args.nodeId])response[key]=value;
+ let response={ok:true,scope,retryFailed:retry,skipped,cancelled,checks:outcomes,total:progress.total,completed:progress.completed,passed:progress.passed,failed:progress.failed};
+ if(scope=='node' && outcomes[nodeId])for(let key,value in outcomes[nodeId])response[key]=value;
  return response;
 }
 function execute(method,args) {
- if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:modelLimits(),forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,logs:true,policyPresets:policyCatalog()};
+ if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:modelLimits(),forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,batchCheck:true,allNodesCheck:true,retryFailedCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
  if(method=='status') {let current=model();return {ok:true,state:state(current),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};}

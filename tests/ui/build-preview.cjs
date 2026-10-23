@@ -14,10 +14,9 @@ const production = {
 const payload = JSON.stringify(production).replace(/</g, '\\u003c');
 const runtime = fs.readFileSync(path.join(__dirname, 'preview-runtime.js'), 'utf8');
 const css = fs.readFileSync(path.join(resources, 'alwayroute/style.css'), 'utf8');
-const managerModel = fs.readFileSync(path.join(root, 'firmware/openwrt/alwayroute-manager/files/usr/share/ucode/alwayroute/model.uc'), 'utf8');
-const catalogSource = managerModel.match(/const POLICIES = (\[[\s\S]*?\n\]);/);
-if (!catalogSource) throw new Error('Manager policy catalog is missing');
-const catalog = JSON.stringify(new Function('return (' + catalogSource[1] + ')')()).replace(/</g, '\\u003c');
+const policyDirectory = path.join(root, 'firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies');
+const policyFiles = JSON.parse(fs.readFileSync(path.join(policyDirectory, 'catalog.json'), 'utf8'));
+const catalog = JSON.stringify(policyFiles.map(file => JSON.parse(fs.readFileSync(path.join(policyDirectory, file), 'utf8')))).replace(/</g, '\\u003c');
 const theme = process.argv[3] || 'bootstrap';
 if (!['bootstrap', 'material', 'openwrt-2020'].includes(theme)) throw new Error('Unknown preview theme: ' + theme);
 const themeDirectory = theme === 'openwrt-2020' ? 'openwrt2020' : theme;

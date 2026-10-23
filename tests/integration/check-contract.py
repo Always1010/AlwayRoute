@@ -32,6 +32,11 @@ grant = acl[groups[0]]
 read = set(grant["read"]["ubus"]["alwayroute"])
 write = set(grant["write"]["ubus"]["alwayroute"])
 assert ui_methods == rpc_methods, f"UI/RPC methods differ: {ui_methods ^ rpc_methods}"
+check_params = ["nodeId", "subscriptionId", "nodeIds", "scope", "retryFailed"]
+ui_check = re.search(r"\bcheck\s*:\s*\[([^]]*)\]", definitions).group(1)
+rpc_check = re.search(r"\bcheck\s*:\s*\{([^}]*)\}", mapping).group(1)
+assert re.findall(r"'([^']+)'", ui_check) == check_params, "UI check argument order changed"
+assert re.findall(r"\b([A-Za-z]+)\s*:", rpc_check) == check_params, "RPC batch check arguments differ"
 assert read | write == rpc_methods, "RPC methods are missing from or over-granted by ACL"
 assert not read & {"get", "export", "save", "refresh", "apply", "select", "rollback", "service", "check", "cancel_check"}, "read ACL exposes credentials or actions"
 assert read.isdisjoint(write), "method appears in both permission sets"

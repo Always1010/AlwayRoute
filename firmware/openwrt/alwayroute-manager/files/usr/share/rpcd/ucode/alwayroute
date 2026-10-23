@@ -7,7 +7,7 @@ for(let method,args in {
  apply:{expectedRevision:0}, select:{expectedRevision:0,group:'',nodeId:''},
  rollback:{expectedRevision:0}, service:{action:''}, export:{includeSecrets:false},
  import:{expectedRevision:0,content:'',activate:false},
- check:{nodeId:'',subscriptionId:''}, cancel_check:{jobId:''}, logs:{limit:20}
+ check:{nodeId:'',subscriptionId:'',nodeIds:[],scope:'',retryFailed:false}, cancel_check:{jobId:''}, logs:{limit:20}
 }) {
  let name=method;
  methods[name]={args,call:function(request){return call(name,request.args);}};

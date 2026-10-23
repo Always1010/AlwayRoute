@@ -82,29 +82,49 @@
   function persist(next) { saved = clone(next); saved.revision++; state.savedRevision = saved.revision; return result(); }
   function startJob(method, args) {
     job = { id: 'preview_' + Date.now(), status: 'running', method: method, doneAt: Date.now() + 750, args: clone(args) };
+    if (method === 'check') {
+      var scope = args.scope || (args.nodeId ? 'node' : args.subscriptionId ? 'subscription' : '');
+      var candidates = saved.nodes.filter(function(n) { return scope === 'all' || scope === 'selected' && (args.nodeIds || []).includes(n.id) || scope === 'node' && n.id === args.nodeId || scope === 'subscription' && n.source === args.subscriptionId; });
+      var eligible = candidates.filter(function(n) { return n.enabled && !(saved.overrides[n.id] || {}).excluded; });
+      job.checkIds = eligible.filter(function(n) { return !args.retryFailed || checks[n.id] && checks[n.id].checkedRevision === state.appliedRevision && checks[n.id].healthy === 'failed'; }).map(function(n) { return n.id; });
+      job.checks = {}; job.progress = { scope: scope, retryFailed: !!args.retryFailed, skipped: candidates.length - eligible.length, total: job.checkIds.length, completed: 0, passed: 0, failed: 0, currentNodeId: job.checkIds[0] || null };
+      if (!job.checkIds.length) { job.status = 'failed'; job.error = { code: 'NO_NODES', message: '此范围没有可检测节点' }; return { ok: false, error: clone(job.error) }; }
+    }
     return { ok: true, job: { id: job.id, status: job.status, method: method } };
   }
   function finishJob() {
     if (!job || job.status !== 'running' || Date.now() < job.doneAt) return;
     if (scenario === 'job-failed') { job.status = 'failed'; job.error = { code: 'PREVIEW_JOB_FAILED', message: '测试场景：后台任务失败，未模拟成功。' }; return; }
-    if (job.method === 'check') { job.result = { ok: true, nodeId: job.args.nodeId, available: true, delay: 42, healthy: 'passed', checkedRevision: state.appliedRevision }; checks[job.args.nodeId] = clone(job.result); }
+    if (job.method === 'check') {
+      var progress = job.progress, id = job.checkIds[progress.completed];
+      if (!job.cancelled && id) {
+        var passed = progress.completed % 3 !== 2;
+        var outcome = { nodeId: id, available: passed, delay: passed ? 42 + progress.completed : null, healthy: passed ? 'passed' : 'failed', reason: passed ? null : '预览模拟超时', checkedRevision: state.appliedRevision, time: Math.floor(Date.now() / 1000) };
+        job.checks[id] = clone(outcome); checks[id] = clone(outcome); progress.completed++; progress[passed ? 'passed' : 'failed']++;
+      }
+      progress.currentNodeId = job.cancelled ? null : job.checkIds[progress.completed] || null;
+      if (!job.cancelled && progress.completed < progress.total) { job.doneAt = Date.now() + 750; return; }
+      job.result = Object.assign({ ok: true, cancelled: !!job.cancelled, checks: clone(job.checks) }, clone(progress));
+      if (progress.scope === 'node' && job.checks[job.args.nodeId]) Object.assign(job.result, job.checks[job.args.nodeId]);
+    }
     if (job.method === 'configure') { saved = clone(job.args.model); saved.revision++; state.savedRevision = saved.revision; if (serviceRunning) { state.appliedRevision = saved.revision; observed = clone(saved.groups); } }
     if (job.method === 'apply' || job.method === 'rollback') { state.appliedRevision = saved.revision; observed = clone(saved.groups); state.healthy = 'unverified'; }
     if (job.method === 'refresh') { saved.subscriptions.find(function(s) { return s.id === job.args.subscriptionId; }).lastUpdate = Math.floor(Date.now() / 1000); saved.revision++; state.savedRevision = saved.revision; if (job.args.activate && serviceRunning) { state.appliedRevision = saved.revision; observed = clone(saved.groups); } }
     if (job.method === 'import') { saved.revision++; state.savedRevision = saved.revision; if (job.args.activate && serviceRunning) { state.appliedRevision = saved.revision; observed = clone(saved.groups); } }
     if (job.method === 'service') { serviceRunning = job.args.action === 'start'; state.appliedRevision = serviceRunning ? saved.revision : null; if (serviceRunning) observed = clone(saved.groups); }
-    job.status = 'succeeded'; job.state = clone(state);
+    job.status = job.cancelled ? 'cancelled' : 'succeeded'; job.state = clone(state);
     events.push({ time: '预览样例', level: 'info', message: '模拟任务完成：' + job.method });
   }
   function dispatch(method, args) {
     calls.push({ method: method, argumentNames: Object.keys(args) }); if (calls.length > 100) calls.shift();
     if (method === 'job_status') { finishJob(); return { ok: true, busy: !!job && job.status === 'running', job: job ? clone(job) : null }; }
-    if (method === 'capabilities') return { ok: true, schema: 1, protocols: ['vmess'], subscriptionFormats: ['vmess-uri', 'base64-vmess-list', 'clash-json', 'clash-yaml-block-subset'], forwarding: 'unverified', policyPresets: clone(window.PREVIEW_POLICIES) };
+    if (method === 'capabilities') return { ok: true, schema: 1, protocols: ['vmess'], subscriptionFormats: ['vmess-uri', 'base64-vmess-list', 'clash-json', 'clash-yaml-block-subset'], forwarding: 'unverified', nodeCheck: true, subscriptionCheck: true, batchCheck: true, allNodesCheck: true, retryFailedCheck: true, limits: { nodes: 128 }, policyPresets: clone(window.PREVIEW_POLICIES) };
     if (method === 'get') return result();
     if (method === 'status') return { ok: true, state: clone(state), checks: clone(checks), service: { running: serviceRunning }, core: { available: serviceRunning && scenario !== 'unavailable', groups: !serviceRunning || scenario === 'unavailable' ? {} : Object.fromEntries(observed.map(function(g) { return [g.id, { now: g.id === 'Other' && g.selected === 'block' ? 'direct' : g.selected }]; })) }, forwarding: { scope: 'preview-only', available: false, dns: 'unverified', udp: 'unverified', ipv6: 'unverified' } };
     if (method === 'traffic') return scenario === 'unavailable' ? { ok: true, available: false, upload: null, download: null, reason: '测试场景：核心流量不可用' } : { ok: true, available: true, upload: 18432, download: 345678, unit: 'bytes/s', reason: '脱敏模拟数据，仅用于本地预览' };
     if (method === 'logs') return { ok: true, entries: clone(events.slice(-20)) };
     if (method === 'export') { var m = clone(saved); if (!args.includeSecrets) { m.nodes.forEach(function(n) { n.uuid = '[redacted]'; }); m.subscriptions.forEach(function(s) { s.url = 'https://redacted.invalid/'; }); } return { ok: true, model: m, redacted: !args.includeSecrets }; }
+    if (method === 'cancel_check') { if (!job || job.status !== 'running' || job.method !== 'check' || job.id !== args.jobId) return fail('INVALID_JOB', '任务已变化'); job.cancelled = true; job.doneAt = Date.now(); return { ok: true, cancelling: true }; }
     if (job && job.status === 'running') return fail('BUSY', '测试场景：后台任务仍在执行');
     if (scenario === 'conflict') return fail('REVISION_CONFLICT', '测试场景：另一会话已修改配置，当前编辑仍保留');
     if (args.expectedRevision != null && args.expectedRevision !== saved.revision) return fail('REVISION_CONFLICT', '测试版本冲突');
