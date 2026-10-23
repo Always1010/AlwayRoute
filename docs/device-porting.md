@@ -13,6 +13,8 @@
 
 已有管理、转发及 LuCI 包采用架构无关脚本／资源；仍依赖匹配的 ucode、rpcd、LuCI、firewall4、nft TProxy 和策略路由能力。转发当前读取逻辑 `lan`，多 LAN／VLAN 拓扑需要另外评估，不能据此宣称任意网络拓扑兼容。
 
+配置入口分别为 `firmware/tools/target_profile.py`中的CPU架构、`firmware/devices/`设备配方、`config/environments/`主机角色及[首启部署策略](../config/deployment/README.md)。当前4A原seed与原首启脚本均保留为兼容快照，分别用等价配置和逐字节检查防止漂移。
+
 ## 新增目标
 
 1. 确认精确型号、硬件修订、OpenWrt 锁定版本的设备支持、启动／升级镜像格式及可用恢复方式。上游不支持时，单改容量或架构参数不能完成移植。

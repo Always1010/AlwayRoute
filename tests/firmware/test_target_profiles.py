@@ -3,11 +3,15 @@
 Synthetic image headers and fake compiler calls only; no build or device IO.
 """
 import copy
+import contextlib
+import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -159,6 +163,51 @@ class TargetTests(unittest.TestCase):
                 self.assertEqual(env['CGO_ENABLED'], '0')
                 self.assertEqual(env['GOFLAGS'], '')
                 self.assertEqual(env['GOPROXY'], 'off')
+
+    def test_baseline_inspection_cli_uses_selected_recipe_without_private_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            environment = root / 'env.json'
+            environment.write_text(json.dumps({'schema_version': 1, 'build': {
+                'task_root': directory, 'openwrt_tree': str(source)}}))
+            candidate = root / Path(self.device['image']['path']).name
+            candidate.write_bytes(image())
+            core = bytearray(20)
+            core[:6] = b'\x7fELF\x01\x01'
+            struct.pack_into('<H', core, 18, 8)
+            digest = hashlib.sha256(core).hexdigest()
+            packages = ['alwayroute-core', 'kmod-nft-tproxy', 'ip-full', 'luci-base',
+                        'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c',
+                        'odhcpd-ipv6only'] + self.device['required_packages']
+            candidate.with_name(candidate.name.removesuffix(self.device['image']['manifest_suffix']) + '.manifest').write_text(
+                ''.join(name + ' - 1\n' for name in packages))
+            metadata = {'supported_devices': [self.device['board']],
+                        'version': {'target': self.device['target'], 'version': '25.12.6'}}
+            files = {'usr/bin/sing-box': bytes(core), 'usr/share/alwayroute/build-info.json':
+                     json.dumps({'input_elf_sha256': digest}).encode()}
+
+            def tools(argv, **kwargs):
+                if '-cat' in argv:
+                    output = files[argv[-1]]
+                elif '-ll' in argv:
+                    output = b''
+                elif '-m' in argv:
+                    output = b'\tdep\tgolang.org/x/crypto\tv0.48.0\th1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts=\n'
+                else:
+                    output = json.dumps(metadata).encode()
+                return subprocess.CompletedProcess(argv, 0, output)
+
+            report = root / 'inspection.json'
+            with patch.object(inspector.subprocess, 'run', side_effect=tools), contextlib.redirect_stdout(io.StringIO()):
+                inspector.main(['--env', str(environment), '--device', self.device['id'],
+                                '--core-sha256', digest, '--output', str(report), str(candidate)])
+            result = json.loads(report.read_text())
+            self.assertTrue(all(result['checks'].values()))
+            self.assertEqual(result['device'], self.device['id'])
+            self.assertIsNone(result['management_defaults_sha256'])
+            self.assertFalse(result['boot_verified'])
 
 
 if __name__ == '__main__':

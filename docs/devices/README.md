@@ -10,3 +10,5 @@ AlwayRoute 的通用功能面向具备所需能力的 OpenWrt 环境。设备支
 16 MB Flash／128 MB RAM 是当前设备的事实，不是所有目标的推荐规格或项目最低配置。实际约束包括固件分区、可写空间、运行内存峰值、CPU 性能及使用负载。
 
 构建主机、跳板和测试终端属于开发环境，不属于目标设备支持条件。当前实验环境采用 Rock 5B，不要求其他开发者使用该型号；真实连接和路径保存在私有环境文件中。
+
+当前4A的[设备配方](../../firmware/devices/xiaomi-4a-gigabit.json)、[设备seed](../../firmware/devices/xiaomi-4a-gigabit.config)和[原始完整seed快照](../../firmware/openwrt/evaluation.config)均纳入版本管理；后续设备另建配置。当前个人首启参数另存为[部署策略](../../config/deployment/README.md)，不混入硬件配方。

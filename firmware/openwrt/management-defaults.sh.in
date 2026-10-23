@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Configure only the evaluation image during its own first boot.
+# No proxy core, DNS interception or forwarding rules are started here.
+umask 077
+STATE_DIR=/etc/alwayroute
+MARKER="$STATE_DIR/management-initialized"
+[ -e "$MARKER" ] && exit 0
+
+if ! uci -q batch <<'EOF'
+@NETWORK_UCI@@SSH_PORT_UCI@set dropbear.@dropbear[0].Interface='@SSH_INTERFACE@'
+set dropbear.@dropbear[0].PasswordAuth='off'
+set dropbear.@dropbear[0].RootPasswordAuth='off'
+delete uhttpd.main.listen_http
+add_list uhttpd.main.listen_http='127.0.0.1:80'
+delete uhttpd.main.listen_https
+@NETWORK_COMMIT@commit dropbear
+commit uhttpd
+EOF
+then
+ exit 1
+fi
+
+mkdir -p "$STATE_DIR" || exit 1
+chmod 0700 "$STATE_DIR" || exit 1
+: > "$MARKER" || exit 1
+chmod 0600 "$MARKER" || { rm -f "$MARKER"; exit 1; }
+
+exit 0

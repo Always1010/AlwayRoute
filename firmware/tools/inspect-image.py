@@ -178,11 +178,26 @@ def inspect_identity(metadata, core, device, check):
           and struct.unpack_from('<H' if arch['elf_data'] == 1 else '>H', core, 18)[0] == arch['elf_machine'])
 
 
+def inspect_management(readfile, listed_paths, source, reviewed, check):
+    target = 'etc/uci-defaults/99-alwayroute-management'
+    if reviewed is None:
+        check('no_unselected_management_defaults', target not in listed_paths)
+        return None
+    expected = reviewed.read_bytes()
+    check('management_defaults_match_reviewed_input',
+          expected == (source / 'files' / target).read_bytes() == readfile(target))
+    key = readfile('etc/dropbear/authorized_keys')
+    check('public_key_matches', key == (source / 'files/etc/dropbear/authorized_keys').read_bytes())
+    check('only_ed25519_public_key_embedded', key.startswith(b'ssh-ed25519 ') and b'PRIVATE KEY' not in key and len(key.splitlines()) == 1)
+    return hashlib.sha256(expected).hexdigest()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env', type=pathlib.Path, required=True, help='Validated build-host environment JSON')
     parser.add_argument('--device', default=DEFAULT_DEVICE, help='Repository device recipe name')
     parser.add_argument('image', type=pathlib.Path)
+    parser.add_argument('--management-defaults', type=pathlib.Path, help='Explicit reviewed first-boot script; omission requires no custom management script')
     parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
     parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
     parser.add_argument('--core-sha256', type=sha256_arg, default=default_core_sha256)
@@ -267,17 +282,13 @@ def main(argv=None):
         check('core_embedded_target', all(settings.get(k) == v for k, v in architecture(device['architecture'])['go_env'].items()))
         check('core_embedded_tags', settings.get('-tags') == tags)
         check('core_embedded_full_entry', '\n\tpath\tgithub.com/sagernet/sing-box/cmd/sing-box\n' in embedded)
-    startup = readfile('etc/uci-defaults/99-alwayroute-management')
-    check('management_defaults_match_reviewed_input', startup == (source / 'files/etc/uci-defaults/99-alwayroute-management').read_bytes())
-    key = readfile('etc/dropbear/authorized_keys')
-    check('public_key_matches', key == (source / 'files/etc/dropbear/authorized_keys').read_bytes())
-    check('only_ed25519_public_key_embedded', key.startswith(b'ssh-ed25519 ') and b'PRIVATE KEY' not in key and len(key.splitlines()) == 1)
     listing = tool(str(unsquashfs), '-o', str(offset), '-ll', str(image)).decode(errors='replace')
     listed_paths = {
         match.group(1).split(' -> ', 1)[0]
         for line in listing.splitlines()
         if (match := re.search(r'squashfs-root/(.*)$', line))
     }
+    management_sha = inspect_management(readfile, listed_paths, source, args.management_defaults, check)
     input_hashes = {}
     executable_texts = []
     executable_source_fragments = []
@@ -389,6 +400,7 @@ def main(argv=None):
         'raw_overlay_capacity_bytes_before_filesystem_overhead': device['image']['firmware_partition_bytes'] - overlay_start,
         'stock_OS1_remaining_after_image': device['image']['stock_install_max_bytes'] - len(data),
         'core_bytes': len(core), 'core_sha256': core_sha,
+        'management_defaults_sha256': management_sha,
         'metadata': metadata, 'package_count': len(packages), 'checks': checks,
         'boot_verified': False, 'flashing_performed': False,
         'owned_payload_hashes': input_hashes,

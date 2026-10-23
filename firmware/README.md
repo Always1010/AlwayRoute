@@ -16,7 +16,7 @@
 2. 将`openwrt/alwayroute-core`、`alwayroute-manager`、`alwayroute-forwarding`、`luci-app-alwayroute`逐包集成到现有构建树的`package/`。在构建机使用 `python3 firmware/tools/sync-packages.py --env PATH --package alwayroute-manager luci-app-alwayroute` 先预览，再同参加 `--apply`。工具核对已审阅快照与完整目标哈希集合；多余旧文件须单独审查，不自动删除，不启动构建。管理包负责事务，LuCI负责网页，转发包负责LAN nft TProxy，核心包安装外部已验证ELF。
 3. `alwayroute-input/`放外部核心、不含凭证的`build-info.json`及上游LICENSE；核对架构、静态链接、来源和SHA。核心包的`PKG_FILE_DEPENDS`跟踪三项外部输入，禁止对该ELF二次strip改变已验身份。
 4. 用所选设备组合seed（下节说明），准备对应feed后`make defconfig`，审查完整配置差异。`openwrt/evaluation.config`完整保留原4A配方作为兼容快照；测试保证组合seed与它的有效选项一致。保留固定feeds提交、完整／差异配置、内核配置和包清单。
-5. 按包安装规则放置首启脚本及已有SSH公钥；不放主机私钥、订阅或节点。首启marker使保留配置升级跳过默认LAN／SSH／Web初始化，旧基础镜像迁移先核对并备份marker。
+5. 按[部署策略](../config/deployment/README.md)显式选择并渲染首启脚本，审阅后放入构建树，同时提供已有SSH公钥；不放主机私钥、订阅或节点。原`openwrt/99-alwayroute-management`仅是当前实验策略兼容快照，不是硬件默认值。首启marker使保留配置升级跳过默认LAN／SSH／Web初始化，旧基础镜像迁移先核对并备份marker。
 6. 在固定上游版本先`git apply --check`核对`001-4a-evaluation-image-limit.patch`，它将本设备IMAGE_SIZE限制为13248KiB，不修改物理分区；原厂OS1为13MiB，与OpenWrt固件区分开核算。
 7. 使用已有工具链和缓存定向构建／重打包，运行镜像检查，绑定源码提交、输入哈希、最终镜像及日志。设备暂存／应用另见[部署](../docs/operations/deployment.md)。
 
@@ -26,7 +26,7 @@
 
 `tools/run-native-build.py`监督同一构建树的并发、单次时限和磁盘；`tools/inspect-image.py`借助同树fwtool与unsquashfs检查元数据、载荷、权限、输入和来源。命令从build执行主机运行，通过`--env PATH`选择环境；具体选项见各入口`--help`。不会安装依赖、连接路由器或自动刷机。
 
-生产集成应选择manager检查profile及对应显式加密后端，提供匹配基线／输入；默认检查拒绝未声明overlay。构建核心与检查镜像必须采用同一环境、同一来源，不能只修改允许的SHA来绕过来源检查。
+生产集成应选择manager检查profile及对应显式加密后端，提供匹配基线／输入；当前实验镜像还须用`--management-defaults`显式提供原首启脚本或已审阅的新策略输出。不传该参数时，检查要求镜像不含自定义管理首启脚本。默认检查仍拒绝未声明overlay。构建核心与检查镜像必须采用同一环境、同一来源，不能只修改允许的SHA来绕过来源检查。
 
 保留OpenWrt的dl／build_dir／staging_dir与Go缓存，按变更范围增量构建。例：只换核心输入可先构建`package/alwayroute-core/compile`再重打镜像；只改管理包先构建对应包。不要例行clean／dirclean／distclean，不因系统有ccache就声称已启用。每批日志、state和产物分开保存，避免覆盖可用基线。详细约定见[开发流程](../docs/development-workflow.md)。
 

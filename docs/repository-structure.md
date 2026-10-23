@@ -8,6 +8,7 @@ AlwayRoute/
 ├── README.md                  # 项目概览和常用入口
 ├── contracts/                 # 模型、RPC契约、合成样本
 ├── config/
+│   ├── deployment/            # 可选首启部署策略示例，无设备绑定
 │   ├── environments/          # 可公开的*.example.json
 │   └── routing/               # 来源锁、规则维护说明
 ├── firmware/
