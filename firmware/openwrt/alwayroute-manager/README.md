@@ -3,6 +3,8 @@
 OpenWrt rpcd ucode 插件，使用镜像已有的 ucode/fs/digest、uclient-fetch 与 procd。
 没有额外 Go、Python 或 Node 常驻进程。所有配置写入按需短期 worker 执行，
 LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重启。
+单节点及整订阅连通性／延迟检测复用该 worker 与已加载核心，默认串行，支持进度与取消。
+取消在当前一次有超时限制的探测结束后生效；已完成结果保留在/tmp，不写闪存，检测不重启或切换代理。
 接口及模型详见 [v1契约](../../../contracts/v1.md)。
 
 包安装 root-only 配置库 `/etc/alwayroute/`、rpcd ACL、init 脚本及每小时第17分的

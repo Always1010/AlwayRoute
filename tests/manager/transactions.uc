@@ -4,7 +4,7 @@ import { sha256 } from 'digest';
 // In-memory adapters exercise the actual store transaction code. No host paths,
 // networking, process execution, or persistent files are accessed by this suite.
 let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,currentReads=0;
-let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0;
+let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0,onDelay=null;
 let fs={
  mkdir:()=>true,chmod:()=>true,
  readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
@@ -22,7 +22,7 @@ let fs={
  },
  popen:function(command){
   let body='{}';
-  if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';}
+  if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';if(onDelay)body=onDelay(command) ?? body;}
   else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:o.default,all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);}
   return {read:function(limit){if(index(command,'/proxies')>=0)lastProxyReadLimit=limit;return substr(body,0,limit);},close:()=>0};
  }
@@ -92,6 +92,25 @@ check(largeStatus.core.groups.group_15.now==largeChoices[15] && length(keys(larg
 files['/tmp/alwayroute/runtime.json']=normalRuntime;
 call('check',{nodeId:'n1'});work();let checked=call('job_status',{}).job;
 check(checked.status=='succeeded' && checked.result.checkedRevision==1 && checked.result.delay==9,'node check uses matching applied revision');
+let originalModel=files['/etc/alwayroute/current.json'],batchModel=clone(call('get',{}).model);
+batchModel.subscriptions=[{id:'demo',name:'Demo',url:'https://example.invalid/sub',enabled:true,intervalHours:0}];
+batchModel.nodes=[];
+for(let i=0;i<4;i++){let item=clone(draft.nodes[0]);item.id='b'+i;item.source='demo';item.enabled=i!=2;push(batchModel.nodes,item);}
+batchModel.nodes[0].id='n1';batchModel.overrides={b3:{excluded:true}};
+files['/etc/alwayroute/current.json']=sprintf('%J',batchModel);
+let batchBefore=delayCalls,beforeGuards=guardCalls,beforeStops=stopCalls,beforeRuntime=files['/tmp/alwayroute/runtime.json'];
+onDelay=function(){let p=call('job_status',{}).job.progress;assert(locked && p.completed==delayCalls-batchBefore-1,'progress published before serial probe');return delayCalls-batchBefore==2?'{}':null;};
+call('check',{subscriptionId:'demo'});work();onDelay=null;let batchJob=call('job_status',{}).job;
+check(batchJob.status=='succeeded' && batchJob.progress.total==2 && batchJob.progress.completed==2 && batchJob.result.passed==1 && batchJob.result.failed==1 && delayCalls-batchBefore==2,'subscription check skips disabled/excluded nodes and continues after a failed probe');
+check(guardCalls==beforeGuards && stopCalls==beforeStops && active && files['/tmp/alwayroute/runtime.json']==beforeRuntime && files['/etc/alwayroute/current.json']==sprintf('%J',batchModel),'detection leaves forwarding, runtime and persistent configuration untouched');
+batchBefore=delayCalls;
+onDelay=function(){assert(call('save',{}).error.code=='BUSY','configuration excluded during checks');assert(call('cancel_check',{jobId:'stale'}).ok==false,'stale cancellation rejected');assert(call('cancel_check',{jobId:'test-job'}).ok,'cancel bypasses held transaction lock');};
+call('check',{subscriptionId:'demo'});work();onDelay=null;batchJob=call('job_status',{}).job;
+check(batchJob.status=='cancelled' && batchJob.result.completed==1 && batchJob.result.cancelled && delayCalls-batchBefore==1 && batchJob.result.checks.n1.delay==9,'cancel stops before next node and retains completed results');
+check(call('cancel_check',{jobId:'test-job'}).ok==false && !files['/tmp/alwayroute/check-cancel-test-job'],'finished jobs reject cancel and marker is cleaned');
+batchBefore=delayCalls;call('check',{nodeId:'n1'});call('cancel_check',{jobId:'test-job'});work();
+check(call('job_status',{}).job.status=='cancelled' && delayCalls==batchBefore,'queued cancellation prevents even the first probe');
+files['/etc/alwayroute/current.json']=originalModel;
 draft=call('get',{}).model;draft.nodes[0].name='Renamed';r=call('save',{expectedRevision:1,model:draft});
 check(r.model.revision==2 && r.state.appliedRevision==1,'draft save does not apply');
 let previousDelayCalls=delayCalls;call('check',{nodeId:'n1'});work();

@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-23",
+  "packages": {
+    "manager_signed_before_bytes": 18214,
+    "manager_signed_after_bytes": 18964,
+    "ui_signed_before_bytes": 17307,
+    "ui_signed_after_bytes": 17947,
+    "signed_delta_bytes": 1390,
+    "unsigned_delta_bytes": 1385,
+    "four_packages_growth_percent": 0.017180697054252066,
+    "new_dependencies": 0,
+    "payload_files_verified": 17
+  },
+  "single": {"available": true, "delay_ms": 1109},
+  "subscription": {"total": 38, "completed": 38, "passed": 26, "failed_or_timed_out": 12, "seconds": 69.10745408599905, "configured_parallelism": 1},
+  "baseline": {"requests": 20, "successes": 20, "median_ms": 373.1, "p95_ms": 1704.3, "cpu_percent": 6.52, "available_kib": 25892},
+  "during": {"requests": 45, "successes": 45, "median_ms": 426.5, "p95_ms": 2033.3, "cpu_percent": 30.13, "available_kib": 22164},
+  "transparent_download": {"limit_kib_per_second": 512, "same_connection_throughout": true, "current_proxy_chain_verified": true, "bytes_during_detection": 37431685},
+  "partial_cancel": {"completed_before_request": 2, "completed_at_terminal": 3, "total": 38, "partial_results_preserved": true, "terminal_and_followup_confirmation_seconds": 6.319351666999864},
+  "final": {"authenticated_luci_and_rpc": true, "served_ui_matches_installed": true, "core_pid_unchanged": true, "boot_id_unchanged": true, "configuration_unchanged": true, "selector_choices_preserved": 8, "revision": 13, "forwarding_running": true, "temporary_routes_removed": true, "test_packages_removed_from_tmp": true, "overlay_available_kib": 1324}
+}

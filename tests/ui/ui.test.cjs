@@ -390,6 +390,43 @@ test('asynchronous job stays busy until success and reloads persisted data; chec
   assert.equal(view.busy, false); assert.equal(view.checks.n1.delay, 42); assert.equal(view.checks.n1.checkedRevision, 0); assert.equal(view.state.healthy, 'unverified');
 });
 
+test('subscription progress can be cancelled while busy and keeps partial results', async () => {
+  const calls = []; let polling;
+  const { view, window } = harness(async (method, args) => {
+    calls.push([method, args]);
+    if (method === 'check') return { ok: true, job: { id: 'batch', method, status: 'running', progress: { total: 2, completed: 0 } } };
+    if (method === 'cancel_check') { polling(); return { ok: true, cancelling: true }; }
+    if (method === 'job_status') return { ok: true, job: { id: 'batch', method: 'check', status: 'cancelled', result: {
+      cancelled: true, total: 2, completed: 1, passed: 1, failed: 0, checks: { n1: { nodeId: 'n1', delay: 42, checkedRevision: 0 } }
+    } } };
+    return { ok: true, model: empty(), state: { savedRevision: 0, appliedRevision: 0, healthy: 'unverified' } };
+  });
+  window.setTimeout = (fn, ms) => ms === 1000 ? (polling = fn) : setTimeout(fn, ms);
+  view.state.appliedRevision = 0;
+  const task = view.checkSubscription('demo');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls[0], ['check', ['', 'demo']]);
+  assert.match(text(view.root), /正在串行检测.*0 \/ 2/);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '取消检测').disabled, false);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '重新读取').disabled, true);
+  await view.cancelCheck(); await task;
+  assert.equal(view.busy, false); assert.equal(view.uncertain, undefined);
+  assert.equal(view.checks.n1.delay, 42); assert.match(view.message.text, /检测已取消.*1 \/ 2/);
+  assert.equal(calls.some(([method]) => ['configure', 'select', 'service'].includes(method)), false);
+});
+
+test('loading a running check renders immediately with a resumable job', async () => {
+  const calls = [], job = { id: 'batch', method: 'check', status: 'running' };
+  const { view } = harness(async method => {
+    calls.push(method);
+    if (method === 'job_status') return { ok: true, busy: true, job };
+    return { ok: true, model: empty(), state: { savedRevision: 0, appliedRevision: 0 } };
+  });
+  const loaded = await view.load();
+  assert.equal(loaded[0].checkJob, job);
+  assert.deepEqual(calls, ['job_status', 'get', 'capabilities']);
+});
+
 test('status restores only node checks belonging to the currently applied revision', async () => {
   let applied = 2;
   const { view } = harness(async method => method === 'status' ? {

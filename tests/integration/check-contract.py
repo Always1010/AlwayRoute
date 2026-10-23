@@ -33,7 +33,7 @@ read = set(grant["read"]["ubus"]["alwayroute"])
 write = set(grant["write"]["ubus"]["alwayroute"])
 assert ui_methods == rpc_methods, f"UI/RPC methods differ: {ui_methods ^ rpc_methods}"
 assert read | write == rpc_methods, "RPC methods are missing from or over-granted by ACL"
-assert not read & {"get", "export", "save", "refresh", "apply", "select", "rollback", "service", "check"}, "read ACL exposes credentials or actions"
+assert not read & {"get", "export", "save", "refresh", "apply", "select", "rollback", "service", "check", "cancel_check"}, "read ACL exposes credentials or actions"
 assert read.isdisjoint(write), "method appears in both permission sets"
 for permission in ("read", "write"):
     assert set(grant[permission]) == {"ubus"}, "ACL grants direct file or UCI access"

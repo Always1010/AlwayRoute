@@ -167,8 +167,44 @@ function refresh(args,m) {
  validate(next);let response=args.activate===true?configureCandidate(next):saved(next);response.imported=length(incoming);return response;
 };
 function redact(m) {m=clone(m);for(let n in m.nodes)n.uuid='[redacted]';for(let s in m.subscriptions)s.url='https://redacted.invalid/';for(let k,o in m.overrides)if(o.patch?.uuid)o.patch.uuid='[redacted]';return m;}
+function cancelCheck(args) {
+ let job=read(TMP+'/job.json',null);
+ if(type(args.jobId)!='string' || !match(args.jobId,/^[A-Za-z0-9_-]{1,64}$/) || job?.id!=args.jobId || job.method!='check' || job.status!='running')fail('INVALID_JOB','检测任务已结束或已变化，请重新读取');
+ // A separate marker bypasses manager.lock without modifying the worker snapshot.
+ write(TMP+'/check-cancel-'+job.id,{cancelled:true});
+ return {ok:true,jobId:job.id,cancelling:true};
+}
+function checkNodes(args,m) {
+ let current=state(m),nodes=effective(m),batch=type(args.subscriptionId)=='string' && length(args.subscriptionId)>0;
+ if(current.appliedRevision==null || current.savedRevision!==current.appliedRevision || !running())fail('NOT_APPLIED','请先启动服务并应用当前配置，再检查节点');
+ if(batch && length(args.nodeId ?? ''))fail('INVALID_NODE','请选择单节点或单个订阅检测');
+ if(batch) {
+  if(!length(filter(m.subscriptions,s=>s.id==args.subscriptionId)))fail('INVALID_SUBSCRIPTION','订阅不存在');
+  nodes=filter(nodes,n=>n.source==args.subscriptionId);
+ }else nodes=filter(nodes,n=>n.id==args.nodeId);
+ if(!length(nodes))fail(batch?'NO_NODES':'INVALID_NODE',batch?'此订阅没有已启用且未排除的节点':'节点不存在或已停用');
+ let job=read(TMP+'/job.json',null),owned=args._jobId!=null && job?.id==args._jobId && job.method=='check',checks=read(TMP+'/checks.json',{});
+ let progress={total:length(nodes),completed:0,passed:0,failed:0,currentNodeId:null},outcomes={},cancelled=false;
+ for(let n in nodes) {
+  if(owned && fs.readfile(TMP+'/check-cancel-'+job.id)!=null){cancelled=true;break;}
+  progress.currentNodeId=n.id;
+  if(owned){job.progress=clone(progress);write(TMP+'/job.json',job);}
+  let r=fetchJson('/proxies/'+n.id+'/delay?timeout=2000&url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204'),passed=type(r?.delay)=='int' && r.delay>0;
+  let outcome={ok:true,nodeId:n.id,available:passed,delay:passed?r.delay:null,healthy:passed?'passed':'failed',reason:passed?null:'探测失败或超时',checkedRevision:current.appliedRevision,time:time()};
+  checks[n.id]=outcome;outcomes[n.id]=outcome;progress.completed++;
+  if(passed)progress.passed++;else progress.failed++;
+  for(let key in keys(checks))if(!length(filter(m.nodes,item=>item.id==key)))delete checks[key];
+  write(TMP+'/checks.json',checks);
+  progress.currentNodeId=null;
+  if(owned){job.progress=clone(progress);write(TMP+'/job.json',job);}
+ }
+ if(owned && fs.readfile(TMP+'/check-cancel-'+job.id)!=null)cancelled=true;
+ let response={ok:true,cancelled,checks:outcomes,total:progress.total,completed:progress.completed,passed:progress.passed,failed:progress.failed};
+ if(!batch && outcomes[args.nodeId])for(let key,value in outcomes[args.nodeId])response[key]=value;
+ return response;
+}
 function execute(method,args) {
- if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,logs:true,policyPresets:policyCatalog()};
+ if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
  if(method=='status') {let current=model();return {ok:true,state:state(current),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};}
@@ -176,6 +212,10 @@ function execute(method,args) {
  if(method=='logs') {let entries=read(TMP+'/events.json',[]),limit=int(args.limit ?? 20);if(limit<1 || limit>20)limit=20;return {ok:true,entries:slice(entries,-limit)};}
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
  let interrupted=read(DATA+'/applying.json',null);
+ if(method=='check') {
+  if(interrupted)fail('NOT_APPLIED','配置事务尚未恢复，请先确认服务状态');
+  return checkNodes(args,model());
+ }
  if(interrupted && !(method=='service' && args.action=='stop')) {
   let good=lastGood(),service=interrupted.previousService ?? read(DATA+'/service.json',{enabled:false});
   let recovery=recover(good,interrupted.previousRunning ?? service.enabled);
@@ -184,17 +224,6 @@ function execute(method,args) {
   write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified'});
  }
  let m=model();
- if(method=='check') {
-  let current=state(m);
-  if(current.savedRevision!==current.appliedRevision)fail('NOT_APPLIED','请先应用已保存配置，再检查节点');
-  let n=null;for(let item in effective(m))if(item.id==args.nodeId)n=item;
-  if(!n)fail('INVALID_NODE','节点不存在或已停用');
-  let r=fetchJson('/proxies/'+n.id+'/delay?timeout=2000&url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204');
-  let healthy=r==null?'unverified':type(r?.delay)=='int'?'passed':'failed';
-  let outcome={ok:true,nodeId:n.id,available:r!=null,delay:r?.delay ?? null,healthy,checkedRevision:current.appliedRevision,time:time()},checks=read(TMP+'/checks.json',{});
-  checks[n.id]=outcome;for(let key in keys(checks))if(!length(filter(m.nodes,item=>item.id==key)))delete checks[key];write(TMP+'/checks.json',checks);
-  return outcome;
- }
  if(method=='service') {
   if(args.action=='stop') {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
@@ -242,6 +271,9 @@ function execute(method,args) {
 export function call(method,args,inline) {
  init();
  if(method=='job_status')return jobStatus();
+ if(method=='cancel_check') {
+  try{return cancelCheck(args ?? {});}catch(e){return {ok:false,error:{code:'INVALID_JOB',message:'无法取消：检测任务已结束、已变化或取消标志写入失败'}};}
+ }
  if(index(['capabilities','get','status','traffic','logs','export'],method)>=0) {
   try{return execute(method,args ?? {});}catch(e){return {ok:false,error:{code:'READ_FAILED',message:'读取状态失败，请检查持久配置及核心状态'}};}
  }
@@ -296,11 +328,14 @@ export function work() {
  lock.lock('u');lock.close();
  if(!claimed)return;
  let response;
+ if(request.method=='check'){request.args=request.args ?? {};request.args._jobId=job.id;}
  for(let i=0;i<4;i++){response=call(request.method,request.args,true);if(response.error?.code!='BUSY')break;system('/bin/sleep 1');}
- job.status=response.ok?'succeeded':'failed';job.finished=time();
+ let latest=read(TMP+'/job.json',null);if(latest?.id==job.id)job=latest;
+ job.status=response.ok?(response.cancelled?'cancelled':'succeeded'):'failed';job.finished=time();
  if(response.ok) {job.state=response.state ?? state();if(request.method=='check')job.result=response;}
  else job.error=response.error;
  write(TMP+'/job.json',job);fs.unlink(TMP+'/job.request.json');fs.unlink(TMP+'/subscription.body');
+ if(request.method=='check')fs.unlink(TMP+'/check-cancel-'+job.id);
 };
 export function boot() {
  init();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();

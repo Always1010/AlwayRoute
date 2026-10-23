@@ -17,7 +17,9 @@ return view.extend({
 			return { model: { revision: runtime.state.savedRevision, nodes: [], groups: [], subscriptions: [], overrides: {}, rules: [] }, state: runtime.state, runtime: runtime };
 		}), this.request('capabilities')]);
 		return this.request('job_status').then(function(progress) {
-			var saved = progress.busy && progress.job && progress.job.status === 'running' ? self.waitJob(progress.job) : self.request('get');
+			var checking = progress.busy && progress.job && progress.job.method === 'check';
+			var saved = checking ? self.request('get').then(function(result) { result.checkJob = progress.job; return result; }) :
+				progress.busy && progress.job && progress.job.status === 'running' ? self.waitJob(progress.job) : self.request('get');
 			return Promise.all([saved, self.request('capabilities')]);
 		});
 	},
@@ -62,6 +64,7 @@ return view.extend({
 		// LuCI mounts the returned Node after render resolves. Start after mounting,
 		// so the first visit has data immediately and detach cleanup can observe it.
 		window.setTimeout(function() {
+			if (data[0].checkJob) { self.observeCheck(data[0].checkJob); return; }
 			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(true); }
 		}, 0);
 		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') }), this.root]);
@@ -73,7 +76,7 @@ return view.extend({
 		return E('button', {
 			type: 'button', title: label, 'aria-label': label,
 			'class': 'btn cbi-button ar-button ' + (options.primary ? 'cbi-button-action ' : '') + (options.style || '') + (options.text ? '' : ' ar-icon'),
-			disabled: options.disabled || this.busy || (this.uncertain && !options.recovery) || (this.readonly && !options.readonly) || undefined,
+			disabled: options.disabled || (this.busy && !options.duringCheck) || (this.uncertain && !options.recovery) || (this.readonly && !options.readonly) || undefined,
 			click: function(event) {
 				event.preventDefault();
 				try { Promise.resolve(action()).catch(function(error) { self.error(error); }); }
@@ -155,15 +158,16 @@ return view.extend({
 		async function next() {
 			for (;;) {
 				await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
-				if (Date.now() - started >= 120000) { var timeout = new Error('等待超时，操作结果尚未确认，请重新检查'); timeout.code = 'OPERATION_TIMEOUT'; throw timeout; }
+				if (Date.now() - started >= (job.method === 'check' ? 600000 : 120000)) { var timeout = new Error('等待超时，操作结果尚未确认，请重新检查'); timeout.code = 'OPERATION_TIMEOUT'; throw timeout; }
 				var result = await self.request('job_status');
 				var current = result.job;
 				if (!current || current.id !== job.id) { var changed = new Error('后台任务记录已变化，请重新检查实际状态'); changed.code = 'STATE_UNCONFIRMED'; throw changed; }
 				self.activeJob = current;
+				if (job.method === 'check') { self.pendingJob = current; self.paint(); }
 				if (current.status === 'running') {
 					continue;
 				}
-				if (current.status !== 'succeeded') {
+				if (current.status !== 'succeeded' && !(job.method === 'check' && current.status === 'cancelled')) {
 					self.pendingJob = null;
 					var detail = current.error || {}, error = new Error(detail.message || '后台任务失败');
 					error.code = detail.code || 'JOB_FAILED'; throw error;
@@ -383,6 +387,15 @@ return view.extend({
 				click: function(event) { event.preventDefault(); self.tab = tab[0]; self.paint(); self.refreshRuntime(tab[0] === 'overview'); }
 			}, [tab[1]])]);
 		})));
+		var checkJob = this.activeJob || this.pendingJob;
+		if (checkJob && checkJob.method === 'check') {
+			var progress = checkJob.progress || {}, currentNode = this.draft.nodes.find(function(n) { return n.id === progress.currentNodeId; });
+			content.push(E('div', { 'class': 'ar-operation-status', role: 'status', 'aria-live': 'polite' }, [
+				E('span', {}, [(this.cancelling ? '正在取消检测' : '正在串行检测') + ' · ' + (progress.completed || 0) + ' / ' + (progress.total || '…') +
+					' · 通过 ' + (progress.passed || 0) + ' · 失败 ' + (progress.failed || 0) + (currentNode ? ' · ' + currentNode.name : '')]),
+				this.button('取消检测', '■', function() { return self.cancelCheck(); }, { duringCheck: true, recovery: true, disabled: this.cancelling })
+			]));
+		}
 		content.push(this['render_' + this.tab]());
 		this.live.config = E('span', { 'class': 'ar-config-state', role: 'status' }, [this.configurationLabel()]);
 		content.push(E('div', { 'class': 'ar-operation-status' }, [this.live.config,
@@ -577,13 +590,38 @@ return view.extend({
 	},
 
 	checkNode: function(id) {
+		return this.startCheck(id, '');
+	},
+	checkSubscription: function(id) {
+		return this.startCheck('', id);
+	},
+	checkSummary: function(result) {
+		return (result.cancelled ? '检测已取消' : '检测完成') + ' · ' + (result.completed || 0) + ' / ' + (result.total || 1) +
+			' · 通过 ' + (result.passed || 0) + ' · 失败 ' + (result.failed || 0) + '；当前出口保持不变。';
+	},
+	acceptChecks: function(result) {
+		var checks = Object.assign({}, this.checks, result.checks || {});
+		if (result.nodeId) checks[result.nodeId] = result;
+		this.keepChecks(checks); this.paint();
+	},
+	startCheck: function(nodeId, subscriptionId) {
 		var self = this;
-		if (this.dirty || this.conflict || this.state.savedRevision !== this.state.appliedRevision || this.state.appliedRevision == null) throw new Error('请先启动服务并确认当前配置已生效，再执行单节点检查');
-		return this.mutate('check', [id], '单节点检查已返回；检查结果仅对应此次请求。').then(function(result) {
-			var checks = Object.assign({}, self.checks); checks[id] = result;
-			self.keepChecks(checks);
-			self.paint();
-		});
+		if (this.dirty || this.conflict || this.state.savedRevision !== this.state.appliedRevision || this.state.appliedRevision == null) throw new Error('请先启动服务并确认当前配置已生效，再执行节点检查');
+		this.cancelling = false;
+		return this.mutate('check', [nodeId, subscriptionId], function(result) { return self.checkSummary(result); }).then(function(result) { self.acceptChecks(result); return result; });
+	},
+	observeCheck: function(job) {
+		var self = this;
+		this.busy = true; this.operationMethod = 'check'; this.cancelling = false;
+		return this.waitJob(job).then(function(result) { self.accept(result); self.acceptChecks(result); self.message = { type: 'success', text: self.checkSummary(result) }; })
+			.catch(function(error) { self.uncertain = true; self.error(error); })
+			.finally(function() { self.busy = false; self.paint(); });
+	},
+	cancelCheck: function() {
+		var self = this, job = this.activeJob || this.pendingJob;
+		if (this.readonly || this.cancelling || !job || job.method !== 'check') return Promise.resolve();
+		this.cancelling = true; this.paint();
+		return this.request('cancel_check', [job.id]).catch(function(error) { self.cancelling = false; self.paint(); throw error; });
 	},
 	chooseNode: function(group, id) {
 		var current = this.draft.groups.find(function(g) { return g.id === group; });
@@ -613,12 +651,13 @@ return view.extend({
 				E('div', {}, [E('span', {}, [typeof s.lastUpdate === 'number' ? new Date(s.lastUpdate * 1000).toLocaleString() : s.lastUpdate || '从未更新']), s.lastError ? E('small', { 'class': 'ar-error ar-block' }, [s.lastError]) : '']),
 				E('div', { 'class': 'ar-actions' }, [self.button('编辑订阅', '✎', function() { self.editSubscription(s); }),
 					self.button('手动更新订阅', '↻', function() { return self.updateSubscription(s); }, { disabled: self.dirty || self.conflict || !s.enabled }),
+					self.button('检测订阅节点', '◉', function() { return self.checkSubscription(s.id); }, { disabled: self.dirty || self.conflict || self.state.appliedRevision == null || self.state.savedRevision !== self.state.appliedRevision || !count }),
 					self.button('从本地内容更新', '⇧', function() { self.importSubscription(s); }, { disabled: self.dirty || self.conflict || !s.enabled })])];
 		});
 		return this.card('订阅来源', [E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['订阅地址仅用于本机管理服务抓取，不发送公共转换服务。失败时保留旧节点。']),
 			this.button('添加订阅', '+', function() { self.editSubscription(); }, { text: true, primary: true })]),
 			rows.length ? this.table(['名称', '状态', '节点数', '更新计划', '最近结果', '操作'], rows) : this.empty('暂无订阅，请先添加订阅，再更新节点。'),
-			E('p', { 'class': 'ar-muted' }, ['订阅只更新节点，不导入策略组和规则；节点被引用时不会静默删除。'])]);
+			E('p', { 'class': 'ar-muted' }, ['检测已加载、已启用且未排除的节点，逐个发送小型 HTTPS 请求；显示代理请求延迟，不自动切换出口。订阅只更新节点，不导入策略组和规则。'])]);
 	},
 	editSubscription: function(original) {
 		var self = this, s = original || { name: '', url: '', enabled: true, intervalHours: 0, allowHttp: false };
