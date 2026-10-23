@@ -23,6 +23,11 @@ try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError:raise SystemExit('Refusing to start: another build supervisor holds the task lock')
 refuse_active_make()
 statefile=w/'native-build-state.json';begin=time.monotonic();p=None
+image=w/'source/bin/targets/ramips/mt7621/openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin'
+def image_stamp():
+ if not image.is_file():return None
+ stat=image.stat();return (stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
+previous_image=image_stamp()
 with (w/'native-build.log').open('wb') as log:
  try:
   p=subprocess.Popen(['make','-j8','V=s'],cwd=w/'source',stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env={**os.environ,'TMPDIR':str(w/'tmp'),'CMAKE_BUILD_PARALLEL_LEVEL':'8'})
@@ -36,7 +41,19 @@ with (w/'native-build.log').open('wb') as log:
     state['stop_reason']='budget guard';os.killpg(p.pid,signal.SIGTERM);p.wait(timeout=20);break
    try:p.wait(timeout=20)
    except subprocess.TimeoutExpired:pass
-  rc=p.wait();state.update(status='succeeded' if rc==0 else 'failed',returncode=rc,elapsed_seconds=round(time.monotonic()-begin,3),image_inspection_required=True);statefile.write_text(json.dumps(state,indent=2)+'\n');print(json.dumps(state),flush=True)
+  rc=p.wait();log.flush()
+  # OpenWrt ignores some image recipe failures and can leave an older .bin.
+  # A zero make exit status alone must never make that stale image deployable.
+  current_image=image_stamp()
+  fresh_image=current_image is not None and current_image!=previous_image
+  bounded_image=fresh_image and image.stat().st_size<=13248*1024
+  accepted=rc==0 and bounded_image
+  state.update(status='succeeded' if accepted else 'failed',returncode=rc,elapsed_seconds=round(time.monotonic()-begin,3),image_inspection_required=True,image_fresh=fresh_image,image_within_size_limit=bool(bounded_image))
+  if rc==0 and not accepted:state['stop_reason']='make returned zero without a fresh image within the evaluation size limit'
+  statefile.write_text(json.dumps(state,indent=2)+'\n');print(json.dumps(state),flush=True)
+  if not accepted:raise SystemExit(rc or 1)
+ except SystemExit:
+  raise
  except BaseException:
   if p and p.poll() is None:
    try:os.killpg(p.pid,signal.SIGTERM);p.wait(timeout=15)
