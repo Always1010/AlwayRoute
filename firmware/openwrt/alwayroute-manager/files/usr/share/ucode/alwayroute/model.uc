@@ -175,7 +175,7 @@ export function validate(m) {
 };
 export function generate(m) {
  validate(m);
- let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[],ruleSets=[];
+ let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[],ruleSets=[],ipOverrides=[];
  let selections={};for(let g in m.groups)selections[g.id]=g.selected;
  function domainDns(rule, target) {
   // Validation permits only one group reference: a non-Proxy group may follow Proxy.
@@ -203,6 +203,7 @@ export function generate(m) {
   let rule={};rule[field]=values;
   if(r.outbound=='block') rule.action='reject'; else {rule.action='route';rule.outbound=r.outbound;}
   push(rules,rule);
+  if(r.type=='ip' || r.type=='cidr')push(ipOverrides,rule);
   if(r.type=='domain' || r.type=='suffix' || r.type=='regex') {let d={};d[field]=values;domainDns(d,r.outbound);}
  }
  if(m.mode=='rule') {
@@ -219,6 +220,14 @@ export function generate(m) {
    push(ruleSets,{type:'local',tag:'domestic-domain',format:'binary',path:'/usr/share/alwayroute/rules/domestic-domain.srs'});
    push(rules,{rule_set:['domestic-domain'],action:'route',outbound:'Domestic'});
    domainDns({rule_set:['domestic-domain']},'Domestic');
+   push(ruleSets,{type:'local',tag:'domestic-ip',format:'binary',path:'/usr/share/alwayroute/rules/domestic-ip.srs'});
+   // Only unmatched domain destinations need resolution; IP destinations are unchanged.
+   // Keep DNS routing (including its proxy fallback) rather than forcing local DNS.
+   push(rules,{action:'resolve',strategy:'ipv4_only'});
+   // An unresolved domain could not match an earlier user IP rule. Recheck those
+   // overrides before the country fallback, preserving their original order.
+   for(let rule in ipOverrides)push(rules,clone(rule));
+   push(rules,{rule_set:['domestic-ip'],action:'route',outbound:'Domestic'});
   }
  }
  let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':'Other';

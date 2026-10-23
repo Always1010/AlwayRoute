@@ -2,11 +2,11 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
 ROUTING_INPUT:=$(TOPDIR)/alwayroute-input/routing
-PKG_FILE_DEPENDS:=$(ROUTING_INPUT)/domestic-domain.srs $(ROUTING_INPUT)/manifest.json $(ROUTING_INPUT)/LICENSE
+PKG_FILE_DEPENDS:=$(ROUTING_INPUT)/domestic-domain.srs $(ROUTING_INPUT)/domestic-ip.srs $(ROUTING_INPUT)/manifest.json $(ROUTING_INPUT)/LICENSE
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -25,7 +25,7 @@ endef
 
 define Build/Prepare
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/routing
-	$(CP) $(ROUTING_INPUT)/domestic-domain.srs $(ROUTING_INPUT)/manifest.json $(ROUTING_INPUT)/LICENSE $(PKG_BUILD_DIR)/routing/
+	$(CP) $(ROUTING_INPUT)/domestic-domain.srs $(ROUTING_INPUT)/domestic-ip.srs $(ROUTING_INPUT)/manifest.json $(ROUTING_INPUT)/LICENSE $(PKG_BUILD_DIR)/routing/
 endef
 
 define Build/Compile

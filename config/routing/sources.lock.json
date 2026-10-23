@@ -23,6 +23,14 @@
       "upstreamCategory": "geolocation-cn",
       "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/620722145f883fc5ef450e9a909011c0528c1424/geo/geosite/geolocation-cn.json",
       "sha256": "3a53a9eec906fe038dc87f58cb71f96415a1a27a0881b6ecef6f4dba7de02128"
+    },
+    {
+      "name": "domestic-ip",
+      "repository": "https://github.com/MetaCubeX/meta-rules-dat",
+      "commit": "620722145f883fc5ef450e9a909011c0528c1424",
+      "upstreamCategory": "geoip/cn",
+      "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/620722145f883fc5ef450e9a909011c0528c1424/geo/geoip/cn.json",
+      "sha256": "5eb3e8cf06ba15265bdbabad7a99d5f63841662fa75c7c0293ca100fae914e89"
     }
   ],
   "ruleSetLicense": {

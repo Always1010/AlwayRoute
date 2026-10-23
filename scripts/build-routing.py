@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -49,15 +50,21 @@ def validate_source(name, data):
     if set(source) != {'version', 'rules'} or source['version'] != 2 or len(source['rules']) != 1:
         raise ValueError('Unexpected rule-set source format')
     rule = source['rules'][0]
-    if name != 'domestic-domain' or set(rule) != {'domain', 'domain_suffix', 'domain_regex'}:
-        raise ValueError('Unexpected domain rule-set fields')
+    expected = {'domestic-domain': {'domain', 'domain_suffix', 'domain_regex'}, 'domestic-ip': {'ip_cidr'}}
+    if name not in expected or set(rule) != expected[name]:
+        raise ValueError('Unexpected rule-set fields')
     for field, values in rule.items():
         if not isinstance(values, list) or any(not isinstance(x, str) or not x for x in values):
             raise ValueError('Invalid rule-set values')
         if len(values) != len(set(values)):
             raise ValueError('Duplicate rule-set values')
-    if set(rule['domain_suffix']) & {'com', 'net', 'org'}:
+    if set(rule.get('domain_suffix', [])) & {'com', 'net', 'org'}:
         raise ValueError('Unexpected global top-level suffix; review before importing')
+    if name == 'domestic-ip':
+        for value in rule['ip_cidr']:
+            network = ipaddress.ip_network(value, strict=True)
+            if not network.network_address.is_global or not network.broadcast_address.is_global:
+                raise ValueError('IP rule set must not include reserved or private addresses')
     return {field: len(values) for field, values in rule.items()}
 
 
@@ -69,6 +76,8 @@ def build(lock, cache, output, core, fetch=False):
         raise ValueError('Use the pinned sing-box 1.13.21 build-host CLI')
     cache.mkdir(parents=True, exist_ok=True)
     inputs = []
+    if [spec['name'] for spec in lock['ruleSets']] != ['domestic-domain', 'domestic-ip']:
+        raise ValueError('Both domain and IP rule-set inputs are required in the expected order')
     for spec in lock['ruleSets']:
         data = cached_input(spec, cache, fetch)
         inputs.append((spec, data, validate_source(spec['name'], data)))

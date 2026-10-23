@@ -69,7 +69,8 @@ dnsModel.rules=[{id:'exception',enabled:true,type:'domain',value:'overseas.examp
  {id:'ip',enabled:true,type:'cidr',value:'192.0.2.0/24',outbound:'direct'}];
 let dnsConfig=generate(dnsModel);
 check(dnsConfig.dns.rules[0].domain[0]=='overseas.example.cn' && dnsConfig.dns.rules[0].server=='proxy-dns' && dnsConfig.dns.rules[1].domain_suffix[0]=='cn' && dnsConfig.dns.rules[1].server=='bootstrap','DNS preserves a proxy exception before a direct custom group suffix');
-check(length(dnsConfig.dns.rules)==length(dnsConfig.route.rules)-3,'disabled and IP rules do not become domain DNS rules');
+let domainRoutes=filter(dnsConfig.route.rules,r=>r.domain!=null || r.domain_suffix!=null || r.domain_regex!=null || r.rule_set?.[0]=='domestic-domain');
+check(length(dnsConfig.dns.rules)==length(domainRoutes),'disabled, IP and resolve rules do not become domain DNS rules');
 group(dnsModel,'Domestic').selected='Proxy';group(dnsModel,'Proxy').selected='direct';
 check(generate(dnsModel).dns.rules[1].server=='bootstrap','DNS follows a custom group through Proxy to direct');
 group(dnsModel,'Proxy').selected=nodes[0].id;
@@ -115,9 +116,16 @@ let profileResult=normalize(migratedProfile);
 check(profileResult.policyVersion==2 && length(profileResult.rules)==2 && profileResult.rules[0].id==editedId && profileResult.rules[1].id=='manual','migration removes only unchanged generated service rules and preserves edited or manual overrides');
 let native=generate(profileResult);
 check(index(route(native.route.rules,'YouTube').domain_suffix,'ggpht.com')>=0 && index(route(native.route.rules,'YouTube').domain,'youtubei.googleapis.com')>=0 && length(route(native.route.rules,'TikTok').domain_suffix)==30 && join(',',route(native.route.rules,'Domestic').domain_suffix)=='cn','service data uses native rules without embedding domestic application lists');
-let domesticSet=native.route.rule_set[0],lastDomainRule=native.route.rules[length(native.route.rules)-1],lastDns=native.dns.rules[length(native.dns.rules)-1];
-check(length(native.route.rule_set)==1 && domesticSet.type=='local' && domesticSet.tag=='domestic-domain' && domesticSet.path=='/usr/share/alwayroute/rules/domestic-domain.srs','domestic community data loads from one local binary rule set');
+let domesticSet=native.route.rule_set[0],lastDomainRule=native.route.rules[length(native.route.rules)-3],lastDns=native.dns.rules[length(native.dns.rules)-1];
+check(length(native.route.rule_set)==2 && domesticSet.type=='local' && domesticSet.tag=='domestic-domain' && domesticSet.path=='/usr/share/alwayroute/rules/domestic-domain.srs','domestic community data loads from local binary rule sets');
 check(lastDomainRule.rule_set[0]=='domestic-domain' && lastDomainRule.outbound=='Domestic' && lastDns.rule_set[0]=='domestic-domain' && lastDns.server=='bootstrap','route and DNS share the same domain set after explicit services and overrides');
+let ipFallback=native.route.rules[length(native.route.rules)-1],resolveFallback=native.route.rules[length(native.route.rules)-2];
+check(native.route.rule_set[1].tag=='domestic-ip' && ipFallback.rule_set[0]=='domestic-ip' && ipFallback.outbound=='Domestic' && resolveFallback.action=='resolve' && resolveFallback.server==null && resolveFallback.strategy=='ipv4_only','IP fallback follows all domain rules and resolves only through the existing DNS policy');
+let overrideIP=clone(profileResult);overrideIP.rules=[{id:'address_override',enabled:true,type:'cidr',value:'192.0.2.0/24',outbound:'block'}];let overrideRules=generate(overrideIP).route.rules;
+check(overrideRules[2].action=='reject' && overrideRules[length(overrideRules)-3].action=='resolve' && overrideRules[length(overrideRules)-2].action=='reject' && overrideRules[length(overrideRules)-2].ip_cidr[0]=='192.0.2.0/24' && overrideRules[length(overrideRules)-1].rule_set[0]=='domestic-ip','unmatched domains recheck user IP overrides after resolution and before the country fallback');
+let blockedDomestic=clone(profileResult);group(blockedDomestic,'Other').selected='block';let ipBlocked=generate(blockedDomestic);
+check(ipBlocked.route.rules[length(ipBlocked.route.rules)-2].rule_set[0]=='domestic-ip' && ipBlocked.route.rules[length(ipBlocked.route.rules)-1].action=='reject','domestic IP fallback remains before the Other terminal rejection');
+for(let mode in ['direct','global']){let isolated=clone(profileResult);isolated.mode=mode;let c=generate(isolated);check(length(c.route.rule_set)==0 && length(c.route.rules)==2 && length(c.dns.rules)==0,'domestic domain and IP data are omitted in '+mode+' mode');}
 let followDomestic=clone(profileResult);group(followDomestic,'Domestic').selected='Proxy';let followConfig=generate(followDomestic);
 check(followConfig.dns.rules[length(followConfig.dns.rules)-1].server=='proxy-dns','community domain DNS follows Domestic selection through Proxy');
 check(index(route(native.route.rules,'Proxy').domain_suffix,'cn')<0,'disabled domestic group cannot make the Proxy fallback claim all cn domains');

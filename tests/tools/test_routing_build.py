@@ -31,6 +31,12 @@ class RoutingInputs(unittest.TestCase):
                 routing.cached_input({'sha256': expected}, cache, False)
             self.assertEqual((cache / expected).read_bytes(), b'corrupt')
 
+    def test_ip_source_rejects_private_or_overbroad_ranges(self):
+        for network in ['0.0.0.0/0', '10.0.0.0/8', '192.0.2.0/24', '::/0', 'fc00::/7']:
+            data = json.dumps({'version': 2, 'rules': [{'ip_cidr': [network]}]}).encode()
+            with self.assertRaises(ValueError):
+                routing.validate_source('domestic-ip', data)
+
     def test_missing_cache_does_not_download_implicitly(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, 'not cached'):
