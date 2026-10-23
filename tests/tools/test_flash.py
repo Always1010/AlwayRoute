@@ -132,6 +132,7 @@ class FlashTests(unittest.TestCase):
                         with self.assertRaises((RuntimeError,ValueError)):
                             flash.execute(self.args(img,root,mode,True))
                         write.assert_not_called()
+                        self.assertRegex(commands[-1], r'^rm -f /tmp/alwayroute-flash-[a-f0-9]+\.bin$')
                     else:
                         self.assertEqual(flash.execute(self.args(img,root,mode,True)),3)
                         self.assertEqual(write.call_count,1)

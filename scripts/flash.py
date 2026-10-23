@@ -213,15 +213,23 @@ def execute(args):
         raise ValueError('Keep private backups outside the release folder')
     backup(ssh, state, directory)
     target = '/tmp/alwayroute-flash-' + secrets.token_hex(8) + '.bin'
-    remote(ssh, 'umask 077; set -C; cat > ' + target, data, timeout=120)
-    transferred = remote(ssh, 'md5sum ' + target).decode().split()[0]
-    if transferred != digest(data, 'md5'):
-        raise ValueError('Staged image transfer checksum mismatch')
-    current = parse_probe(remote(ssh, 'sh -s', PROBE.encode()), args.mode, 0)
-    if current['boot_id'] != state['boot_id'] or current['partitions'] != state['partitions']:
-        raise ValueError('Device changed after backup; no flash command submitted')
-    if args.mode == 'openwrt':
-        remote(ssh, 'sysupgrade -T ' + target)
+    try:
+        remote(ssh, 'umask 077; set -C; cat > ' + target, data, timeout=120)
+        transferred = remote(ssh, 'md5sum ' + target).decode().split()[0]
+        if transferred != digest(data, 'md5'):
+            raise ValueError('Staged image transfer checksum mismatch')
+        current = parse_probe(remote(ssh, 'sh -s', PROBE.encode()), args.mode, 0)
+        if current['boot_id'] != state['boot_id'] or current['partitions'] != state['partitions']:
+            raise ValueError('Device changed after backup; no flash command submitted')
+        if args.mode == 'openwrt':
+            remote(ssh, 'sysupgrade -T ' + target)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        # Only our randomly named upload; never clean router configuration/state.
+        try:
+            remote(ssh, 'rm -f ' + target, timeout=15)
+        except (OSError, RuntimeError, subprocess.SubprocessError):
+            pass
+        raise
     # This is the only write submission. Disconnect/timeout NEVER triggers a retry.
     command = 'mtd -e OS1 -r write ' + target + ' OS1' if args.mode == 'stock' else 'sysupgrade ' + target
     print('Backup verified. Submitting one flash command; keep power connected.', flush=True)
