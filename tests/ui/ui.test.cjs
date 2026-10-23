@@ -334,6 +334,19 @@ test('overview throttles status while traffic continues and forced refresh bypas
   assert.deepEqual(calls, ['status', 'traffic', 'traffic', 'status', 'traffic']);
 });
 
+test('runtime acknowledgement renders before a slow traffic response', async () => {
+  let releaseTraffic;
+  const { view } = harness(async method => method === 'traffic' ? new Promise(resolve => { releaseTraffic = resolve; }) :
+    { state: { savedRevision: 0, appliedRevision: 0 }, service: { running: true }, core: { available: true, groups: {} } });
+  const pending = view.refreshRuntime(true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(view.runtime.service.running, true);
+  assert.equal(view.polling, true);
+  releaseTraffic({ available: true, upload: 3, download: 7 });
+  await pending;
+  assert.equal(view.traffic.download, 7);
+});
+
 test('new node editor omits empty optional TLS and websocket fields', () => {
   const { view } = harness(async () => ({}));
   let fields, commit;

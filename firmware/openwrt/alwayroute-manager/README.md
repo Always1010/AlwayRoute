@@ -3,7 +3,7 @@
 OpenWrt rpcd ucode 插件，使用镜像已有的 ucode/fs/digest、uclient-fetch 与 procd。
 没有额外 Go、Python 或 Node 常驻进程。所有配置写入按需短期 worker 执行，
 LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重启。
-单节点及整订阅连通性／延迟检测复用该 worker 与已加载核心，默认串行，支持进度与取消。
+单节点、整订阅、多选及全部来源连通性／延迟检测复用该 worker 与已加载核心，默认串行，支持逐行进度、失败重试与取消。
 取消在当前一次有超时限制的探测结束后生效；已完成结果保留在/tmp，不写闪存，检测不重启或切换代理。
 接口及模型详见 [v1契约](../../../contracts/v1.md)。
 
@@ -41,10 +41,13 @@ URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通
 
 应用流程：expectedRevision校验 → 生成 → `sing-box check` → 转发prepare →
 procd restart → loopback API检查所有selector实际选择 → 转发activate → 提交lastgood。
-即时configure在单个后台事务完成模型规范化、revision校验与递增；运行时复用上述确认流程，
+即时configure在单个后台事务完成模型规范化、revision校验与递增；运行时通常复用上述确认流程，
 最后提交current及lastgood并清除标志。包括current保存失败在内的错误均恢复旧current及运行态，
 未清标志保留旧current作为读取和断电恢复依据。服务停止时只校验并保存current，保持停止；
 service.start使用最新current，确认后lastgood/state对应同一revision，不会启动旧选择。
+只改变已有策略组选择、并且生成配置除了selector默认选择外完全相同时，使用核心PUT接口热切换，保留当前连接，不重启核心。
+该分支先核对saved/applied/lastgood、旧运行配置、实际选择与转发状态，仍使用相同applying标志、三次sync、previous及current/lastgood提交协议，更新/tmp运行配置默认值并读回确认。
+任一步失败沿用完整核心恢复与故障阻断；需要改变DNS规则、Other阻断、模式、规则或节点参数时继续完整应用，不能仅PUT伪造成功。
 首页import/refresh使用activate:true，将解析后的节点候选交给同一确认流程，失败不提前保存节点；
 import此时同样排入后台worker。省略activate继续保留原仅保存语义，cron仍不自动应用。
 失败先尝试恢复之前运行状态，再尽力恢复持久元数据；闪存写失败也不能跳过核心恢复。
@@ -53,6 +56,8 @@ import此时同样排入后台worker。省略activate继续保留原仅保存语
 显式停止若无法撤销自有转发规则，返回FORWARDING_STOP_FAILED并保留核心和启动设置。
 重启从lastgood或未完成事务的previous重建；短期post-start确认器核实进程和selector后才启动转发。
 coreAPI只监听127.0.0.1:9090，混合代理只监听127.0.0.1:7890。
+流量RPC立即读取/tmp短期样本，独立的一次性采样器读取核心流式接口，不占用rpcd等待采样。
+样本携带时间戳、15秒有效期、revision与重启epoch，未采到/过期/服务停止显示不可用；最多每5秒启动一次，独立锁防重叠，无新依赖或常驻服务。
 
 转发包为必需依赖，提供 `/usr/libexec/alwayroute-forwarding prepare|activate|guard|stop|status`，
 前三个以退出码报告结果，status输出JSON。读取固定`/tmp/alwayroute/runtime.json`；

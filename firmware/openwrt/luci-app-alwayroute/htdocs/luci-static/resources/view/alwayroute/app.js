@@ -151,13 +151,14 @@ return view.extend({
 	},
 
 	waitJob: function(job) {
-		var self = this, started = Date.now();
+		var self = this, started = Date.now(), interval = job.method === 'check' ? 1000 : 200;
 		this.activeJob = job;
 		this.pendingJob = job;
 		this.paint();
 		async function next() {
 			for (;;) {
-				await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
+				await new Promise(function(resolve) { window.setTimeout(resolve, interval); });
+				interval = 1000;
 				if (Date.now() - started >= (job.method === 'check' ? 600000 : 120000)) { var timeout = new Error('等待超时，操作结果尚未确认，请重新检查'); timeout.code = 'OPERATION_TIMEOUT'; throw timeout; }
 				var result = await self.request('job_status');
 				var current = result.job;
@@ -280,29 +281,32 @@ return view.extend({
 		var generation = this.operationGeneration || 0, tab = this.tab;
 		var requestStatus = tab === 'overview' && (forceStatus || this.lastStatusAttempt == null || Date.now() - this.lastStatusAttempt >= 15000);
 		if (requestStatus) this.lastStatusAttempt = Date.now(); // Throttle attempts after both successful and failed status requests.
-		var requests = tab === 'logs' ? [this.request('logs', [20])] : requestStatus ? [this.request('status'), this.request('traffic')] : [this.request('traffic')];
-		var operation = Promise.allSettled(requests).then(function(results) {
-			if (!self.root.isConnected || self.busy || self.tab !== tab || generation !== (self.operationGeneration || 0)) return;
-			if (tab === 'logs') {
-				self.logs = results[0].status === 'fulfilled' ? (results[0].value.entries || []).slice(-20) : [];
-				self.logsError = results[0].status === 'rejected' ? results[0].reason.message : null;
-				self.updateLive(); return;
-			}
-			var status = requestStatus ? results[0] : null;
-			var traffic = results[requestStatus ? 1 : 0];
-			if (status && status.status === 'fulfilled') {
-				self.runtime = status.value;
-				var remote = self.runtime.state || {};
-				if (self.readonly) self.revision = remote.savedRevision;
-				else if (remote.savedRevision !== self.revision) self.conflict = true;
-				self.updateState(remote);
-				self.keepChecks(self.runtime.checks);
-				self.runtimeError = null;
-			}
-			else if (status) { self.runtime = null; self.runtimeError = status.reason.message; }
-			self.traffic = traffic.status === 'fulfilled' ? traffic.value : { available: false, reason: traffic.reason.message };
-			self.updateLive();
-		}).finally(function() {
+		function valid() { return self.root.isConnected && !self.busy && self.tab === tab && generation === (self.operationGeneration || 0); }
+		function settle(method, args) {
+			return self.request(method, args).then(function(value) {
+				if (!valid()) return;
+				if (method === 'logs') { self.logs = (value.entries || []).slice(-20); self.logsError = null; }
+				else if (method === 'traffic') self.traffic = value;
+				else {
+					self.runtime = value;
+					var remote = self.runtime.state || {};
+					if (self.readonly) self.revision = remote.savedRevision;
+					else if (remote.savedRevision !== self.revision) self.conflict = true;
+					self.updateState(remote);
+					self.keepChecks(self.runtime.checks);
+					self.runtimeError = null;
+				}
+				self.updateLive();
+			}, function(error) {
+				if (!valid()) return;
+				if (method === 'logs') { self.logs = []; self.logsError = error.message; }
+				else if (method === 'status') { self.runtime = null; self.runtimeError = error.message; }
+				else self.traffic = { available: false, reason: error.message };
+				self.updateLive();
+			});
+		}
+		var requests = tab === 'logs' ? [settle('logs', [20])] : requestStatus ? [settle('status'), settle('traffic')] : [settle('traffic')];
+		var operation = Promise.allSettled(requests).finally(function() {
 			delete self.pendingPolls[tab]; self.polling = Object.keys(self.pendingPolls).length > 0;
 		});
 		this.pendingPolls[tab] = operation;
@@ -339,7 +343,10 @@ return view.extend({
 		// Polling only replaces status text. Keep focused selects, forms and scroll intact.
 		var self = this, live = this.live || {}, running = this.serviceRunning(), traffic = this.traffic || {};
 		if (live.service) live.service.textContent = running === true ? '运行中' : running === false ? '已停止' : '未知';
-		if (live.traffic) live.traffic.textContent = traffic.available ? '↑ ' + model.formatRate(traffic.upload) + '    ↓ ' + model.formatRate(traffic.download) : '不可用';
+		if (live.traffic) {
+			live.traffic.textContent = traffic.available ? '↑ ' + model.formatRate(traffic.upload) + '    ↓ ' + model.formatRate(traffic.download) : '不可用';
+			live.traffic.setAttribute('title', traffic.available && traffic.sampledAt ? '采样于 ' + new Date(traffic.sampledAt * 1000).toLocaleTimeString() : traffic.reason || '等待流量采样');
+		}
 		if (live.health) live.health.textContent = model.stateLabel(this.state.healthy);
 		if (live.config) live.config.textContent = this.configurationLabel();
 		if (live.conflict) live.conflict.hidden = !this.conflict;

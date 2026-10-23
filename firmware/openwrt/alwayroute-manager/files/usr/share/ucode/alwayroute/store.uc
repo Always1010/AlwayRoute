@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import { sha256 } from 'digest';
 import { fail, clone, empty, normalize, validate, effective, generate, policyCatalog, modelLimits } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
+import { selectionPlan } from 'alwayroute.selection';
+import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
 function init() {if(!fs.access(DATA))fs.mkdir(DATA,0700);if(!fs.access(TMP))fs.mkdir(TMP,0700);}
@@ -85,9 +87,38 @@ function checkConfig(m) {
  if(!command('/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json'))fail('CORE_CHECK_FAILED','核心拒绝配置，原应用保持可恢复');
 }
 function selected(g) {return g.id=='Other' && g.selected=='block'?'direct':g.selected;}
+function choicesMatch(m,core) {
+ if(!core?.available)return false;
+ for(let g in m.groups)if(core.groups[g.id]?.now!=selected(g))return false;
+ return true;
+}
+function putSelection(id,target) {
+ // IDs are model-validated, and JSON is passed in a private file, never shell input.
+ write(TMP+'/selection.json',{name:target=='block'?'direct':target});
+ let ok=command('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id);
+ fs.unlink(TMP+'/selection.json');
+ if(!ok)fail('CORE_SELECT_FAILED','核心拒绝切换，正在恢复上一份配置');
+}
+function liveSelectionPlan(next) {
+ let previous=model(),current=state(previous),good=lastGood();
+ if(current.appliedRevision!==previous.revision || good?.revision!==previous.revision || sprintf('%J',good)!=sprintf('%J',previous))return null;
+ let plan=selectionPlan(previous,next,read(TMP+'/runtime.json',null));
+ if(!plan || !choicesMatch(previous,coreStatus()))return null;
+ let f=forwarding('status');
+ if(f.available!==true || f.guarded || f.running!==(previous.mode!='direct'))return null;
+ return plan;
+}
+function switchSelections(m,plan) {
+ for(let change in plan.changes)putSelection(change.id,change.after);
+ // Keep a service respawn on the same confirmed choice; persistent boot recovery
+ // remains governed by lastgood and the durable applying marker.
+ write(TMP+'/runtime.json',plan.config);
+ if(!running() || !choicesMatch(m,coreStatus()))fail('CORE_SELECT_FAILED','核心实际选择未确认，正在恢复上一份配置');
+}
 function restart(m) {
  if(m.mode!='direct')for(let g in m.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
  checkConfig(m);
+ invalidateTraffic();
  if(!forwarding('prepare'))fail('FORWARDING_CHECK_FAILED','转发预检失败');
  if(!forwarding('guard'))fail('FORWARDING_GUARD_FAILED','无法建立故障阻断，保留当前核心');
  write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});
@@ -115,7 +146,7 @@ function recover(good,wasRunning) {
  }
  return {restored:false,guarded:forwarding('guard')};
 };
-function applyModel(m,commitCurrent) {
+function applyModel(m,commitCurrent,plan) {
  let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?model():null;
  let pending={previousRevision:good?.revision ?? null,previousService:service,previousRunning:wasRunning};
  if(commitCurrent)pending.previousCurrent=before;
@@ -123,7 +154,7 @@ function applyModel(m,commitCurrent) {
  try {
   if(good)write(DATA+'/previous.json',good);
   write(DATA+'/applying.json',pending);system('/bin/sync');
-  restart(m);
+  if(plan)switchSelections(m,plan);else restart(m);
   write(DATA+'/lastgood.json',m);write(DATA+'/service.json',{enabled:true});
   write(TMP+'/state.json',{appliedRevision:m.revision,healthy:'unverified'});
   if(commitCurrent)write(DATA+'/current.json',m);
@@ -139,12 +170,12 @@ function applyModel(m,commitCurrent) {
   die(e.message);
  }
  try {event('核心加载已确认；出口与终端接管仍须实测');}catch(logError){}
- return {ok:true,state:state(m)};
+ return {ok:true,state:state(m),activation:plan?'selector':'restart'};
 };
 function configureCandidate(next) {
  validate(next);
  if(next.mode=='global')for(let g in next.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
- if(running())return applyModel(next,true);
+ if(running())return applyModel(next,true,liveSelectionPlan(next));
  // A stopped service validates the next start without changing its enabled state.
  checkConfig(next);write(DATA+'/current.json',next);system('/bin/sync');
  try {event('配置已确认，将用于下次启动');}catch(logError){}
@@ -224,7 +255,7 @@ function execute(method,args) {
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
  if(method=='status') {let current=model();return {ok:true,state:state(current),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};}
- if(method=='traffic') {let t=fetchJson('/traffic',true);return {ok:true,available:type(t?.up)=='int' && type(t?.down)=='int',upload:t?.up ?? null,download:t?.down ?? null,unit:'bytes/s',reason:t?null:'核心流量流不可用'};}
+ if(method=='traffic')return trafficSnapshot();
  if(method=='logs') {let entries=read(TMP+'/events.json',[]),limit=int(args.limit ?? 20);if(limit<1 || limit>20)limit=20;return {ok:true,entries:slice(entries,-limit)};}
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
  let interrupted=read(DATA+'/applying.json',null);
@@ -245,7 +276,7 @@ function execute(method,args) {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
    if(!command('/etc/init.d/alwayroute stop') || running())fail('CORE_STOP_FAILED','核心停止失败，启动设置保持不变');
    if(interrupted)restoreMetadata(interrupted,lastGood(),{enabled:false});
-   write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state(m)};
+   invalidateTraffic();write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state(m)};
   }
   if(args.action=='start') {
    return applyModel(m);
@@ -354,7 +385,7 @@ export function work() {
  if(request.method=='check')fs.unlink(TMP+'/check-cancel-'+job.id);
 };
 export function boot() {
- init();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();
+ init();invalidateTraffic();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();
  let pending=read(DATA+'/applying.json',null);
  if(pending) {
   config=pending.previousService ?? config;

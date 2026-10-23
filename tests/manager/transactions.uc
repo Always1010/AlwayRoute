@@ -5,6 +5,7 @@ import { sha256 } from 'digest';
 // networking, process execution, or persistent files are accessed by this suite.
 let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,currentReads=0;
 let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0,onDelay=null;
+let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null;
 let fs={
  mkdir:()=>true,chmod:()=>true,
  readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
@@ -23,18 +24,20 @@ let fs={
  popen:function(command){
   let body='{}';
   if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';if(onDelay)body=onDelay(command) ?? body;}
-  else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:o.default,all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);}
+  else if(index(command,'alwayroute-forwarding status')>=0)body=sprintf('%J',{available:true,running:forwardingMode=='active',guarded:forwardingMode=='guarded'});
+  else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:liveChoices[o.tag] ?? o.default,all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);}
   return {read:function(limit){if(index(command,'/proxies')>=0)lastProxyReadLimit=limit;return substr(body,0,limit);},close:()=>0};
  }
 };
 function system(command){
+ if(index(command,'--method PUT')>=0){putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;return 0;}
  if(index(command,'alwayroute-forwarding guard')>=0){guardCalls++;forwardingMode='guarded';}
  if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;forwardingMode='stopped';}
  if(index(command,'alwayroute-forwarding activate')>=0){if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
  if(index(command,'sing-box check')>=0 && allChecksFail)return 1;
  if(index(command,'sing-box check')>=0 && checkFails){checkFails=false;return 1;}
  if(index(command,'alwayroute running')>=0)return active?0:1;
- if(index(command,'alwayroute restart')>=0)active=true;
+ if(index(command,'alwayroute restart')>=0){restartCalls++;active=true;liveChoices={};let cfg=json(files['/tmp/alwayroute/runtime.json']);for(let o in cfg.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;}
  if(index(command,'alwayroute stop')>=0)active=false;
  return 0;
 }
@@ -227,4 +230,36 @@ call('refresh',{expectedRevision:10,subscriptionId:'demo',content:uri});work();r
 check(r.model.revision==11 && r.state.appliedRevision==10,'legacy subscription refresh remains save-only without activate');
 r=call('import',{expectedRevision:11,content:secondUri});
 check(r.ok && r.imported==1 && r.model.revision==12 && r.state.appliedRevision==10,'legacy import remains synchronous and save-only without activate');
+
+// Live choices are independent from runtime.json, so a file write cannot fake
+// a successful core acknowledgement. Failure uses the original full recovery.
+let hotFixture=clone(call('get',{}).model);hotFixture.mode='rule';files['/etc/alwayroute/current.json']=sprintf('%J',hotFixture);
+call('apply',{expectedRevision:12});work();r=call('get',{});
+let hotBase=clone(r.model),hotNext=clone(hotBase),hotTarget=hotBase.nodes[1].id;
+hotNext.groups[0].selected=hotTarget;
+let beforeRestarts=restartCalls,beforePuts=putCalls;
+call('configure',{expectedRevision:12,model:hotNext});work();r=call('get',{});
+check(call('job_status',{}).job.status=='succeeded' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls==beforeRestarts && putCalls==beforePuts+1,'proxy-to-proxy selection commits without restarting the live core');
+check(sprintf('%J',generate(r.model))==files['/tmp/alwayroute/runtime.json'] && json(files['/etc/alwayroute/lastgood.json']).revision==13 && !files['/etc/alwayroute/applying.json'],'hot switch commits runtime defaults and persistent recovery metadata together');
+hotBase=clone(r.model);
+for(let failure in ['put','readback','runtime','lastgood','current','marker','partial']) {
+ hotNext=clone(hotBase);hotNext.groups[0].selected='n1';
+ if(failure=='put')putFails=true;
+ if(failure=='readback')putMismatch=true;
+ if(failure=='runtime')failWrite='/tmp/alwayroute/runtime.json.new';
+ if(failure=='lastgood')failWrite='/etc/alwayroute/lastgood.json.new';
+ if(failure=='current')failRename='/etc/alwayroute/current.json';
+ if(failure=='marker')failUnlink='/etc/alwayroute/applying.json';
+ if(failure=='partial'){hotNext.groups[1].selected='n1';putFailAt=putCalls+2;}
+ beforeRestarts=restartCalls;
+ call('configure',{expectedRevision:13,model:hotNext});work();r=call('get',{});putMismatch=false;putFailAt=null;
+ check(call('job_status',{}).job.status=='failed' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls>beforeRestarts && sprintf('%J',generate(hotBase))==files['/tmp/alwayroute/runtime.json'] && !files['/etc/alwayroute/applying.json'],'hot '+failure+' failure fully restores old core, metadata and revision');
+}
+hotNext=clone(hotBase);hotNext.groups[1].selected='direct';beforeRestarts=restartCalls;
+call('configure',{expectedRevision:13,model:hotNext});work();r=call('get',{});
+check(call('job_status',{}).job.status=='succeeded' && restartCalls>beforeRestarts && r.state.appliedRevision==14,'DNS-changing selection retains full validated apply');
+// A power interruption before clearing the same durable marker must boot old.
+files['/etc/alwayroute/previous.json']=sprintf('%J',hotBase);
+files['/etc/alwayroute/applying.json']=sprintf('%J',{previousCurrent:hotBase,previousRevision:13,previousService:{enabled:true},previousRunning:true});
+check(boot() && json(files['/etc/alwayroute/current.json']).revision==13 && filter(json(files['/tmp/alwayroute/runtime.json']).outbounds,o=>o.tag=='Proxy')[0].default==hotTarget && !files['/etc/alwayroute/applying.json'],'interrupted selector transaction boots previous confirmed choice');
 printf('PASS %d manager transaction checks\n',checks);

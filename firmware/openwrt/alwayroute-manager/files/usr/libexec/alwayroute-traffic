@@ -1,0 +1,4 @@
+#!/usr/bin/ucode
+'use strict';
+import { sampleTraffic } from 'alwayroute.traffic';
+sampleTraffic();
