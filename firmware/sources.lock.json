@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "name": "openwrt",
+      "upstream": "https://git.openwrt.org/openwrt/openwrt.git",
+      "version": "25.12.6",
+      "commit": "64900e756efa667774214f9c6b17c113222e01f7",
+      "tree": "9d93e066ab34343839d7da1db96511208ee2c724",
+      "file_count": 10316,
+      "archive": "https://codeload.github.com/openwrt/openwrt/tar.gz/64900e756efa667774214f9c6b17c113222e01f7"
+    },
+    {
+      "name": "luci",
+      "upstream": "https://git.openwrt.org/project/luci.git",
+      "commit": "75a306df84a020c57a631ef5b4c02ace56d93387",
+      "tree": "d12bacdfadb8fa30a671491a6097931ce62c2b4d",
+      "file_count": 5323,
+      "archive": "https://codeload.github.com/openwrt/luci/tar.gz/75a306df84a020c57a631ef5b4c02ace56d93387"
+    },
+    {
+      "name": "packages",
+      "upstream": "https://git.openwrt.org/feed/packages.git",
+      "commit": "093d551675b1119a06ef224d419905e8d6b2af1a",
+      "tree": "e2b32c8b890ae2da63cc3df1ae982e071a95bdc0",
+      "file_count": 4912,
+      "archive": "https://codeload.github.com/openwrt/packages/tar.gz/093d551675b1119a06ef224d419905e8d6b2af1a"
+    },
+    {
+      "name": "sing-box",
+      "upstream": "https://github.com/SagerNet/sing-box",
+      "version": "1.13.21",
+      "file_count": 1017,
+      "tree": "6730e1e5db1958f7f9de65837fb0a31e53ba9aa5",
+      "archive": "https://codeload.github.com/SagerNet/sing-box/tar.gz/v1.13.21"
+    }
+  ]
+}

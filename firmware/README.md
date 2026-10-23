@@ -7,6 +7,8 @@
 
 ## 固定输入
 
+OpenWrt、LuCI、packages feed 和 sing-box 的来源、固定版本与源码树哈希另集中记录在 [sources.lock.json](sources.lock.json)。需要在电脑查看完整上游代码时运行 `python scripts/fetch-sources.py fetch`，下载到被 Git 忽略的 `.local/sources/`；详细入口见[上游源码获取](../docs/upstream-sources.md)。
+
 - OpenWrt `v25.12.6`，提交 `64900e756efa667774214f9c6b17c113222e01f7`。
 - 第一版千兆 4A 目标 `xiaomi_mi-router-4a-gigabit`；用户确认机身标签“千兆版、R4A”，PCI 的 MT7662／MT7603 与该目标对应；未拆机查看 PCB，实际恢复条件仍须在刷机前核对。
 - 使用发布源码中固定到提交的 packages 与 luci feeds；可使用 OpenWrt 官方 GitHub 镜像，提交必须不变。

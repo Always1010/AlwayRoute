@@ -12,6 +12,7 @@
 | 计划 | [并行实施方案](implementation-plan.md) | 已选主线、任务分工、依赖与验收 |
 | 结构 | [仓库文件结构](repository-structure.md) | 目录职责、组件位置、新文件放置与维护规则 |
 | 开发 | [源码与 Rock 构建同步](development-workflow.md) | 电脑仓库保存自有源码，以 rsync 同步到独立 Rock 工作副本 |
+| 源码 | [上游源码获取入口](upstream-sources.md) | 固定版本下载 OpenWrt、LuCI、packages 与 sing-box 到被 Git 忽略的本机目录 |
 | 构建 | [固件构建说明](../firmware/README.md) | 固定输入、包集成、构建保护及镜像检查 |
 | 接口 | [v1 契约](../contracts/v1.md) | 前后端配置模型与 RPC 边界 |
 | 验证 | [测试说明](../tests/README.md) | 测试分区、执行环境、命令与覆盖边界 |

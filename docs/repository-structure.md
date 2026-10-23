@@ -15,6 +15,7 @@ AlwayRoute/
 │   └── fixtures/                      # 合成配置、订阅输入样本
 ├── firmware/
 │   ├── README.md                      # 固定构建输入、集成步骤和限制
+│   ├── sources.lock.json              # 上游来源、版本、下载入口与源码树哈希
 │   ├── openwrt/
 │   │   ├── evaluation.config          # OpenWrt 配置 seed
 │   │   ├── 99-alwayroute-management   # 基础管理入口首启脚本
@@ -25,7 +26,8 @@ AlwayRoute/
 │   │   └── luci-app-alwayroute/        # LuCI 页面、公共模块、样式与菜单
 │   └── tools/                         # 在 Rock 使用的构建监督及镜像检查工具
 ├── scripts/
-│   └── sync-rock.sh                   # 通用源码同步入口，默认 dry-run
+│   ├── sync-rock.sh                   # 通用源码同步入口，默认 dry-run
+│   └── fetch-sources.py               # 按锁定版本获取上游源码到 .local/sources/
 ├── tests/
 │   ├── README.md                      # 测试入口、环境和覆盖范围
 │   ├── manager/                       # 模型、订阅、事务、下载及超时检查
@@ -37,6 +39,7 @@ AlwayRoute/
     ├── requirements.md                # 持续维护的需求与验收标准
     ├── implementation-plan.md         # 当前实施方案
     ├── development-workflow.md        # 电脑源码与 Rock 构建工作流
+    ├── upstream-sources.md            # 上游下载入口、阅读位置与本地源码维护
     ├── devices/                       # 持续维护的设备与网络记录
     ├── proposals/                     # 可行性分析、候选方案与历史提案
     └── reports/                       # 按日期归档的执行、构建和验证报告

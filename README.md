@@ -27,6 +27,7 @@
 - [项目需求](docs/requirements.md)与[当前实施方案](docs/implementation-plan.md)：范围、依赖和验收标准。
 - [仓库文件结构](docs/repository-structure.md)：目录职责、源码位置、新文件放置及维护规则。
 - [源码与 Rock 构建同步](docs/development-workflow.md)及[固件说明](firmware/README.md)：源码主本、同步、构建输入和缓存约定。
+- [上游源码获取入口](docs/upstream-sources.md)：按当前固件的固定版本下载 OpenWrt、LuCI、packages 与 sing-box，在本机查看但不纳入 Git。
 - [v1 接口契约](contracts/v1.md)与[测试说明](tests/README.md)：前后端边界、验证命令和执行环境。
 - [设备记录](docs/devices/xiaomi-4a.md)及[验证报告导航](docs/README.md)：当前设备状态和历史证据。
 
@@ -40,7 +41,7 @@
 | `scripts/` | 源码同步等跨组件开发工作流 |
 | `docs/` | 文档导航、需求、计划、开发约定、设备记录、提案和报告 |
 
-源码保存在电脑仓库，通过 rsync 同步到 Rock 的独立工作副本；第三方源码、工具链和构建缓存留在 Rock。本机 `.local/`、`artifacts/` 和 `session-log.md` 由 Git 忽略，其用途及完整目录树见[仓库文件结构](docs/repository-structure.md)。
+自有源码保存在电脑仓库，通过 rsync 同步到 Rock 的独立工作副本。第三方源码可用 `python scripts/fetch-sources.py fetch` 按锁定版本获取到本机 `.local/sources/`，方便直接浏览和编辑，不重复纳入 Git；Rock 继续保留构建树、工具链和缓存。本机 `.local/`、`artifacts/` 和 `session-log.md` 由 Git 忽略，其用途及完整目录树见[仓库文件结构](docs/repository-structure.md)。
 
 ## 当前进度
 
