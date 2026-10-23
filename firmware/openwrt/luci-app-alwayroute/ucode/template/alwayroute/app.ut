@@ -1,0 +1,12 @@
+{%
+// Package/file mtimes may remain fixed at SOURCE_DATE_EPOCH after an upgrade.
+// Give this document fresh LuCI module URLs, including its transitive imports.
+// Scope the override to this view; other LuCI pages retain their cache policy.
+import { readfile } from 'fs';
+
+http.header('Cache-Control', 'no-store');
+include('view', {
+	view: 'alwayroute/app',
+	pkgs_update_time: 'alwayroute-' + trim(readfile('/proc/sys/kernel/random/uuid'))
+});
+%}

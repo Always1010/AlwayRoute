@@ -48,7 +48,7 @@ function harness(call, writable = true) {
   const poll = { add() {}, remove() {} };
   const ui = { showModal(title, children) { ui.modal = { title, children }; }, hideModal() { ui.modal = null; } };
   const view = loadModule(read('view/alwayroute/app.js'), ['view', 'ui', 'poll', 'api', 'model', 'E', 'L', 'window', 'document'],
-    [BaseClass, ui, poll, { call }, model, E, { resource: x => x, hasViewPermission: () => writable }, window, document]);
+    [BaseClass, ui, poll, { call }, model, E, { env: { resource_version: 'test-refresh' }, resource: x => x, hasViewPermission: () => writable }, window, document]);
   view.draft = empty(); view.state = { savedRevision: 0, appliedRevision: null, healthy: 'unverified' };
   view.revision = 0; view.capabilities = {}; view.checks = {}; view.logs = []; view.tab = 'overview'; view.root = E('div');
   return { view, document, ui, window };
@@ -70,6 +70,14 @@ function fieldInput(fields, label) {
   const field = find({ children: fields }, n => n.attrs && n.attrs.class === 'cbi-value ar-field' && text(n.children[0]) === label);
   return find(field, n => ['input', 'select', 'textarea'].includes(n.tag));
 }
+
+test('rendered styles share the current LuCI document resource version', () => {
+  const { view, window } = harness(async () => ({ ok: true }));
+  window.setTimeout = () => {}; // This check does not start background RPCs.
+  const page = view.render([{ model: empty(), state: {} }, {}]);
+  const stylesheet = find(page, n => n.tag === 'link' && n.attrs.rel === 'stylesheet');
+  assert.equal(stylesheet.attrs.href, 'alwayroute/style.css?v=test-refresh');
+});
 
 test('effective subscription overrides remain separate from source nodes', () => {
   const m = empty(); m.nodes.push(node('s1', 'sub'));

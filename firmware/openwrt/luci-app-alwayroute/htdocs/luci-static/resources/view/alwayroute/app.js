@@ -67,7 +67,7 @@ return view.extend({
 			if (data[0].checkJob) { self.observeCheck(data[0].checkJob); return; }
 			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(true); }
 		}, 0);
-		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') }), this.root]);
+		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') + '?v=' + encodeURIComponent(L.env.resource_version) }), this.root]);
 	},
 
 	button: function(label, icon, action, options) {

@@ -54,7 +54,7 @@
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   });
-  var L = { resource: function() { return 'data:text/css,'; }, hasViewPermission: function() { return true; } };
+  var L = { env: { resource_version: 'offline-preview' }, resource: function() { return 'data:text/css,'; }, hasViewPermission: function() { return true; } };
   class View extends BaseClass {
     __init__() {
       this.ready = Promise.resolve().then(this.load.bind(this)).then(this.render.bind(this)).then(function(nodes) {
