@@ -1,5 +1,7 @@
 # 4A 完整功能加密优化与刷机记录
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位，示例命令不是当前操作入口。
+
 2026-10-23，Asia/Shanghai。用户批准在不删功能的前提下继续优化、构建并刷入小米 4A 千兆版。本轮已完成候选比较、设备加密测试、完整镜像检查、保留配置刷写及刷后网络检查。
 
 最终 Flash 核心在受控局域网透明代理测试中，4 并发连续 60 秒平均达到 **VMess TCP 173.08 Mbps、VMess WS/TLS 160.88 Mbps**。尚未达到 200 Mbps；这些是设备受控转发能力，不是互联网宽带或实际订阅节点测速。
@@ -88,9 +90,9 @@ Rock 与路由器通过 1000 Mbps 全双工有线 LAN 连接；受控 VMess 服�
 
 ```sh
 python3 firmware/tools/build-core.py --crypto-inline \
-  --pgo /srv/alwayroute/artifacts/alwayroute-bottleneck-20261023/mixed-cpu.pprof \
+  --pgo <task-root>/artifacts/alwayroute-bottleneck-20261023/mixed-cpu.pprof \
   --experimental-crypto mipsle-asm-r2 \
-  --output /srv/alwayroute/artifacts/alwayroute-crypto-20261023/sing-box-r2-repro-mipsle
+  --output <task-root>/artifacts/alwayroute-crypto-20261023/sing-box-r2-repro-mipsle
 ```
 
 - 核心 SHA-256：`0c8f208383bf790a89e03be83f9b953ebe490cad64c403d4e58087f6c36722b2`。
@@ -106,7 +108,7 @@ python3 firmware/tools/build-core.py --crypto-inline \
 - 历史 32 位候选：模块版/vendor 版 Poly1305 各 11 个通过、1 个默认 stress 跳过，AEAD 各 5 个通过；候选没有部署。
 - 10 项针对依赖与篡改的来源验证通过；正式镜像 277 项检查全部通过，143 个软件包的既有版本、完整核心入口、自有载荷与内核约束保留。
 - 设备 `sysupgrade -T` 通过；保留配置升级前，将 37 文件备份保存到 Rock 私有目录。12 项关键配置哈希刷后和所有测试结束后均一致。
-- 首轮自动等待未在时限内确认启动；随后以新 boot ID `<runtime-id>` 和 `/rom/usr/bin/sing-box` 的最终 SHA 确认升级成功。没有因 SSH/ubus 会话断开重复刷机。
+- 首轮自动等待未在时限内确认启动；随后以新 boot ID （具体运行标识省略） 和 `/rom/usr/bin/sing-box` 的最终 SHA 确认升级成功。没有因 SSH/ubus 会话断开重复刷机。
 - 38 个节点、1 个订阅、8 个策略组、319 个 selector 成员引用保留；saved/applied revision 均为 13，lastError 为 null。首启核心与转发自动恢复。
 - 设备接受 VMess、Hysteria2、VLESS Reality/Vision/uTLS、Trojan、Shadowsocks、SOCKS、HTTP、URLTest 合成配置；完整 CLI 和 ip-full 入口检查通过。这是配置/入口检查，不能代替这些协议全部实际流量验收。
 - 刷后真实透明 HTTPS 在证书验证下返回 204，约 309 ms；UDP/TCP DNS 正常，LuCI 登录后页面 200、实际提供的 UI 文件与镜像哈希一致、状态 RPC 正常。
@@ -119,4 +121,4 @@ python3 firmware/tools/build-core.py --crypto-inline \
 
 电脑公开产物位于 Git 忽略目录 `artifacts/crypto-20261023/`：最终镜像、manifest、构建元数据、镜像检查、脱敏性能/密码测试汇总、刷后网络/状态检查及 SHA256SUMS。下载后 10 个产物哈希逐一通过。
 
-Rock 原始测量和构建输入位于 `/srv/alwayroute/artifacts/alwayroute-crypto-20261023/`。该远端工作目录包含测试认证材料和策略标识，不作为整个公开目录分发。设备备份单独保存在 `/srv/alwayroute/backups/crypto-upgrade-20261023/`，没有进入 Git 或电脑公开产物目录。
+Rock 原始测量和构建输入位于 `<task-root>/artifacts/alwayroute-crypto-20261023/`。该远端工作目录包含测试认证材料和策略标识，不作为整个公开目录分发。设备备份单独保存在 `<private-backup>`，没有进入 Git 或电脑公开产物目录。

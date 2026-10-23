@@ -1,11 +1,13 @@
 # AlwayRoute Manager 增量构建记录（2026-10-23）
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位，示例命令不是当前操作入口。
+
 最终镜像已构建并归档，构建线未执行刷机。修正输入提交 `49c8643`，完整增量构建退出 0、耗时 86.977 秒；Manager profile 的 **244 项检查全部通过**。镜像 13,435,470 字节，SHA-256 为 `58780cefc18ef4a8624be9128f6b9ecce4c59e5a20efbba87840332676030135`。用户随后批准保留配置升级，主任务已发起一次 sysupgrade，交接时正等待重启；实际升级恢复结果和最终设备 overlay 空间由主任务另行补充验收。
 
 ## 构建边界与输入
 
-- PC 仓库为自有源码主本；Rock 工作副本为 `/srv/alwayroute/workspaces/AlwayRoute/`。
-- 复用 `/srv/alwayroute/openwrt-build/source`，上游固定提交 `64900e756efa667774214f9c6b17c113222e01f7`（OpenWrt 25.12.6）。不安装软件，不改全局 PATH、网络或服务，不连接路由器、不刷机。
+- PC 仓库为自有源码主本；Rock 工作副本为 `<task-root>/workspaces/AlwayRoute/`。
+- 复用 `<task-root>/openwrt-build/source`，上游固定提交 `64900e756efa667774214f9c6b17c113222e01f7`（OpenWrt 25.12.6）。不安装软件，不改全局 PATH、网络或服务，不连接路由器、不刷机。
 - 保留现有工具链、下载归档、Go 模块/编译缓存；不运行 clean、dirclean、distclean，不启用 ccache，不重编外部 sing-box 核心。
 - 仅将 `alwayroute-forwarding`、`alwayroute-manager`、`luci-app-alwayroute` 三个目录通过逐包 rsync 放入 `source/package/`。每次先看 dry-run；不将整仓库覆盖到 OpenWrt 构建树。
 - 保留原目标、内核配置、512 KiB SquashFS 块、13248 KiB 镜像上限和核心 ELF SHA-256 `f2abdeffaaec58568d7471e44e0fe0d9557eee6a3011ffc2c6f36fcaac396d76`。
@@ -67,7 +69,7 @@ forwarding 依赖 `libc`、`alwayroute-core`、`firewall4`、`jsonfilter`、`ip-
 
 主任务已将该最终镜像外置到 PC，PC SHA-256 与 Rock 一致；传至路由器 `/tmp/alwayroute-manager-final.bin` 后，设备再次核对 SHA-256 一致，`sysupgrade -T` 返回 0、无警告。主任务在用户明确批准后再核对 SHA、预检和 marker，已发起一次保留配置升级，交接时等待重启。构建线仅负责镜像和预检证据归档，未执行刷写；启动后恢复结果由主任务补充。镜像输入保持 `49c8643`，其后文档提交不进入镜像。
 
-归档位置：`build-host:/srv/alwayroute/artifacts/alwayroute-manager-20261023/`。最终镜像文件名为 `openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin`；同目录包含最终签名三包、`SHA256SUMS`、manifest、`resolved.config`、`kernel.config`、`config.buildinfo`、`feeds.buildinfo`、`version.buildinfo`、逐包输入 SHA、`image-inspection.json`、`inspection.log`、`final-build-verification.json`、构建日志及状态。原始基线归档 `/srv/alwayroute/artifacts/alwayroute-eval-20261022/` 保持不变。
+归档位置：`<build-host>:<task-root>/artifacts/alwayroute-manager-20261023/`。最终镜像文件名为 `openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin`；同目录包含最终签名三包、`SHA256SUMS`、manifest、`resolved.config`、`kernel.config`、`config.buildinfo`、`feeds.buildinfo`、`version.buildinfo`、逐包输入 SHA、`image-inspection.json`、`inspection.log`、`final-build-verification.json`、构建日志及状态。原始基线归档 `<task-root>/artifacts/alwayroute-eval-20261022/` 保持不变。
 
 ## 容量解释
 
@@ -88,7 +90,7 @@ forwarding 依赖 `libc`、`alwayroute-core`、`firewall4`、`jsonfilter`、`ip-
 
 用户针对上述最终 SHA 单独批准后，主任务再核对目标 SHA、marker 和 `sysupgrade -T`，执行一次不带 `-n` 的 `sysupgrade /tmp/alwayroute-manager-final.bin`。没有写 Bootloader、Factory 或 ALL。外置配置备份为 9562 字节，包含网络、无线、SSH/Web、shadow、authorized_keys、主机密钥、管理模型/service 和 marker，11 项必需内容核对通过。
 
-升级关闭会话时 SSH 包装返回 246，日志包含 procd/ubus connection failed；不能把该会话退出码作为最终刷写结果。约 124 秒后以原主机密钥重新连接，新 boot ID 为 `<runtime-id>`；`/rom` 内 marker 修正脚本、S95 启动入口与 manager 模块载荷已确认，证明实际运行的是最终镜像。
+升级关闭会话时 SSH 包装返回 246，日志包含 procd/ubus connection failed；不能把该会话退出码作为最终刷写结果。约 124 秒后以原主机密钥重新连接，新 boot ID 为 （具体运行标识省略）；`/rom` 内 marker 修正脚本、S95 启动入口与 manager 模块载荷已确认，证明实际运行的是最终镜像。
 
 - 原 11 项关键配置文件逐一 SHA 与升级前备份一致，双频 AP 自动启用，SSID 保持不变，root 登录及认证后 LuCI 页面返回 200。
 - current/lastgood 为 revision 6，38 个节点、1 个订阅、无测试规则；saved/applied 均为 6，核心、selector 与透明转发自动恢复，没有重新保存或手动启动服务。

@@ -5,7 +5,10 @@
 | 目录／入口 | 检查内容 | 执行环境 |
 | --- | --- | --- |
 | `ui/ui.test.cjs` | LuCI 模块契约、前端模型、API 和页面逻辑 | 已有 Node，可在电脑运行 |
-| `firmware/test-supervisor.py`、`firmware/test_crypto_provenance.py` | 构建监督、实验密码输入来源及镜像元数据保护 | 已有 Python；按测试所需 POSIX 环境选择 Rock |
+| `firmware/test-supervisor.py` | 使用临时环境配置验证构建监督，不再靠源码替换固定路径 | 已有Python与所需POSIX环境，适合Rock |
+| `firmware/test_package_sync.py` | 用替身验证包快照同步、目标边界及多余文件拒绝 | 已有Python，不构建或访问设备 |
+| `firmware/test_crypto_provenance.py` | 显式候选／标准核心的密码输入来源和镜像元数据保护 | 已有Python，按输入及构建环境选择Rock |
+| `tools/test_context.py`、`tools/test_sync_source.py`、`tools/test_device_tools.py`、`tools/test_public_audit.py` | 环境／同步／暂存入口与公开材料审计的隔离检查 | 已有Python；具体平台边界见测试 |
 | `ui/build-preview.cjs`、`ui/preview-runtime.js` | 用生产页面生成带合成 RPC 的离线预览 | Node 生成；浏览器人工检查 |
 | `manager/run-tests.py` | 组合并执行模型、订阅、内存事务及下载脚本测试 | Python 与已有 ucode（含 fs／digest 模块） |
 | `manager/run.uc` | 通过真实模块导入检查模型与订阅 | 匹配的 ucode 与模块搜索路径 |
@@ -57,3 +60,21 @@ python3 tests/integration/management-defaults-test.py
 共享合成样本位于 [contracts/fixtures](../contracts/fixtures/)。新增测试跟随所属组件放置，不把模拟器装进固件，也不在样本或测试输出中记录真实凭证。
 
 固件实验中编译进上游 Go 包的差分测试单独位于 [firmware/tests/crypto-assembly](../firmware/tests/crypto-assembly/README.md) 和 [firmware/tests/poly1305-32bit](../firmware/tests/poly1305-32bit/README.md)，由对应 overlay 工具读取，不属于 `tests/firmware/` 的主机工具检查；实验默认关闭，执行边界以各实验说明为准。
+
+## 工作流和密码来源检查
+
+```sh
+# 构建监督使用自己的临时环境，不连接设备
+python3 tests/firmware/test-supervisor.py
+# 必须明确提供候选及标准核心；路径从所选build环境理解
+python3 tests/firmware/test_crypto_provenance.py --env /path/to/environment.json --candidate /path/to/candidate-core --standard /path/to/standard-core
+# 使用临时目录／替身检查工作流，不代表真实PC直连或Rock构建已经通过
+python3 -m unittest discover -s tests/tools -p 'test_*.py'
+python3 tests/tools/test_public_audit.py
+```
+
+`test_crypto_provenance.py`的`--candidate`和`--standard`是必填输入，不使用文档中的占位符执行。环境字段与作用见[环境说明](../docs/operations/environments.md)，密码实验差分测试仍在`firmware/tests/`，不与主机工具检查合并。
+
+设备入口`python scripts/device.py --env PATH status`只读查询；`stage FILE`默认只预览，显式`--apply`才暂存并核验哈希，均不刷机、不安装包、不应用配置。`python scripts/measure-https.py --env PATH --url https://example.com/`默认预览，`--apply`发起有限HTTPS请求，不修改路由。真实测试地址选择和授权按具体场景核对，不能使用含凭证URL。
+
+HTTPS测量可以绑定traffic角色的源接口／地址，但绑定成功不能证明经过某个网关、WAN或代理出口；必须结合路由与设备证据解释路径。隔离测试、工具成功和一次SSH登录都不能记作PC直连、物理断开Rock或长期负载验收。

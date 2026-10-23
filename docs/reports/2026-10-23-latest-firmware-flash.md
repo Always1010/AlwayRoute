@@ -1,5 +1,7 @@
 # 最新管理功能整机集成与保留配置刷写
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位，示例命令不是当前操作入口。
+
 2026-10-23，Asia/Shanghai。本轮接续[200M 可行性与实验清理](2026-10-23-200m-feasibility.md)及[节点／订阅检测实施](2026-10-23-node-check.md)。用户明确要求将当前最新版本刷入 4A；已重新打包并完成保留配置刷写和刷后检查。
 
 ## 版本关系
@@ -33,7 +35,7 @@
 - 新镜像复制到路由器 RAM 后 SHA-256 一致，`sysupgrade -T` 返回 0。
 - 实际只发送了一次保留配置 `sysupgrade`，未使用 `-n` 清空配置或强制忽略镜像检查。
 
-刷写关闭会话时，SSH 返回 246，输出包含 `ubus ... Connection failed`；随后设备短暂拒绝连接／超时。没有据此重复刷机。新 boot ID `<runtime-id>` 与旧值不同，并核对了 ROM 文件，确认实际升级成功。首启恢复期间 applied revision 曾尚未就绪，等待后自动收敛到 13，无需手动重新应用配置。
+刷写关闭会话时，SSH 返回 246，输出包含 `ubus ... Connection failed`；随后设备短暂拒绝连接／超时。没有据此重复刷机。新 boot ID （具体运行标识省略） 与旧值不同，并核对了 ROM 文件，确认实际升级成功。首启恢复期间 applied revision 曾尚未就绪，等待后自动收敛到 13，无需手动重新应用配置。
 
 ## 刷后验证
 
@@ -61,4 +63,4 @@
 
 本机 `artifacts/firmware-latest-20261023/` 保存新 sysupgrade 镜像、manifest、镜像检查、源码快照、包差异、构建状态、刷前／刷后与网络检查及 SHA256SUMS，均被 Git 忽略。已核对本机和 Rock 的产物 SHA-256。执行辅助脚本归档到 `.local/experiments/20261023-latest-flash/`，不成为日常构建或自动刷机入口。
 
-Rock 产物位于 `/srv/alwayroute/artifacts/firmware-latest-20261023/`；配置备份与策略快照位于单独的私有目录 `/srv/alwayroute/backups/firmware-latest-20261023/`，未复制到公开产物或 Git。未执行远程 push。
+Rock 产物位于 `<task-root>/artifacts/firmware-latest-20261023/`；配置备份与策略快照位于单独的私有目录 `<private-backup>`，未复制到公开产物或 Git。未执行远程 push。

@@ -1,44 +1,25 @@
 # 文档导航
 
-本目录保存需求、当前计划、开发约定、设备记录，以及按日期归档的调查和执行报告。项目概览与当前进度见[仓库首页](../README.md)，文件放置规则见[仓库文件结构](repository-structure.md)。
+项目概览见[仓库首页](../README.md)，当前部署身份与验收边界只在[当前状态](status.md)汇总。以下按要完成的工作选择入口。
 
-## 阅读入口
+| 目的 | 入口 |
+| --- | --- |
+| 了解范围及剩余工作 | [需求与A1–A9验收](requirements.md)、[实施计划](implementation-plan.md) |
+| 修改自有代码 | [仓库结构](repository-structure.md)、[接口契约](../contracts/v1.md)、[测试入口](../tests/README.md) |
+| 配置开发和联调环境 | [环境说明](operations/environments.md)、[访问与只读检查](operations/access.md) |
+| 同步与构建 | [开发流程](development-workflow.md)、[上游源码获取](upstream-sources.md)、[固件构建](../firmware/README.md) |
+| 选择正式工具与清理临时文件 | [开发工具清单](developer-tools.md) |
+| 准备公开仓库 | [隐私与首次公开](privacy-and-publication.md)、[许可范围](../LICENSE.md)、[第三方声明](../THIRD_PARTY_NOTICES.md) |
+| 维护分流数据 | [规则维护与来源](../config/routing/README.md)、[管理后端](../firmware/openwrt/alwayroute-manager/README.md) |
+| 升级与恢复 | [部署检查边界](operations/deployment.md)、[恢复条件](operations/recovery.md) |
+| 核对硬件与接线 | [4A适配及基本拓扑](devices/xiaomi-4a.md) |
+| 查历史依据与失败 | [执行报告索引](reports/README.md)、[独立运行路线决策](reports/2026-10-22-route-decision.md) |
 
-建议先读需求与实施方案，再查设备现状和验证报告；调查报告与历史提案用于了解判断依据。
+## 文档维护
 
-| 类别 | 文档 | 内容与状态 |
-| --- | --- | --- |
-| 需求 | [项目需求](requirements.md) | 产品范围、功能、配置语义和首版验收标准 |
-| 计划 | [并行实施方案](implementation-plan.md) | 已选主线、任务分工、依赖与验收 |
-| 结构 | [仓库文件结构](repository-structure.md) | 目录职责、组件位置、新文件放置与维护规则 |
-| 开发 | [源码与 Rock 构建同步](development-workflow.md) | 电脑仓库保存自有源码，以 rsync 同步到独立 Rock 工作副本 |
-| 源码 | [上游源码获取入口](upstream-sources.md) | 固定版本下载 OpenWrt、LuCI、packages 与 sing-box 到被 Git 忽略的本机目录 |
-| 构建 | [固件构建说明](../firmware/README.md) | 固定输入、包集成、构建保护及镜像检查 |
-| 接口 | [v1 契约](../contracts/v1.md) | 前后端配置模型与 RPC 边界 |
-| 分流数据 | [分流清单与组合说明](../config/routing/README.md) | TikTok、国内直连、YouTube 补充独立维护，上游来源单独锁定 |
-| 验证 | [测试说明](../tests/README.md) | 测试分区、执行环境、命令与覆盖边界 |
-| 设备 | [小米 4A 设备与网络记录](devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
-| 当前固件与规则 | [正式服务目录、多值规则与整机部署](reports/2026-10-23-native-service-rules.md) | manager r4／网页 r3已写入ROM；15服务原生分流，手工0/512、每条128值，294项镜像检查，revision 23 |
-| 上次整机集成 | [节点检测管理功能整机集成](reports/2026-10-23-latest-firmware-flash.md) | 当时检测功能写入ROM；277项检查与刷后恢复，已由本轮整机更新接续 |
-| 分流配置历史 | [TikTok、国内直连与组 DNS 部署](reports/2026-10-23-domestic-tiktok-routing.md) | 初次接口新增两组和120条规则；本轮已迁入正式服务数据，不再占手工额度 |
-| 最新性能复测 | [Flash 核心、直连与多策略组脱敏简报](reports/2026-10-23-flash-core-retest.md) | 实际 WAN 直连约 199 Mbps；局域网 NAT 718、Other 直连 480、加密代理 156–167 Mbps；含延迟、内存与双向并发 |
-| 性能实验历史 | [200M 可行性、实验撤回与直连测速](reports/2026-10-23-200m-feasibility.md) | 未采用实验清理与稳定性失败；此报告的历史测速由后续 Flash 同条件复测补充 |
-| 最新功能验证 | [单节点与整订阅检测](reports/2026-10-23-node-check.md) | 串行进度及取消，38 节点与持续透明代理实测，两个管理包合计增加约 1.36 KiB |
-| 核心优化与固件历史 | [完整功能加密优化与刷机记录](reports/2026-10-23-crypto-optimization.md) | 当前保留核心的来源与性能；整机镜像已由后续管理功能集成更新 |
-| 性能历史 | [早期性能精简与升级记录](reports/2026-10-23-performance-upgrade.md) | 历史精简已由后续完整功能恢复撤回，不描述当前部署状态 |
-| 首刷历史 | [首刷与基础实机结果](reports/2026-10-23-first-flash-review.md) | OpenWrt 首刷、实际空间、网络及重启 |
-| 集成审查 | [管理扩展核查](reports/2026-10-23-manager-integration-audit.md) | 运行时、权限、配置事务及故障边界 |
-| 扩展构建 | [管理扩展构建记录](reports/2026-10-23-manager-build.md) | 签名包、完整镜像、载荷校验及被拒绝的候选 |
-| 构建历史 | [管理入口、备份与路线验证](reports/2026-10-22-4a-baseline-and-route-validation.md) | 原厂基线、备份、核心测试和基础候选构建 |
-| 验证历史 | [降级、root 与 SSH 管理入口记录](reports/2026-10-22-4a-root-ssh-verification.md) | 前次执行报告；SSH 安全配置、备份及重启状态已由后续报告更新 |
-| 调查 | 本地环境资料 | 离线资源核算、组件缺口和待验证条件；设备状态以最新报告为准 |
-| 历史提案 | 本地环境资料 | 已明确不采纳、未执行，保留原文供对照 |
-
-## 维护规则
-
-- 需求、当前实施方案、开发流程和设备记录在原文件持续维护。
-- 调查与方案评估放入 `proposals/`，执行、构建和验证结果放入 `reports/`；文件使用 `YYYY-MM-DD-主题.md` 命名，并在文首说明日期、状态及关联文档。
-- 同日记录需注明前后关系，不能仅凭文件名排序判断先后。上表保留现有阅读顺序，后续补充报告时同步维护。
-- 需求以需求文档为基线，当前计划以实施方案为准；设备状态优先查看设备记录及最新验证报告，历史报告保留当时的观察和结论。
-- 新增长期维护文档或报告时更新本导航；只有影响项目常用入口或当前进度时，才同时修改仓库首页。
-- 文档链接使用相对路径。文件改名或移动时，检查 README、测试、构建脚本及其他文档中的引用；已同步到 Rock 的旧路径按[开发流程](development-workflow.md)单独核对清理。
+- 需求定义产品范围，状态文件记录完成度，操作文档说明前提和步骤，报告保留当时事实；不要在多个入口复制版本表或部署流水账。
+- 报告使用 `YYYY-MM-DD-主题.md`，文首注明日期、范围、状态和后续关系。相同日期的先后以报告索引和关联链接为准。
+- 报告保留测试条件、失败、候选撤回及覆盖边界。修改错误时明确说明，不能将未执行写成已通过。
+- 真实环境、主机身份、备份索引和私有测量保存在被忽略的 `.local/` 或受控远端；公开材料只含通用角色、必要硬件事实、版本、哈希和脱敏统计。
+- 使用相对链接；路径改动后核对全部引用、脚本和测试。同步默认不删除远端旧文件，迁移后需按开发流程单独审查。
+- 新增长期文档或报告更新本索引或报告索引；仅改变常用入口或产品能力时修改根 README。

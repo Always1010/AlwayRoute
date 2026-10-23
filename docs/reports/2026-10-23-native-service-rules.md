@@ -1,5 +1,7 @@
 # 正式服务目录、多值规则与整机部署
 
+> 本报告是最后记录的ROM部署依据；后续仓库整理未重刷设备。当前验收边界见[状态](../status.md)。私有路径以角色占位。
+
 2026-10-23（Asia/Shanghai）。接续国内／TikTok 分流配置，按用户要求将服务数据纳入正式初始项目：完整 YouTube 规则归入 youtube.json，移除补充文件与按日期组织的当前配置，原生服务不占手工规则额度；实现多值与正则规则，并完成保留配置整机升级。
 
 ## 当前结果
@@ -54,7 +56,7 @@ policyVersion 1升级到2时，仅移除仍启用、单值、类型／域名／�
 | 核心SHA-256 | 0c8f208383bf790a89e03be83f9b953ebe490cad64c403d4e58087f6c36722b2，保持不变 |
 | 镜像检查 | 294项通过，143个包；仅管理后端和网页包版本变化 |
 | ROM／运行常驻文件 | 36／35项与最终镜像逐项一致 |
-| 最终boot ID | <runtime-id> |
+| 最终boot ID | 已变化并核对ROM，具体运行标识省略 |
 | 最终升级保持项 | 13项关键配置哈希、10组选择、revision 23均保持 |
 | overlay | 总1664KiB，已用236KiB，可用1428KiB |
 
@@ -66,6 +68,6 @@ YouTube样例缩略图初次请求发生TLS连接重置；随后两次有界复�
 
 ## 产物与恢复
 
-本机被Git忽略的 `artifacts/native-services-r4-20261023/` 保存最终镜像、检查结果、四包源码绑定、版本变化、刷后快照及SHA256SUMS。Rock对应目录为 `/srv/alwayroute/artifacts/native-services-r4-20261023/`。
+本机被Git忽略的 `artifacts/native-services-r4-20261023/` 保存最终镜像、检查结果、四包源码绑定、版本变化、刷后快照及SHA256SUMS。Rock对应目录为 `<task-root>/artifacts/native-services-r4-20261023/`。
 
-原revision 22／policyVersion 1及37文件配置备份位于Rock `/srv/alwayroute/backups/native-services-final-20261023/`；最终r4刷前revision 23／policyVersion 2备份在同级 `native-services-r4-20261023/`。备份目录0700、文件0600，不复制到公开产物或Git。需要回退到不支持policyVersion 2的旧管理器时，必须配套使用升级前version 1配置备份，不能把新版模型直接交给旧后端。网络与缩略图复核证据保留在Rock私有 `private-probes/native-services-verification-20261023/`。
+原revision 22／policyVersion 1及37文件配置备份位于Rock `<private-backup>`；最终r4刷前revision 23／policyVersion 2备份在同级 `native-services-r4-20261023/`。备份目录0700、文件0600，不复制到公开产物或Git。需要回退到不支持policyVersion 2的旧管理器时，必须配套使用升级前version 1配置备份，不能把新版模型直接交给旧后端。网络与缩略图复核证据保留在Rock私有 `private-probes/native-services-verification-20261023/`。

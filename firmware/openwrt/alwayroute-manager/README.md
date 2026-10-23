@@ -11,7 +11,7 @@ LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重�
 订阅更新 cron。cron 只更新保存配置，管理员须显式应用，避免定时改变现有转发。
 正式服务规则随包安装到 `/usr/share/alwayroute/policies/`，由 `catalog.json` 文件名数组索引，
 每个服务独立 JSON 保存域名后缀与精确域名。该目录不列入 conffiles，随包升级替换；
-来源锁与历史组合只保留在仓库 [config/routing/](../../../config/routing/README.md)。
+规则维护、匹配语义与来源锁统一见仓库 [config/routing/](../../../config/routing/README.md)，不维护第二份预设说明。
 包目录由 OpenWrt `package.mk` 递归追踪，修改服务数据参与增量重建。
 下载默认仅 HTTPS、默认验证证书、20秒总时限、128KiB上限；不使用公共转换服务。
 每个订阅可由管理员显式设置`allowHttp:true`，仅为该来源允许http://输入；
@@ -56,7 +56,7 @@ coreAPI只监听127.0.0.1:9090，混合代理只监听127.0.0.1:7890。
 适配器缺失或失败时不报告应用成功；capabilities明确保持forwarding=unverified。
 
 生成器固定针对 sing-box 1.13.21，支持 VMess TCP/WS、TLS、Rule/Global/Direct、
-按序IPv4/IP-CIDR/域名/后缀规则、reject、Proxy及业务selector单层跟随。
+按序IPv4/IP-CIDR/域名/后缀及正则规则、reject、Proxy及业务selector单层跟随；手工规则最多512条，每条128值，模型仍限128KiB。
 DoH走Proxy，bootstrap用路由器系统DNS；直连域名使用bootstrap。缓存512，DNS IPv4-only。
 IPv6 LAN绕行阻断及IPv4 TCP/UDP TProxy由转发包实施，管理访问豁免亦由其保证。
 
@@ -83,9 +83,6 @@ ucode -L firmware/openwrt/alwayroute-manager/files/usr/share/ucode tests/manager
 即时配置事务另覆盖运行/停止态配置确认、最新current启动、导入/订阅节点候选失败保持原配置、
 current写失败及提交标记清除失败恢复、中断读保护与恢复后继续配置；不会调用真实进程或服务。
 已在现有Rock host ucode执行；三种模式的生成JSON亦通过现有ARM64 sing-box1.13.21真实check。
-用户授权的私有完整Clash订阅亦已通过纯解析，实际得到38个VMess节点；
-样本只留Rock私有目录，仓库仅含合成fixture，未输出URL、节点值或凭证。
+私有Clash订阅已有解析与设备联调证据，仓库仅含合成fixture；URL、节点值、凭证与原始样本不公开。
 
-仍需目标环境验证：rpcd会话ACL、procd异步时序、uclient TLS与实际订阅、重启及断电恢复、
-LAN终端DNS/UDP/IPv6防绕行、实际出口/吞吐/资源。进程存活、API加载确认和单节点延迟
-分别展示；任何一项都不替代LAN终端验收。生产代码没有fixture或mock状态回退。
+当前设备证据与剩余验收统一见[状态](../../../docs/status.md)，包括断电恢复、UDP／IPv6范围与长期资源边界。进程存活、API加载确认和单节点延迟分别展示，任何一项都不替代LAN终端验收。生产代码没有fixture或mock状态回退。

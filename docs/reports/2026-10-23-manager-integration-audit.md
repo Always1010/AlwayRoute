@@ -1,5 +1,7 @@
 # 管理层集成与容量独立核查
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位，示例命令不是当前操作入口。
+
 - 日期：2026-10-23（Asia/Shanghai）。
 - 范围：仓库及 Rock 构建副本只读核查；没有连接路由器、安装依赖、运行构建或修改远端环境。
 - 基线：`docs/requirements.md`、固定 LuCI `75a306df84a020c57a631ef5b4c02ace56d93387`、现有评估镜像 manifest 和源码。
@@ -7,8 +9,8 @@
 
 ## 1. 可复用运行时
 
-Rock 构建根目录：`/srv/alwayroute/openwrt-build/source`。
-镜像及 manifest 归档：`/srv/alwayroute/artifacts/alwayroute-eval-20261022/`。
+Rock 构建根目录：`<task-root>/openwrt-build/source`。
+镜像及 manifest 归档：`<task-root>/artifacts/alwayroute-eval-20261022/`。
 
 | 项目 | manifest／源码实际结果 | 集成含义 |
 | --- | --- | --- |

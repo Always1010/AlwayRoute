@@ -1,19 +1,21 @@
 # 4A 基础候选首刷审查
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位；LAN默认地址仅说明当时首启与网段冲突条件，实际目标从私有环境读取，示例命令不是当前操作入口。
+
 - 状态：用户单独批准后已完成首刷、SSH／基础网络检查及一次持久化重启。
 - 日期：2026-10-23（Asia/Shanghai）。
 - 后端、网页和容量审查与本批准备并行；设备写入仅由主 Agent 操作。
 
 ## 固定文件与当前设备
 
-Rock 归档：`/srv/alwayroute/artifacts/alwayroute-eval-20261022/alwayroute-eval-openwrt-25.12.6-4a-gigabit-20261022.bin`。
+Rock 归档：`<task-root>/artifacts/alwayroute-eval-20261022/alwayroute-eval-openwrt-25.12.6-4a-gigabit-20261022.bin`。
 
 - 文件 13,435,470 字节；SHA-256 `e01237302351dc6de2a3dcf5feb46a5840ec1d2bd9466e215e6feaa82b2198c2`，本次重新读取核验一致。
 - 第一版千兆 4A／R4A；当前原厂 2.28.62、root 密钥 SSH 122 正常；没有因编译发生重启。
 - 实测 OS1 大小 13,631,488 字节，余量 196,018 字节；不写 Bootloader、Config、Bdata、Factory 或 ALL。
 - 外置备份的完整 Flash、10 个分区和原始逻辑归档共 12 项 SHA-256 再次核验全部一致。备份位置见既有验证报告；不得进入公开仓库。
 - 原厂 `boot_wait=on`、`bootdelay=3`、`uart_en=1`；本批不需要再次修改这些变量。
-- Rock 有线仍为 `192.168.31.169/24`、100Mbps；Wi-Fi 保持经路由器 B 上网。本批不改 Rock 地址、默认路由、DNS、系统包或服务。
+- Rock 有线仍为 `<build-management-address>`、100Mbps；Wi-Fi 保持经路由器 B 上网。本批不改 Rock 地址、默认路由、DNS、系统包或服务。
 
 ## 拟执行顺序
 
@@ -37,10 +39,10 @@ Rock 归档：`/srv/alwayroute/artifacts/alwayroute-eval-20261022/alwayroute-eva
 
 ## 待实测
 
-实测结果：OpenWrt 25.12.6／Linux 6.12.112，SSH 122 公钥登录成功，核心 SHA 与原实测一致，版本命令可直接执行、overcommit 仍为 0。WAN DHCP 获取 192.168.1.18，经 B 上网，百度 HTTPS 获取成功。两个无线芯片和驱动已识别，默认无线接入点关闭，尚未完成终端无线验收。
+实测结果：OpenWrt 25.12.6／Linux 6.12.112，SSH 122 公钥登录成功，核心 SHA 与原实测一致，版本命令可直接执行、overcommit 仍为 0。WAN DHCP 获取 <wan-dhcp-address>，经 B 上网，百度 HTTPS 获取成功。两个无线芯片和驱动已识别，默认无线接入点关闭，尚未完成终端无线验收。
 
-首启 `/overlay` 是真实 JFFS2／overlayfs，1728KiB 总量、228KiB 已用、1500KiB 可用；约 1.465MiB，低于 1.5MiB 规划目标。保存测试标记后重启，boot ID 从 `<runtime-id>` 变为 `<runtime-id>`，标记保留、主机密钥一致、SSH 和 HTTPS 正常；当时可写余量为 1496KiB。核心代理负载、完整管理组件容量、无线接入及恢复写回仍待验证。
+首启 `/overlay` 是真实 JFFS2／overlayfs，1728KiB 总量、228KiB 已用、1500KiB 可用；约 1.465MiB，低于 1.5MiB 规划目标。保存测试标记后重启，boot ID变化（具体运行标识省略），标记保留、主机密钥一致、SSH 和 HTTPS 正常；当时可写余量为 1496KiB。核心代理负载、完整管理组件容量、无线接入及恢复写回仍待验证。
 
 新 SSH 主机密钥以保持相同路由与邻居 MAC 的隔离有线连接首次取得，单独保存在 Rock 任务密钥目录；这属于有线首次信任，不是独立带外指纹验证。首刷命令最终日志包含 `Rebooting ...`；SSH 随重启断开返回 255，后续以新系统登录和版本确认写入结果，不以该 SSH 返回码误判失败。
 
-完整私有命令与采样证据在 Rock `/srv/alwayroute/backups/4a-first-flash-20261023/`。当前没有以原始分区预算代替实际可用空间，也没有宣布完整产品达标。
+完整私有命令与采样证据在 Rock `<private-backup>`。当前没有以原始分区预算代替实际可用空间，也没有宣布完整产品达标。

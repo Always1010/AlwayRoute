@@ -1,74 +1,31 @@
-# 4A 固件验证输入
+# 4A固件构建配方
 
-本目录保存可审查的构建配方，不保存固件、节点凭证、SSH 私钥或设备备份。
-当前配方包含基础网络、核心及初版管理扩展；仍在最终镜像和实机恢复验收阶段，不代表负载与吞吐全部达标。
+本目录保存自有包、seed、补丁、构建和只读镜像检查工具，不保存固件、节点／订阅、主机私钥或设备备份。当前部署身份统一见[状态](../docs/status.md)，本文件说明构建输入和流程，不能当作设备刷写授权。
 
-管理扩展由 `alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding` 三个包组成，使用 seed 选入镜像；分别负责配置事务、LuCI 页面和 LAN nft TProxy。真实订阅导入、节点选择应用、透明 HTTPS、阻断与回退已在设备验证，见[管理扩展核查](../docs/reports/2026-10-23-manager-integration-audit.md)和[构建记录](../docs/reports/2026-10-23-manager-build.md)。
+## 固定输入与生产差异
 
-## 固定输入
+上游来源、提交、归档和树哈希在[sources.lock.json](sources.lock.json)：OpenWrt25.12.6、固定LuCI／packages与sing-box1.13.21；现有Go1.27.3用于MIPSLE softfloat、CGO关闭构建。电脑阅读入口见[上游获取](../docs/upstream-sources.md)。目标为第一版千兆4A，硬件边界见[设备适配](../docs/devices/xiaomi-4a.md)。
 
-OpenWrt、LuCI、packages feed 和 sing-box 的来源、固定版本与源码树哈希另集中记录在 [sources.lock.json](sources.lock.json)。需要在电脑查看完整上游代码时运行 `python scripts/fetch-sources.py fetch`，下载到被 Git 忽略的 `.local/sources/`；详细入口见[上游源码获取](../docs/upstream-sources.md)。
+`tools/build-core.py`保留完整上游CLI／注册表及固定tags。默认构建不启用密码overlay；最后部署核心则明确选择`--crypto-inline`、匹配PGO和`--experimental-crypto mipsle-asm-r2`。选项、PGO哈希、补丁、模块及来源校验见[完整功能加密优化](../docs/reports/2026-10-23-crypto-optimization.md)。缺失当时PGO输入时不能承诺逐字节复现，不应以默认构建产物冒充已部署核心。
 
-- OpenWrt `v25.12.6`，提交 `64900e756efa667774214f9c6b17c113222e01f7`。
-- 第一版千兆 4A 目标 `xiaomi_mi-router-4a-gigabit`；用户确认机身标签“千兆版、R4A”，PCI 的 MT7662／MT7603 与该目标对应；未拆机查看 PCB，实际恢复条件仍须在刷机前核对。
-- 使用发布源码中固定到提交的 packages 与 luci feeds；可使用 OpenWrt 官方 GitHub 镜像，提交必须不变。
-- sing-box `1.13.21`、Go `1.27.3`、MIPSLE softfloat、`CGO_ENABLED=0`。
-- tag 为 `with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0`。
-- 本轮体积候选增加 `-gcflags=all=-l`；常规版本和该候选均已在原厂固件完成版本、配置及单条 VMess 连接测试。原厂启动时需要短时调整内存提交检查，参数已恢复；新固件执行与性能仍需验证。
+`003`汇编补丁、对应overlay和差分测试参与该显式后端来源核验；`004`旧32位Poly1305候选是独立、默认关闭实验，不能叠加。详见[汇编测试](tests/crypto-assembly/README.md)和[独立实验](tests/poly1305-32bit/README.md)。后续I/O等稳定性失败候选已撤回，详见[实验清理](../docs/reports/2026-10-23-200m-feasibility.md)。不要重新编号旧补丁，也不能为清理实验目录误删生产所需输入。
 
-## 构建约定
+## 集成步骤
 
-1. 将 `openwrt/alwayroute-core`、`alwayroute-manager`、`alwayroute-forwarding`、`luci-app-alwayroute` 分别放入构建源码对应的 `package/` 目录。
-2. 在构建源码的 `alwayroute-input/` 放置外部编译的 `sing-box`、不含凭证的 `build-info.json` 及对应上游 `LICENSE`。构建前验证 ELF 架构、静态链接及固定哈希。
-3. 用 `openwrt/evaluation.config` 作为 seed，经 `make defconfig` 生成完整配置。先安装该配置需要的 LuCI feed 包及其依赖。
-4. 将 `openwrt/99-alwayroute-management` 放入 `files/etc/uci-defaults/`，权限 0755；只放入已有 SSH **公钥**作为 `files/etc/dropbear/authorized_keys`。镜像不包含主机私钥、节点或订阅。脚本首次成功执行后建立 `/etc/alwayroute/management-initialized`，后续保留配置升级时跳过，避免覆盖 LAN、SSH 和 Web 设置；从旧基础镜像迁移前必须先建立并备份该 marker。
-5. 在固定的 OpenWrt 源码根目录应用[设备镜像限制补丁](openwrt/patches/001-4a-evaluation-image-limit.patch)：`git apply --check` 通过后再 `git apply`。补丁仅将这一设备的 `IMAGE_SIZE` 改为更严格的 `13248k` 上限（12.9375MiB），DTS 的物理分区不变。原厂 OS1 为 13MiB；最终文件及元数据仍需独立核对。
-6. 固定版本、seed、完整 `.config`、差异配置、feeds 提交、包清单、内核配置、构建日志和 SHA-256 一起保留在 Rock 任务目录。
+1. 按[环境配置](../docs/operations/environments.md)选择现有build角色，源码先dry-run同步到独立project_workspace，保持PC主本；OpenWrt构建树不接收整仓库覆盖。
+2. 将`openwrt/alwayroute-core`、`alwayroute-manager`、`alwayroute-forwarding`、`luci-app-alwayroute`逐包集成到现有构建树的`package/`。在构建机使用 `python3 firmware/tools/sync-packages.py --env PATH --package alwayroute-manager luci-app-alwayroute` 先预览，再同参加 `--apply`。工具核对已审阅快照与完整目标哈希集合；多余旧文件须单独审查，不自动删除，不启动构建。管理包负责事务，LuCI负责网页，转发包负责LAN nft TProxy，核心包安装外部已验证ELF。
+3. `alwayroute-input/`放外部核心、不含凭证的`build-info.json`及上游LICENSE；核对架构、静态链接、来源和SHA。核心包的`PKG_FILE_DEPENDS`跟踪三项外部输入，禁止对该ELF二次strip改变已验身份。
+4. 用`openwrt/evaluation.config`作seed，准备对应feed后`make defconfig`，审查完整配置差异。保留固定feeds提交、完整／差异配置、内核配置和包清单。
+5. 按包安装规则放置首启脚本及已有SSH公钥；不放主机私钥、订阅或节点。首启marker使保留配置升级跳过默认LAN／SSH／Web初始化，旧基础镜像迁移先核对并备份marker。
+6. 在固定上游版本先`git apply --check`核对`001-4a-evaluation-image-limit.patch`，它将本设备IMAGE_SIZE限制为13248KiB，不修改物理分区；原厂OS1为13MiB，与OpenWrt固件区分开核算。
+7. 使用已有工具链和缓存定向构建／重打包，运行镜像检查，绑定源码提交、输入哈希、最终镜像及日志。设备暂存／应用另见[部署](../docs/operations/deployment.md)。
 
-自有包、首启脚本、配置 seed 和设备补丁以本机仓库为准，通过受控同步送往 Rock 构建。上游源码、下载缓存、完整构建目录和私有凭证不放入本仓库。
+镜像不含有效节点时不自动提供代理。当前用途保留双频无线、IPv6、LuCI、防火墙、TProxy与ip-full，WAN采用DHCP，未包含PPP／PPPoE。512KiB XZ块来自容量取舍，不能从镜像可刷直接推导RAM或长期负载达标。
 
-本轮使用的[构建监督脚本](tools/run-native-build.py)与[镜像只读检查器](tools/inspect-image.py)也保存在仓库，均限定 Rock 的现有任务目录 `/srv/alwayroute/openwrt-build`。监督脚本保留 `make -j8 V=s`、30GiB 和单次 2 小时保护，并在已有同目录 make 或另一个监督实例活跃时拒绝启动；它不会安装依赖。新运行前须外置保留既有 `native-build.log` 与 `native-build-state.json`。检查器使用同一构建生成的 `fwtool` 和 `unsquashfs` 检查指定镜像，不连接或写入路由器；当前预期固定版本、512KiB XZ 块、既定公钥及核心 SHA。
+## 工具、缓存与检查
 
-全量源码构建是本轮 ARM64 Rock 环境下采用的路径。官方参考镜像已包含 LuCI；具备匹配运行环境时，也可使用官方 ImageBuilder 将预编译软件包和自有核心重新打包。直接刷官方镜像后安装核心会占用可写 overlay，不能复用将核心压入只读 SquashFS 的容量收益；具体是否容纳仍须测量。
+`tools/run-native-build.py`监督同一构建树的并发、单次时限和磁盘；`tools/inspect-image.py`借助同树fwtool与unsquashfs检查元数据、载荷、权限、输入和来源。命令从build执行主机运行，通过`--env PATH`选择环境；具体选项见各入口`--help`。不会安装依赖、连接路由器或自动刷机。
 
-首次构建会编译主机工具、交叉工具链、内核和软件包。保留 Rock 构建树的 `dl/`、`build_dir/`、`staging_dir/` 和现有 Go 缓存，下一轮继续使用同一目录做增量构建；不要例行 `clean`、`dirclean` 或删除缓存。当前未启用 OpenWrt `CONFIG_CCACHE`。自有核心包通过 `PKG_FILE_DEPENDS` 跟踪外部 ELF、`build-info.json` 与 `LICENSE`，更新输入后会重新准备该包；仅改核心时可先执行 `make package/alwayroute-core/compile V=s`，再增量执行整体 `make -j8 V=s` 生成镜像并重新校验。更新上游版本、工具链或目标配置时须重新评估受影响范围，不能承诺完全免编译。
+生产集成应选择manager检查profile及对应显式加密后端，提供匹配基线／输入；默认检查拒绝未声明overlay。构建核心与检查镜像必须采用同一环境、同一来源，不能只修改允许的SHA来绕过来源检查。
 
-## 核心构建记录
-
-在固定的 sing-box `v1.13.21` 源码目录执行以下命令。`TASK` 表示 Rock 的任务根目录 `/srv/alwayroute`；这些变量仅作用于当前构建进程，不使用 `go env -w` 或修改系统 PATH。模块源码仍经过默认 Go 校验机制验证。
-
-```sh
-TASK=/srv/alwayroute
-GOOS=linux GOARCH=mipsle GOMIPS=softfloat CGO_ENABLED=0 \
-GOMAXPROCS=2 GOTOOLCHAIN=local \
-GOCACHE="$TASK/build-cache/gocache" \
-GOMODCACHE="$TASK/build-cache/gomodcache" \
-GOPATH="$TASK/build-cache/gopath" TMPDIR="$TASK/build-cache/tmp" \
-GOPROXY=https://goproxy.cn,direct \
-"$TASK/toolchains/go1.27.3/go/bin/go" build \
-  -p 2 -trimpath -buildvcs=false -gcflags=all=-l \
-  -tags with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0 \
-  -ldflags '-s -w -buildid= -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.13.21-alwayroute-probe' \
-  -o "$TASK/artifacts/sing-box-1.13.21-noinline-mipsle" ./cmd/sing-box
-```
-
-- 源码归档 SHA-256：`c994018d7c2a8fc9fcf6080e4b9cc4f2f915e755342238b77e46fc0806fe96db`。
-- 实测核心为 27,918,491 字节，SHA-256：`f2abdeffaaec58568d7471e44e0fe0d9557eee6a3011ffc2c6f36fcaac396d76`。
-- 核心已由 Go 的 `-s -w` 去除符号；自有包以 `RSTRIP:=:` 禁止 OpenWrt 对这一包二次 strip，确保镜像解出的 ELF 与原厂实测核心逐字节一致。默认 `sstrip -z` 的副本实验会再减少 4,014 字节并改变 SHA，未将该未实测变体放入镜像。
-- 禁用内联可能影响性能；短时单节点连接通过不替代吞吐与并发验收。
-
-## 基础候选行为与限制
-
-以下描述最初的基础镜像。管理扩展镜像会从已保存的 enabled／lastgood 配置恢复核心及转发；空白设备仍不会自带订阅、节点或已启用的代理。当前已配置设备通过保留配置升级维持 Wi-Fi、认证和 LAN Web 入口，不应重跑基础默认值覆盖它们。
-
-- 保留双频无线、IPv6、LuCI 基础管理与 nftables，加入 TProxy 模块和 ip-full。
-- 当前用途是 B → 4A WAN 的 DHCP 上联；省去 PPP／PPPoE 及相应 LuCI 协议界面。
-- 省去内核调试符号和调试信息，不据此承诺最终体积、性能或稳定性。
-- 原生完整系统采用 256KiB SquashFS 块时超出本轮镜像上限，seed 因此改为 512KiB，仅增量重打包；未减少协议、IPv6 或无线功能。较大压缩块的解压内存及随机读取性能尚未在新系统实机验证，完整代理管理 UI 也尚未计入镜像预算。
-- 首次启动 LAN 为 `192.168.31.1`，SSH 122 仅在 LAN 使用已有公钥，不接受密码登录。
-- Web 先只监听本机回环 HTTP。刷入并设置正式认证后，才能按明确配置开放到受控 LAN；当前没有完整代理管理扩展。
-- 核心只随镜像提供，不自动启动、不修改 DNS 或接管终端流量。
-- 不自动沿用原厂 Wi-Fi 配置；OpenWrt 初始无线状态需按实际镜像检查。
-- 本目录没有刷写脚本。实际刷入前必须检查最终镜像、备份、恢复方法、首次访问路径和具体授权。
-
-证据及当前结果见[验证报告](../docs/reports/2026-10-22-4a-baseline-and-route-validation.md)。
+保留OpenWrt的dl／build_dir／staging_dir与Go缓存，按变更范围增量构建。例：只换核心输入可先构建`package/alwayroute-core/compile`再重打镜像；只改管理包先构建对应包。不要例行clean／dirclean／distclean，不因系统有ccache就声称已启用。每批日志、state和产物分开保存，避免覆盖可用基线。详细约定见[开发流程](../docs/development-workflow.md)。

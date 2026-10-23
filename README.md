@@ -1,63 +1,32 @@
 # AlwayRoute
 
-让连接小米路由器 4A 的设备通过路由器统一使用代理服务，并提供独立的 Web 管理入口，管理节点、订阅、分流规则、运行状态和流量。
+让连接小米路由器 4A 的设备通过路由器统一使用代理服务，并通过 LuCI 网页管理节点、订阅、分流规则、运行状态和实时流量。
 
-## 项目目标
+项目主线是自编 OpenWrt、sing-box 和轻量管理扩展。4A 独立提供管理和转发；电脑仓库保存自有源码、配方和补丁，Rock 5B 负责构建及设备联调。现有 PC → Rock → 4A 操作链路继续使用，PC 直连 4A 作为另一种环境配置支持，实际连通性仍需验证。
 
-- 终端设备正常连接路由器即可按规则使用代理，无需逐台安装客户端或配置代理。
-- 用户可以通过网页添加、编辑、删除和切换代理节点，管理订阅与分流规则。
-- 网页中的配置能够保存、应用到实际转发程序，并在重启后恢复；配置应用失败时能够回退。
-- 优先使用已有硬件，目标是由 4A 独立运行；Rock 5B 暂作部署、检查和备份主机。
+截至 2026-10-23，完整管理包和正式服务规则已集成 ROM，真实 VMess、透明 TCP／DNS、配置回退、保留配置升级和自动恢复已有实机证据。有限时长代理测试约 156–167 Mbps；物理断开 Rock、其他协议完整流量、UDP／IPv6 范围及长期耐久仍待验收。精确版本、测试条件和剩余门槛统一见[当前状态](docs/status.md)。
 
-## 两条实施路径
+## 从这里开始
 
-| 路径 | 方向 | 当前状态 |
-| --- | --- | --- |
-| A：刷入新固件 | 自编 OpenWrt、sing-box 与轻量 LuCI 管理扩展 | 最终集成镜像已升级，配置与代理自动恢复；用户确认 Wi-Fi、管理页面及日常上网正常，负载继续验收 |
-| B：保留小米固件 | 原厂网络功能加核心／管理服务 | 历史备选；保留原厂镜像、备份与兼容性试验记录 |
+- [文档导航](docs/README.md)：使用、开发、构建、设备维护及历史证据。
+- [需求与验收](docs/requirements.md)、[剩余实施计划](docs/implementation-plan.md)：产品范围和未完成工作。
+- [开发流程](docs/development-workflow.md)、[环境配置](docs/operations/environments.md)：PC 源码主本、Rock 增量构建、经 Rock 或直接访问设备。
+- [固件构建](firmware/README.md)、[上游源码获取](docs/upstream-sources.md)：固定输入、自有包、核心及镜像检查。
+- [接口契约](contracts/v1.md)、[测试入口](tests/README.md)：前后端边界与针对性检查。
+- [开发工具](docs/developer-tools.md)、[隐私与首次公开](docs/privacy-and-publication.md)：正式入口、本地历史文件及审查范围。
+- [设备适配与拓扑](docs/devices/xiaomi-4a.md)、[执行报告索引](docs/reports/README.md)：公共设备边界、验证条件和失败记录。
 
-用户已选择自编固件主线。ShellCrash、Mihomo、OpenClash 等前期候选与比较结论保留在历史报告中。
-
-已有配置管理、LuCI 页面和透明转发包源码。实机已完成真实订阅导入 38 个 VMess 节点、选择应用、LAN DNS、透明 HTTPS、故障阻断与恢复、规则阻断及配置回退；最终集成镜像已保留配置升级并自动恢复。2026-10-23 用户确认终端 Wi-Fi、管理页面及日常上网正常，已补充有限时长代理与直连负载测试；物理断开 Rock 和长期耐久仍待验收。Rock 仅承担开发、构建与操作职责。
-
-## 文档入口
-
-完整文档清单与阅读顺序集中在 [docs/README.md](docs/README.md)。常用入口：
-
-- [项目需求](docs/requirements.md)与[当前实施方案](docs/implementation-plan.md)：范围、依赖和验收标准。
-- [仓库文件结构](docs/repository-structure.md)：目录职责、源码位置、新文件放置及维护规则。
-- [源码与 Rock 构建同步](docs/development-workflow.md)及[固件说明](firmware/README.md)：源码主本、同步、构建输入和缓存约定。
-- [上游源码获取入口](docs/upstream-sources.md)：按当前固件的固定版本下载 OpenWrt、LuCI、packages 与 sing-box，在本机查看但不纳入 Git。
-- [v1 接口契约](contracts/v1.md)与[测试说明](tests/README.md)：前后端边界、验证命令和执行环境。
-- [设备记录](docs/devices/xiaomi-4a.md)及[验证报告导航](docs/README.md)：当前设备状态和历史证据。
-
-## 文件组织
+## 仓库内容
 
 | 目录 | 职责 |
 | --- | --- |
-| `firmware/` | OpenWrt 自有包、构建配置、补丁和固件专用工具 |
-| `contracts/` | 管理模型、RPC 契约及合成样本 |
-| `config/` | 非敏感配置数据；[分流清单](config/routing/README.md)按业务拆分，组合与来源分别记录 |
-| `tests/` | 管理后端、界面和集成检查，以及离线预览 |
-| `scripts/` | 源码同步等跨组件开发工作流 |
-| `docs/` | 文档导航、需求、计划、开发约定、设备记录、提案和报告 |
+| `firmware/` | 自有 OpenWrt 包、构建 seed、上游补丁及固件工具 |
+| `contracts/` | 配置模型、RPC 契约及合成样本 |
+| `config/` | 可公开的规则来源锁和环境示例；真实环境保存在被忽略的 `.local/` |
+| `scripts/` | 上游源码获取、环境驱动的同步与设备只读／暂存入口 |
+| `tests/` | 主机、后端、界面、集成检查及离线预览 |
+| `docs/` | 当前状态、需求、工作流程、设备适配与历史证据 |
 
-自有源码保存在电脑仓库，通过 rsync 同步到 Rock 的独立工作副本。第三方源码可用 `python scripts/fetch-sources.py fetch` 按锁定版本获取到本机 `.local/sources/`，方便直接浏览和编辑，不重复纳入 Git；Rock 继续保留构建树、工具链和缓存。本机 `.local/`、`artifacts/` 和 `session-log.md` 由 Git 忽略，其用途及完整目录树见[仓库文件结构](docs/repository-structure.md)。
+完整放置规则见[仓库结构](docs/repository-structure.md)。第三方源码按版本与哈希下载到 `.local/sources/`，不重复纳入 Git；工具链、缓存、固件、备份、真实节点／订阅及密钥不进入仓库。新依赖和本机环境变更须单独获准；仓库整理不代表已经完成设备部署或获得刷机授权。
 
-## 当前进度
-
-截至 2026-10-23（Asia/Shanghai），4A 已运行自编 OpenWrt 25.12.6／Linux 6.12.112，SSH 122、公钥认证、WAN DHCP、HTTPS 上网和一次持久化重启通过。原 Wi-Fi 名称／密码已恢复，LuCI 登录认证已验证并仅向 LAN／回环开放。基础候选首启可写空间为 1500KiB（约 1.465MiB），低于此前 1.5MiB 规划目标；完整组件和更新峰值仍须实测。
-
-三个自有包已实现并集成初版：`alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding`。当前已部署完整功能固件为 13,501,006 字节、143 个软件包，277 项镜像检查通过；最新节点／订阅检测管理包已集成 ROM，已完成保留配置刷写及代理自动恢复。overlay 可用约 1428 KiB，比覆盖安装管理包时增加 104 KiB，仍低于此前 1.5 MiB 可用空间规划值。详情见[最新整机刷写记录](docs/reports/2026-10-23-latest-firmware-flash.md)。WAN 与 Rock 所连 LAN2 已核对为 1000 Mbps 全双工，早期 100 Mbps 链路记录不再描述现状。
-
-单节点与整订阅的连通性／延迟检测已部署，默认串行，显示进度并支持取消，不自动切换节点。38 节点实测期间，同一条透明代理下载连接持续传输了约 35.7 MiB，45 次短 HTTPS 请求全部成功，但 CPU 和延迟有增加；两个管理包合计增加约 1.36 KiB。细节及边界见[节点检测实测报告](docs/reports/2026-10-23-node-check.md)。
-
-随后将分流整理为正式初始项目：15个服务的数据在管理包 policies 目录各有唯一主本，完整YouTube规则统一保存，TikTok与国内服务原生分流；当前10组、手工规则0/512，每条支持128值及正则，保存与应用revision 23。原120条通用规则已迁出手工区，域名与DNS按服务合并为匹配块。manager r4／网页r3已保留配置写入ROM，代理核心不变，overlay可用1428KiB；Other代理、国内直连，TikTok独立节点保留。详见[正式服务与整机部署](docs/reports/2026-10-23-native-service-rules.md)。
-
-最新复测直接使用 Flash 核心，4 并发、180 秒并附加短请求：VMess TCP 167.22 Mbps、WS/TLS 156.43 Mbps，Other 经核心直连 479.94 Mbps，关闭代理的局域网 NAT 回环 718.15 Mbps；后者不是 WAN 口极限。关闭代理后，实际 WAN 公网下载为 198.60 Mbps。四策略组分别走不同节点下载为 163.94 Mbps，双向并发上下行合计 167.57 Mbps。延迟、内存、恢复与覆盖边界见[脱敏性能简报](docs/reports/2026-10-23-flash-core-retest.md)。此前未通过验收的性能实验仍保持撤回，取舍见[实验清理记录](docs/reports/2026-10-23-200m-feasibility.md)。
-
-节点失败时不自动改走直连；核心整体故障时保守阻断公网 TCP/UDP，也会影响公网 direct 规则，LAN 管理仍保留。首版不支持把全部 Clash 功能或无限规则库直接搬入这台 16MB Flash／约 124MB RAM 的设备，实际边界见集成报告。
-
-早期 XMiR-Patcher 中断及取消的验证属于历史记录；前次降级／root 操作另有报告。本轮通过现有密钥登录，没有重复漏洞利用。早期中断不能独自证明 2.28.91 完整利用链失效。
-
-管理密码、订阅凭证、节点密钥和设备完整备份不得提交到仓库。本文与方案文档仅记录需求和规划，不代表授权执行解锁、安装、网络变更或刷机。
+自有工具和文档采用 MIT，其他组件保留既有许可；范围与第三方来源见[许可证说明](LICENSE.md)及[第三方声明](THIRD_PARTY_NOTICES.md)。

@@ -1,76 +1,44 @@
-# 小米 4A 设备信息
+# 小米4A适配与基本拓扑
 
-本文维护 AlwayRoute 使用的小米 4A 路由器信息、访问方式及相关网络状态。实测结果、官方型号规格和待确认事项分别记录，避免将型号资料当作本机实测值。
+本文保存可公开的硬件与适配事实。当前固件身份、完成度和负载结果见[状态](../status.md)，实际访问目标与主机配置由[私有环境文件](../operations/environments.md)提供。
 
-- 最后更新：2026-10-23（Asia/Shanghai）
-- 当前阶段：正式服务目录、多值／正则规则与DNS分流已写入整机ROM；manager r4／网页r3，代理核心保持
-- 当前目标：由 4A 独立提供局域网统一代理和完整 Web 节点／规则管理；Rock 5B 负责开发、构建和检查
-- 变更状态：已获单独批准刷入基础候选，恢复原 Wi-Fi 名称／密码，设置 LuCI 登录认证并开放 LAN 访问；尚未完成完整代理交付验收
-- 关联文档：[项目需求](../requirements.md)、[实施方案](../implementation-plan.md)、[当前部署记录](../reports/2026-10-23-native-service-rules.md)、[核心优化记录](../reports/2026-10-23-crypto-optimization.md)、[最新性能与清理记录](../reports/2026-10-23-200m-feasibility.md)
+## 硬件和系统边界
 
-## 1. 设备身份与当前系统
-
-| 项目 | 记录 | 信息来源 |
-| --- | --- | --- |
-| 设备 | 小米路由器 4A，接口标识与官方千兆版资料一致 | 路由器接口与小米官方规格交叉核对 |
-| 硬件标识 | `R4A` | 本机基础信息接口实测 |
-| 硬件修订证据 | 用户确认机身标签为“千兆版、R4A”，未提供独立 V1／V2 标识；PCI 为 MT7662／MT7603，与 OpenWrt 第一版千兆目标对应；未拆机查看 PCB | 用户确认、本轮 SSH 实测与 OpenWrt 设备定义对照 |
-| 当前系统 | 自编 OpenWrt，Linux `6.12.112` | 2026-10-23 SSH 实测 |
-| 固件版本 | `25.12.6`；原厂历史为 `2.28.91` → `2.28.62` | 当前 SSH／历史报告 |
-| 区域 | `CN` | 本机基础信息接口实测 |
-| 管理地址 | `192.168.31.1` | 实测 |
-| USB／磁盘能力 | 管理页面功能标记为 `usb=0`、`disk=0` | 本机页面源码 |
-
-以下是 R4A 千兆版的公开规格，尚未通过路由器命令行逐项核验：
-
-| 项目 | 官方型号规格 |
+| 项目 | 适配记录 |
 | --- | --- |
-| 处理器 | MediaTek MT7621A |
-| 内存 | 128MB DDR3 |
-| 闪存 | 16MB NOR Flash |
-| 网络接口 | 两个千兆 LAN 口、一个千兆 WAN 口 |
-| 无线网络 | 2.4GHz 与 5GHz 双频 |
+| 型号 | 小米路由器4A千兆版，接口标识R4A |
+| 修订核对 | 机身标签为千兆版／R4A；PCI无线为MT7662／MT7603，与第一版千兆OpenWrt目标对应；未拆机确认PCB |
+| 目标 | `xiaomi_mi-router-4a-gigabit`，不能把V2或其他4A镜像直接替换使用 |
+| 公开规格 | MT7621A，128MB DDR3，16MB NOR，2个千兆LAN、1个千兆WAN，双频无线，无USB |
+| 原厂实测 | Linux3.10.14、16MiB Flash、Linux可见内存124,160KiB |
+| 系统演进 | MiWiFi2.28.91→2.28.62→自编OpenWrt；具体执行见历史报告 |
+| 首刷边界 | 原厂OS1为13MiB；构建限制13248KiB。它与OpenWrt固件区容量不可混算 |
+| 管理约定 | 项目首启脚本使用非默认LAN地址、LAN内SSH122、公钥认证；Web开放前需配置认证 |
 
-原厂阶段确认 Linux 3.10.14、16MiB Flash、Linux 可见内存 124,160KiB；PCI 无线芯片为 MT7662／MT7603。当前 OpenWrt 的分区、实际空间与重启结果见[首刷报告](../reports/2026-10-23-first-flash-review.md)，原厂分区资料见[历史基线](../reports/2026-10-22-4a-baseline-and-route-validation.md)。
+物理恢复写回未实测；字符串、分区备份和一次重启都不能证明恢复演练已通过。设备身份、分区及首刷证据见[原厂基线](../reports/2026-10-22-4a-baseline-and-route-validation.md)与[首刷](../reports/2026-10-23-first-flash-review.md)。
 
-## 本地环境资料
+## 基本拓扑
 
-实际环境资料保存在被 Git 忽略的 `.local/lab/`，不属于项目默认配置。
+```mermaid
+flowchart TD
+    NET[互联网] --> UP[上游路由器]
+    UP -->|LAN至4A WAN| ROUTER[4A：管理与转发]
+    ROUTER -->|LAN或Wi-Fi| CLIENT[终端]
+    UP --> PC[PC：源码主本]
+    UP --> ROCK[Rock：构建与操作]
+    PC -.->|现有SSH链路| ROCK
+    ROCK -.->|有线管理网| ROUTER
+    PC -.->|可选直接SSH，待实测| ROUTER
+```
 
-## 本地环境资料
+Rock有线用于管理4A，默认上网与DNS走上游；4A的LAN管理网和上游网须分离。PC直连4A时也需核对虚拟网卡、无线、有线是否存在重叠网段；不能为了直接管理擅自修改PC默认路由或DNS。
 
-实际环境资料保存在被 Git 忽略的 `.local/lab/`，不属于项目默认配置。
+最新记录中4A WAN与Rock所连LAN口均为1000Mbps全双工，这只是物理链路。Rock不承担生产代理或网页服务；物理断开Rock的完整验收尚待完成。
 
-## 本地环境资料
+## 访问和维护
 
-实际环境资料保存在被 Git 忽略的 `.local/lab/`，不属于项目默认配置。
+使用[环境与访问说明](../operations/access.md)选择经Rock或PC直接管理；SSH别名、地址、指纹文件、私钥路径、SSID和备份位置仅存私有资料。新增环境不自动修改SSH配置、已信任主机或网络设置。
 
-## 5. 后续操作前的关键未确认事项
+保留配置升级前核对持久marker、认证和外置备份，不能重跑首启默认值覆盖已配置LAN／SSH／Web。部署与恢复前提分别见[部署](../operations/deployment.md)和[恢复](../operations/recovery.md)。
 
-- 用户已确认机身标签“千兆版、R4A”；结合芯片组合及分区证据支持第一版千兆目标，未查看 PCB 标记。
-- 当前自编 OpenWrt 完整镜像已验证启动恢复；真实 VMess、透明 TCP／DNS、管理事务及有限时长负载已有实测，其他协议的完整流量、UDP 和长期负载仍需验证。原厂实验保留在历史报告。
-- 已有在线备份，但实际恢复写回、TFTP 行为及所需物理配合未验证。
-- 4A 的人工物理接线核对；实际 LAN→WAN 直连下载和链路协商已验证，DHCP 地址不能当作永久地址。
-- 电脑侧已确认 VMess，其他保存配置包含 Hysteria2、VLESS Reality／Vision、Trojan 和 SS；这些协议在 4A 上的参数兼容性及订阅导入尚未验证，无需在本文件保存凭证。
-- Rock 到 4A LAN2 及 4A WAN 当前均为 1000 Mbps 全双工。完整代理尚未证明稳定突破 200 Mbps；关闭代理后受控 LAN NAT 回环测得 638.30 Mbps，实际 WAN 公网下载最高 185.96 Mbps。两者测试路径不同，详见最新报告。
-
-公开发布物的资源核算见本地环境资料；这些数据不属于 4A 实机测量，也不改变本文设备状态。
-
-地址规划必须提前处理：B 已使用 `192.168.1.1/24`，而 OpenWrt 常见初始 LAN 地址也是 `192.168.1.1`。首次启动或恢复阶段，不应未经隔离设计就让 Rock 的有线口与 Wi-Fi 同时连接两个重叠的 `192.168.1.0/24` 网络。电脑还存在使用 `192.168.1.1` 的 VMware 虚拟接口，当前访问 Rock 的实测路径正常，但后续网络变化仍需核对。
-
-## 6. 维护规则
-
-- 设备型号、地址、固件、SSH 状态或接线变化后，更新对应条目和最后检查日期。
-- 将实测结果、官方规格、用户提供的信息与待确认事项分别标明。
-- 对超时、拒绝连接和认证失败分别记录，不互相替代。
-- 不将“项目支持某型号”写成“已验证本机当前固件适配”。
-- 变更前保留必要备份，完成后记录实际修改范围及验证结果。
-- 不保存管理密码、SSH 私钥、登录令牌、订阅 URL、节点密钥或完整配置备份。
-
-## 7. 参考来源
-
-- [小米 4A 千兆版官方规格与系统说明](https://www.mi.com/in/product/mi-router-4a-gigabit-edition/specs/)
-- [OpenWrt 4A 千兆版设备资料](https://openwrt.org/toh/hwdata/xiaomi/xiaomi_mi_router_4a_gbit)
-- [OpenWrt 默认网络与 LAN/WAN 网段说明](https://openwrt.org/docs/guide-user/network/openwrt_as_routerdevice)
-
-本机状态以实际检查记录为准，公开资料仅用于交叉核对。
+公开规格参考：[小米官方规格](https://www.mi.com/in/product/mi-router-4a-gigabit-edition/specs/)、[OpenWrt设备资料](https://openwrt.org/toh/hwdata/xiaomi/xiaomi_mi_router_4a_gbit)。这些链接是型号参考，不能替代本机修订和镜像核验。

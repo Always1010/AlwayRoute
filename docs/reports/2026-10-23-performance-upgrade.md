@@ -1,5 +1,7 @@
 # 性能精简与保留配置升级记录
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位，示例命令不是当前操作入口。
+
 2026-10-23（Asia/Shanghai），按用户要求检查代码、降低代理与管理开销、减少 Flash 占用，并打包刷入现有小米 4A 千兆版。已完成构建、保留配置 sysupgrade、重连与功能检查。没有安装本机软件、改全局环境或推送 Git。
 
 ## 实施内容
@@ -90,7 +92,7 @@ OpenWrt 继续复用已有构建树、工具链、下载和缓存；先审查项
 
 执行一次保留配置的 `sysupgrade /tmp/alwayroute-perf/upgrade.bin`，未使用 `-n`。SSH 退出 246 且日志包含会话关闭时的 ubus connection failed；后续以新启动 ID 和 `/rom` 核心 SHA 确认升级成功，而非按 SSH 退出码猜测。
 
-- 新 boot ID：`<runtime-id>`，与升级前不同；SSH 主机密钥一致。
+- 新 boot ID：（具体运行标识省略），与升级前不同；SSH 主机密钥一致。
 - 网络、无线、SSH/Web、shadow、公钥、管理 marker、current/lastgood/service 及主机密钥共 12 项关键文件在升级后、主动应用前逐一 SHA 一致。
 - 首启从 lastgood revision 6 自动恢复；随后应用已有的 saved revision 13，当前 saved/applied 均为 13、lastError 为 null。保留 38 节点、1 订阅及用户选择，旧固定服务组按已批准 UI 方案迁移为 8 个策略组。
 - 双频无线均 up，两个接口；WAN up 且有 IPv4 地址。已验证认证后的 LuCI 页面 200、HTTP 实际提供的 UI JS 与镜像哈希一致、认证状态 RPC 成功。
@@ -109,4 +111,4 @@ OpenWrt 继续复用已有构建树、工具链、下载和缓存；先审查项
 - 245 项最终镜像检查通过；全部自有载荷逐文件核对，内核 payload 不变，文本可执行入口 LF/shebang 正常。
 - 新增核心及镜像工具语法、参数约束、固定源核查和实际候选构建均已执行。
 
-Rock 公开产物及测量：`/srv/alwayroute/artifacts/alwayroute-perf-20261023/`。私有配置备份独立位于 `/srv/alwayroute/backups/perf-upgrade-20261023/`。电脑镜像、SHA、检查和脱敏测量位于被 Git 忽略的 `artifacts/performance-20261023/`。测试临时程序没有随固件安装。
+Rock 公开产物及测量：`<task-root>/artifacts/alwayroute-perf-20261023/`。私有配置备份独立位于 `<private-backup>`。电脑镜像、SHA、检查和脱敏测量位于被 Git 忽略的 `artifacts/performance-20261023/`。测试临时程序没有随固件安装。

@@ -1,5 +1,7 @@
 # TikTok、国内直连与策略组 DNS 分流部署记录
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位，示例命令不是当前操作入口。
+
 2026-10-23（Asia/Shanghai）。本轮在最新整机刷写和性能复测之后，按用户要求通过后端接口新增 TikTok、国内直连两个组，Other 保持代理，并修复策略组直连时的 DNS 选择。未重新编译或替换 sing-box、未刷机、未重启设备、未安装本机软件或修改本机环境，也未推送 Git。源码修改仅覆盖管理后端 `model.uc`，以文件覆盖形式部署到设备 overlay。
 
 ## 配置结果
@@ -75,10 +77,10 @@ DNS 服务器选择由实际运行配置核对，并完成真实 LAN DNS 查询�
 ## 保持项、空间与回退
 
 - sing-box SHA-256 保持 `0c8f208383bf790a89e03be83f9b953ebe490cad64c403d4e58087f6c36722b2`。
-- 设备 boot ID 保持 `<runtime-id>`。
+- 设备 boot ID 保持 （具体运行标识省略）。
 - network、dhcp、wireless、dropbear、uhttpd 配置哈希均与本轮操作前相同。
 - 部署的 model.uc SHA-256 为 `5325103dd53cc1dd8bee1ccf0016cd980d24b8573479ef8a2e6f0304dff0925f`，与本机仓库源文件相同。
 - overlay 可用空间从本轮操作前 1412 KiB 变为 1372 KiB。当前 ROM 内仍是上次刷写版本，此次 DNS 修复由 overlay 覆盖；包版本元数据未因直接文件部署而更新。
-- 私有备份与验证证据位于 Rock 的 `/srv/alwayroute/private-probes/routing-20261023-applied/`。其中含真实配置，不回传仓库。首次失败尝试的备份单独保留在同级 `routing-20261023/`。
+- 私有备份与验证证据位于 Rock 的 `<private-verification>`。其中含真实配置，不回传仓库。首次失败尝试的备份单独保留在同级 `routing-20261023/`。
 
 回退时先核对当前 revision 与后台任务状态，恢复备份中的 before-model.uc，再把 before-model.json 的模型 revision 更新为当前 revision，通过 configure 提交完整旧模型并等待成功；不得直接把旧 revision 文件覆盖到 current。配置事务失败仍使用已有 lastgood 恢复机制。设备临时候选文件清理，私有备份保留。

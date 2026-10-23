@@ -1,5 +1,7 @@
 # 4A 管理入口、备份与两条路线验证
 
+> 历史执行快照：日期和结论限于本轮；当前部署见[状态](../status.md)，先后关系见[报告索引](README.md)。私有路径以角色占位；LAN默认地址仅说明当时首启与网段冲突条件，实际目标从私有环境读取，示例命令不是当前操作入口。
+
 - 日期：2026-10-22（Asia/Shanghai）。
 - 本轮直接验证：通过 Rock 5B 登录 4A、完成在线备份、收紧 SSH、修改默认 root 密码，并重启验证。
 - 前次降级及权限获取过程来自[前次报告](2026-10-22-4a-root-ssh-verification.md)，本轮没有重复降级或漏洞利用。
@@ -24,13 +26,13 @@
 
 Rock 上的访问文件：
 
-- SSH 私钥沿用 `/srv/alwayroute/keys/4a_ed25519`。
-- 本轮新增专用主机指纹文件 `/srv/alwayroute/keys/4a_known_hosts`；首次通过直连管理网段建立信任，后续严格核验；没有独立带外核验主机指纹。
-- 恢复口令保存于 `/srv/alwayroute/keys/4a-root-recovery-password.txt`，权限 0600。SSH 不接受该口令登录。
+- SSH 私钥沿用 `<private-key-or-trust-file>`。
+- 本轮新增专用主机指纹文件 `<private-key-or-trust-file>`；首次通过直连管理网段建立信任，后续严格核验；没有独立带外核验主机指纹。
+- 恢复口令保存于 `<private-key-or-trust-file>`，权限 0600。SSH 不接受该口令登录。
 
 ## 2. 分区及配置备份
 
-Rock 目录：`/srv/alwayroute/backups/4a-baseline-20261022T133657Z/`。
+Rock 目录：`<private-backup>`。
 
 - `mtd00-ALL.bin` 为 16,777,216 字节整片 Flash 读取。
 - 分别保存 mtd1–mtd10 的 Bootloader、Config、Bdata、Factory、crash、cfg_bak、overlay、OS1、rootfs、disk。
@@ -67,7 +69,7 @@ Rock 目录：`/srv/alwayroute/backups/4a-baseline-20261022T133657Z/`。
 - 设备操作由单一 Agent 串行执行，没有并发 Agent 写入路由器；后续固件构建由专属子 Agent 接管，源码同步使用独立远端目录。
 - 电脑经用户明确许可仅新增项目私有 rsync 及两项运行库，没有修改全局软件安装、PATH、配置或网络；更新了项目文件，并使用现有代理下载公开构建源码到被 Git 忽略的 `.local/openwrt-downloads/`，校验后经既有 SSH 送入 Rock 构建缓存。
 - Rock 没有修改系统网络、服务或系统 PATH；apt 仅按下述单独授权新增 5 个包。
-- 用户已单独批准并安装官方 Go 1.27.3 ARM64 工具链，安装在 `/srv/alwayroute/toolchains/go1.27.3/go/`；下载包 67,076,044 字节，SHA-256 为 `a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49`。模块及缓存均在任务目录。
+- 用户已单独批准并安装官方 Go 1.27.3 ARM64 工具链，安装在 `<task-root>/toolchains/go1.27.3/go/`；下载包 67,076,044 字节，SHA-256 为 `a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49`。模块及缓存均在任务目录。
 - 默认 Go 模块代理在本机连接超时，改为构建进程专用的 `GOPROXY=https://goproxy.cn,direct`，保留默认 sum.golang.org 校验，没有修改全局 Go 配置或关闭校验。
 - 用户进一步明确批准在 Rock 新增 bison、flex、gettext、libncurses-dev、libelf-dev 五项系统构建依赖及最多约 30GB 的任务构建目录。实际新增恰为这 5 项，0 升级、0 删除，下载约 2,334kB、新增磁盘约 9,911kB；没有重启服务。bison 注册了系统 yacc 工具选择器。没有 apt autoremove 或 apt upgrade。
 - 路由器除 SSH／密码变更和一次重启外，还进行了以下短期核心试验。未刷 OpenWrt、未修改代理防火墙规则、未配置代理自启。
@@ -148,7 +150,7 @@ OpenWrt `sing-box-tiny 1.13.21-r1` 包从官方 HTTPS 获取，SHA-256 与前次
 ## 8. 原生镜像构建与离线产物
 
 - Rock 为 ARM64，官方该目标的 ImageBuilder／SDK 为 x86_64；电脑没有可复用的 WSL 发行版，本轮未安装 WSL 或虚拟化环境。
-- 已在 `/srv/alwayroute/openwrt-build/source` 获取 OpenWrt v25.12.6，固定提交 `64900e756efa667774214f9c6b17c113222e01f7`。
+- 已在 `<task-root>/openwrt-build/source` 获取 OpenWrt v25.12.6，固定提交 `64900e756efa667774214f9c6b17c113222e01f7`。
 - packages feed 固定 `093d551675b1119a06ef224d419905e8d6b2af1a`，luci 固定 `75a306df84a020c57a631ef5b4c02ace56d93387`；原站连接缓慢后换用 OpenWrt 官方 GitHub 镜像，提交逐一验证一致。
 - 已通过构建前置检查、非交互 defconfig，141 个软件包选中；仅选择第一版千兆 4A 目标，双频无线驱动、IPv6、TProxy、ip-full 和 LuCI 基础管理均在配置中。
 - 按当前 DHCP 上联用途省去 PPP／PPPoE；关闭内核调试符号与调试信息，功能影响已写入配方。
@@ -164,7 +166,7 @@ OpenWrt `sing-box-tiny 1.13.21-r1` 包从官方 HTTPS 获取，SHA-256 与前次
 - 仅将压缩块改为 512KiB，再增量构建，保留全部既定包、协议、IPv6 和双频驱动。该轮监督记录约 180 秒，复用工具链和内核对象；全局配置时间戳仍触发内核重新链接及部分依赖包重建。较大压缩块的解压内存和随机读取性能尚未在新系统实机验证。
 - 随后按用户要求执行唯一一次同配置、无源码改动的增量 `make -j8 V=s`，96.172 秒结束、退出码 0；交叉工具链主体及大多数包复用成果，仍包含内核重新链接、少量包编译与镜像重打包。两轮镜像大小相同，但 SHA 改变，未证明逐字节可复现；以下只以这次增量之后检查、归档的具体产物为准，不再构建改写它。`dl/`、`build_dir/`、`staging_dir/` 和 Go 缓存均保留，当前未启用 `CONFIG_CCACHE`，没有执行 clean／dirclean。
 
-最终候选归档在 Rock 的 `/srv/alwayroute/artifacts/alwayroute-eval-20261022/`，评估文件名为 `alwayroute-eval-openwrt-25.12.6-4a-gigabit-20261022.bin`，同时保留构建原始 bin、包清单、完整／差异配置、feeds 提交、内核配置、构建日志、源码缓存校验与 `SHA256SUMS`。安全派生检查结果也保存在电脑被 Git 忽略的 `.local/firmware-review/`；固件、设备备份和私钥不进入仓库。
+最终候选归档在 Rock 的 `<task-root>/artifacts/alwayroute-eval-20261022/`，评估文件名为 `alwayroute-eval-openwrt-25.12.6-4a-gigabit-20261022.bin`，同时保留构建原始 bin、包清单、完整／差异配置、feeds 提交、内核配置、构建日志、源码缓存校验与 `SHA256SUMS`。安全派生检查结果也保存在电脑被 Git 忽略的 `.local/firmware-review/`；固件、设备备份和私钥不进入仓库。
 
 | 离线检查项 | 最终结果 |
 | --- | --- |

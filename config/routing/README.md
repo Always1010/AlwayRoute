@@ -31,3 +31,13 @@
 历史部署事实与验证结果统一放入 [docs/reports](../../docs/README.md)，不作为当前配置数据。revision 20 的旧值和顺序可从 Git 提交 `1e27197a89b31ee9e73a6c7c98ad619218b0086b` 的旧 profiles 还原，设备部署事实见[当次报告](../../docs/reports/2026-10-23-domestic-tiktok-routing.md)。
 
 新增和维护业务只修改正式 `policies/` 服务文件，必要时更新 `catalog.json`；更新参考来源时修改本目录唯一的来源锁并核对上述审查说明。新的部署、迁移和测试结果写入报告，不再生成带日期的配置清单，也不复制业务规则。
+
+## 匹配、默认值与覆盖边界
+
+自定义规则先于正式服务；明确业务先于Proxy聚合，明确境外预设先于Domestic宽泛后缀；Domestic不并入Proxy并集。Other负责最终未命中出口。界面顺序不等于编译匹配顺序，两者由后端统一处理，不在前端复制目录。
+
+新建模型Other默认为直连；实际已保存配置的选择由用户模型决定，不能以默认值覆盖。旧defaultOutbound迁移到Other时保留真实出口，阻断仍为拒绝；没有容量安全新增或合并组时明确拒绝迁移，不静默删除组。
+
+服务清单是选择性覆盖，无法保证语音、游戏、推送、所有CDN及动态IP请求都归入同一组。漏分流先用明确域名／精确主机或合适手工规则确认，不将共享云后缀整段改成直连。手工正则由核心check校验，复杂度和资源仍受设备限制。
+
+原始少量预设还参考[OpenAI网络建议](https://help.openai.com/en/articles/9247338-network-recommendations-for-chatgpt-errors-on-web-and-apps)、[Microsoft365端点](https://learn.microsoft.com/office365/enterprise/urls-and-ip-address-ranges)、[Apple网络主机](https://support.apple.com/101555)、[Telegram域名](https://core.telegram.org/bug-bounty)等服务商资料。它们提供覆盖边界参考，不表示项目复制或动态跟随其完整清单；需要复核的当前数据以正式JSON和来源锁为准。
