@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "Example: PC manages the router; Linux host still builds",
+  "build": {
+    "executor": "ssh",
+    "ssh_alias": "lab-builder",
+    "task_root": "/srv/alwayroute",
+    "project_workspace": "/srv/alwayroute/workspaces/AlwayRoute",
+    "openwrt_tree": "/srv/alwayroute/openwrt-build/source",
+    "toolchain_root": "/srv/alwayroute/toolchains",
+    "cache_root": "/srv/alwayroute/build-cache",
+    "output_root": "/srv/alwayroute/artifacts"
+  },
+  "router": {
+    "executor": "local",
+    "target": "lab-router",
+    "connect_timeout_seconds": 10
+  },
+  "traffic": {
+    "executor": "local"
+  }
+}
