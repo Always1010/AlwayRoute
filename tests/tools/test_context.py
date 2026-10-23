@@ -23,7 +23,7 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "env.json"
             for bad in ({"router": {"target": "-oProxyCommand=bad"}},
-                        {"build": {"task_root": "../cache"}}, {"password": "not-allowed"},
+                        {"build": {"task_root": "../cache"}}, {"password": "your-placeholder"},
                         {"build": {"jobs": True}}, {"build": {"executor": "ssh"}}):
                 path.write_text(json.dumps({"schema_version": 1, **bad}))
                 with self.assertRaises(ContextError):

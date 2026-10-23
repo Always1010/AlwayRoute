@@ -7,9 +7,22 @@
 *.pem
 *.p12
 *.pfx
+*.ppk
+.netrc
+.git-credentials
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+authorized_keys
+known_hosts
 /.local/
 /secrets/
 /private/
+# Actual environments stay local; only synthetic examples are public.
+/config/environments/*.json
+!/config/environments/*.example.json
+!/config/environments/schema.json
 
 # Device backups, downloaded firmware, and generated artifacts
 /backups/
