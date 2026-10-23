@@ -2,6 +2,8 @@
 
 本目录保存自有包、seed、补丁、构建和只读镜像检查工具，不保存固件、节点／订阅、主机私钥或设备备份。当前部署身份统一见[状态](../docs/status.md)，本文件说明构建输入和流程，不能当作设备刷写授权。
 
+发布构建固定输入见 [release.json](release.json) 与 [PGO 输入说明](pgo/README.md)。`inspect-image.py --profile release --release-manifest PATH --experimental-crypto mipsle-asm-r2` 核对本次构建输入、完整核心、优化参数、正式规则及自有载荷，沿用 OpenWrt 管理初始化，不依赖私人历史基线镜像。原 `baseline`／`manager` 检查及历史基线对比继续保留。
+
 ## 固定输入与生产差异
 
 上游来源、提交、归档和树哈希在[sources.lock.json](sources.lock.json)：OpenWrt25.12.6、固定LuCI／packages与sing-box1.13.21；使用已有Go1.27.3、CGO关闭构建；CPU架构由设备配方选择，当前4A为MIPSLE softfloat。电脑阅读入口见[上游获取](../docs/upstream-sources.md)。当前唯一实机验证目标为第一版千兆4A，其参数和专用补丁必须保留；其他设备另建适配，不覆盖4A配置。支持范围见[设备列表](../docs/devices/README.md)，分层和移植流程见[多设备适配](../docs/device-porting.md)。

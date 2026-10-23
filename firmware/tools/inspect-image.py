@@ -229,7 +229,8 @@ def main(argv=None):
     parser.add_argument('--device', default=DEFAULT_DEVICE, help='Repository device recipe name')
     parser.add_argument('image', type=pathlib.Path)
     parser.add_argument('--management-defaults', type=pathlib.Path, help='Explicit reviewed first-boot script; omission requires no custom management script')
-    parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
+    parser.add_argument('--profile', choices=('baseline', 'manager', 'release'), default='baseline')
+    parser.add_argument('--release-manifest', type=pathlib.Path, help='Required for release: current run input manifest')
     parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
     parser.add_argument('--core-sha256', type=sha256_arg, default=default_core_sha256)
     parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
@@ -244,13 +245,17 @@ def main(argv=None):
     work = context['build_root']
     if args.profile == 'manager' and args.baseline_image is None:
         parser.error('--profile manager requires --baseline-image')
-    if args.experimental_crypto and args.profile != 'manager':
-        parser.error('--experimental-crypto requires --profile manager')
+    if args.profile == 'release' and (args.release_manifest is None or args.management_defaults is not None
+                                     or args.experimental_crypto != 'mipsle-asm-r2'):
+        parser.error('release requires --release-manifest, mipsle-asm-r2 and standard OpenWrt management defaults')
+    if args.experimental_crypto and args.profile not in ('manager', 'release'):
+        parser.error('--experimental-crypto requires --profile manager or release')
     image = args.image.resolve()
     if not image.name.endswith(device['image']['manifest_suffix']):
         parser.error('Image filename does not match the selected device manifest suffix')
     data = image.read_bytes()
-    expected_core_sha = args.core_sha256
+    release_manifest = json.loads(args.release_manifest.read_bytes()) if args.profile == 'release' else None
+    expected_core_sha = sha256_arg(release_manifest['core_sha256']) if release_manifest else args.core_sha256
     checks = {}
 
 
@@ -293,7 +298,7 @@ def main(argv=None):
     validate_crypto_provenance(build_info, embedded, core, args.experimental_crypto, pinned, check,
                                module_root=context['cache_root'] / 'gomodcache/golang.org/x/crypto@v0.48.0',
                                go_root=context['go_root'])
-    if args.profile == 'manager':
+    if args.profile in ('manager', 'release'):
         tags = 'with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0'
         check('core_full_cli', build_info.get('cli_profile') == 'full' and build_info.get('entry_package') == './cmd/sing-box')
         check('core_full_registry', build_info.get('registry_profile') == 'upstream' and build_info.get('registry_patch_sha256') is None)
@@ -320,6 +325,11 @@ def main(argv=None):
         if (match := re.search(r'squashfs-root/(.*)$', line))
     }
     management_sha = inspect_management(readfile, listed_paths, source, args.management_defaults, check)
+    if args.profile == 'release':
+        from release_inputs import validate_release_core
+        validate_release_core(build_info, source / 'alwayroute-input', release_manifest, context, device, check)
+        check('release_no_embedded_authorized_keys', 'etc/dropbear/authorized_keys' not in listed_paths)
+        check('release_no_custom_overlay', not (source / 'files').exists())
     input_hashes = {}
     executable_texts = []
     executable_source_fragments = []
@@ -405,9 +415,10 @@ def main(argv=None):
     for name in ['alwayroute-core', 'kmod-nft-tproxy', 'ip-full', 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only'] + device['required_packages']:
         check('package_' + name, name in packages)
     expected_package_delta = None
-    if args.profile == 'manager':
+    if args.profile in ('manager', 'release'):
         for name in ['alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute']:
             check('package_' + name, name in packages)
+    if args.profile == 'manager':
         baseline_data = args.baseline_image.read_bytes()
         baseline_kernel_end = 64 + struct.unpack_from('>I', baseline_data, 12)[0]
         check('manager_kernel_payload_unchanged', data[64:kernel_end] == baseline_data[64:baseline_kernel_end])
