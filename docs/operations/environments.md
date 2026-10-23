@@ -19,9 +19,11 @@ SSH别名、身份文件和严格主机校验由已经准备好的SSH配置管�
 
 ## 两种设备访问方式
 
-当前环境的build与router执行器均在Rock：PC同步自有源码到Rock独立副本，Rock使用已有构建树，再从Rock访问4A。`router.executor=ssh`，`executor_ssh_alias`指向Rock，`target`使用当前实际设备登录目标，并通过`ssh_port`、`identity_file`和`known_hosts_file`引用Rock上已准备的端口与文件；不要求设备已有SSH别名。
+远端操作示例：电脑将源码同步到 Linux 构建主机的独立副本，操作主机通过 SSH 访问目标路由器。`router.executor=ssh`，`executor_ssh_alias`选择操作主机；它可以与构建主机相同，也可以不同。端口、身份和可信主机文件均从操作主机视角填写。
 
-未来PC直连时保持build角色指向Rock，仅把router角色改为`executor=local`，`target`使用PC已有的设备SSH别名。PC的SSH别名也可以在用户自行配置后使用ProxyJump。这里的local指PC发起SSH，不表示在PC运行路由器MIPS程序；PC直连配置尚未实机验收。
+直接操作示例：构建位置保持不变，仅把router角色改为`executor=local`，从电脑使用既有SSH目标访问设备。local指电脑发起SSH，不表示在电脑运行目标架构程序。可按已有配置使用ProxyJump；工具不自动修改SSH配置。
+
+实际环境资料保存在被 Git 忽略的 `.local/lab/`，不属于项目默认配置。
 
 traffic角色单独描述真实发流位置。只有核对源接口、地址、网关和目标后，才能把结果标为LAN回环、经核心直连、实际WAN或代理测试；不能用默认路由猜测测试路径。
 
@@ -48,4 +50,4 @@ python scripts/device.py --env .local/environments/current.json stage artifacts/
 
 `python scripts/measure-https.py --env PATH --url https://example.com/`默认只预览；显式`--apply`后从traffic执行主机发起有限请求，不改路由、DNS或代理配置。默认3次、每次15秒、最多1MiB；可在工具限定范围内选择`--count`和`--timeout`。实际执行要求发流主机已有 curl 8.4.0 或更新版本，缺少时失败而不安装。工具禁用默认 curl 配置及代理环境继承。Windows 本地绑定须提供 `source_address`，不支持仅填接口名。URL须是无凭证、无查询参数和fragment的公开HTTPS地址。
 
-输出连接、TLS、总耗时和字节数，不保存响应正文／cookie。源绑定只说明curl采用指定接口或地址，不证明请求一定经4A、WAN或特定策略；`gateway`描述预期路径，不自动配置网关。对照实际路由和设备状态后才能解释测量结果。
+输出连接、TLS、总耗时和字节数，不保存响应正文／cookie。源绑定只说明curl采用指定接口或地址，不证明请求一定经目标路由器、WAN或特定策略；`gateway`描述预期路径，不自动配置网关。对照实际路由和设备状态后才能解释测量结果。

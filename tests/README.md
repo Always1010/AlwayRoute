@@ -1,24 +1,24 @@
 # 测试目录与执行入口
 
-测试按组件和验证边界分组。下面命令均从仓库根目录执行，使用已有运行时；构建及需要 POSIX 环境的检查优先在 Rock 独立工作副本执行。缺少依赖时先报告，不自动安装。
+测试按组件和验证边界分组。下面命令均从仓库根目录执行，使用已有运行时；构建及需要 POSIX 环境的检查优先在 构建主机 独立工作副本执行。缺少依赖时先报告，不自动安装。
 
 | 目录／入口 | 检查内容 | 执行环境 |
 | --- | --- | --- |
 | `ui/ui.test.cjs` | LuCI 模块契约、前端模型、API 和页面逻辑 | 已有 Node，可在电脑运行 |
-| `firmware/test-supervisor.py` | 使用临时环境配置验证构建监督，不再靠源码替换固定路径 | 已有Python与所需POSIX环境，适合Rock |
+| `firmware/test-supervisor.py` | 使用临时环境配置验证构建监督，不再靠源码替换固定路径 | 已有Python与所需POSIX环境，适合构建主机 |
 | `firmware/test_package_sync.py` | 用替身验证包快照同步、目标边界及多余文件拒绝 | 已有Python，不构建或访问设备 |
-| `firmware/test_crypto_provenance.py` | 显式候选／标准核心的密码输入来源和镜像元数据保护 | 已有Python，按输入及构建环境选择Rock |
+| `firmware/test_crypto_provenance.py` | 显式候选／标准核心的密码输入来源和镜像元数据保护 | 已有Python，按输入及构建环境选择构建主机 |
 | `tools/test_context.py`、`tools/test_sync_source.py`、`tools/test_device_tools.py`、`tools/test_public_audit.py` | 环境／同步／暂存入口与公开材料审计的隔离检查 | 已有Python；具体平台边界见测试 |
 | `tools/test_device_maintenance.py`、`tools/test_network_diagnostics.py` | 设备只读状态、私有备份边界与多网卡路由诊断 | 已有Python，设备／网络命令均使用替身 |
 | `firmware/test_device_test_runner.py`、`firmware/test_benchmark_summary.py` | 现有测试二进制执行保护、历史性能结果白名单与条件保留 | 已有Python，不编译、不执行设备测试、不连接设备 |
 | `ui/build-preview.cjs`、`ui/preview-runtime.js` | 用生产页面生成带合成 RPC 的离线预览 | Node 生成；浏览器人工检查 |
 | `manager/run-tests.py` | 组合并执行模型、订阅、内存事务及下载脚本测试 | Python 与已有 ucode（含 fs／digest 模块） |
 | `manager/run.uc` | 通过真实模块导入检查模型与订阅 | 匹配的 ucode 与模块搜索路径 |
-| `manager/test-timeout.py` | shell watchdog 退出码、截止超时和中断清理 | POSIX shell 与 Python，适合 Rock |
+| `manager/test-timeout.py` | shell watchdog 退出码、截止超时和中断清理 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/check-contract.py` | UI／RPC 方法、ACL 和菜单绑定的静态一致性 | 已有 Python，可在电脑运行 |
-| `integration/forwarding-test.py` | 用替身命令检查转发所有权、失败清理等行为 | POSIX shell 与 Python，适合 Rock |
-| `integration/management-defaults-test.py` | 临时目录中检查首启 marker、失败重试与权限 | POSIX shell 与 Python，适合 Rock |
-| `integration/runtime-api.uc` | 真实 fs／digest、文件锁、私有权限及错误编码兼容性 | 固定 OpenWrt host ucode，适合 Rock |
+| `integration/forwarding-test.py` | 用替身命令检查转发所有权、失败清理等行为 | POSIX shell 与 Python，适合 构建主机 |
+| `integration/management-defaults-test.py` | 临时目录中检查首启 marker、失败重试与权限 | POSIX shell 与 Python，适合 构建主机 |
+| `integration/runtime-api.uc` | 真实 fs／digest、文件锁、私有权限及错误编码兼容性 | 固定 OpenWrt host ucode，适合 构建主机 |
 
 ## 电脑可运行的检查
 
@@ -35,7 +35,7 @@ node tests/ui/build-preview.cjs
 
 默认输出 `.local/ui-preview/alwayroute.html`，不会自动启动服务器或浏览器；预览步骤和适配边界见 [UI 检查说明](ui/README.md)。
 
-## Rock 上的针对性检查
+## 构建主机 上的针对性检查
 
 在已同步的独立源码工作副本根目录运行。下列 `/path/to/ucode` 是占位符，须替换为现有、与固件匹配且可加载 fs／digest 的 host ucode；不要调用面向 MIPS 设备的不可执行二进制。
 
@@ -81,7 +81,7 @@ python3 tests/firmware/test_benchmark_summary.py
 python3 tests/firmware/test-supervisor.py
 # 必须明确提供候选及标准核心；路径从所选build环境理解
 python3 tests/firmware/test_crypto_provenance.py --env /path/to/environment.json --candidate /path/to/candidate-core --standard /path/to/standard-core
-# 使用临时目录／替身检查工作流，不代表真实PC直连或Rock构建已经通过
+# 使用临时目录／替身检查工作流，不代表真实PC直连或构建主机构建已经通过
 python3 -m unittest discover -s tests/tools -p 'test_*.py'
 python3 tests/tools/test_public_audit.py
 ```
@@ -90,4 +90,4 @@ python3 tests/tools/test_public_audit.py
 
 设备入口`python scripts/device.py --env PATH status`只读查询；`stage FILE`默认只预览，显式`--apply`才暂存并核验哈希，均不刷机、不安装包、不应用配置。`python scripts/measure-https.py --env PATH --url https://example.com/`默认预览，`--apply`发起有限HTTPS请求，不修改路由。真实测试地址选择和授权按具体场景核对，不能使用含凭证URL。
 
-HTTPS测量可以绑定traffic角色的源接口／地址，但绑定成功不能证明经过某个网关、WAN或代理出口；必须结合路由与设备证据解释路径。隔离测试、工具成功和一次SSH登录都不能记作PC直连、物理断开Rock或长期负载验收。
+HTTPS测量可以绑定traffic角色的源接口／地址，但绑定成功不能证明经过某个网关、WAN或代理出口；必须结合路由与设备证据解释路径。隔离测试、工具成功和一次SSH登录都不能记作PC直连、物理断开构建主机或长期负载验收。

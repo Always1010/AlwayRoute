@@ -1,6 +1,6 @@
-# PC源码主本与Rock构建流程
+# PC源码主本与构建主机构建流程
 
-电脑仓库保存AlwayRoute自有业务代码、构建配方、补丁与文档；Rock保留独立源码副本、OpenWrt构建树、工具链及缓存。第三方源码通过[固定入口](upstream-sources.md)获取，本机阅读副本在`.local/sources/`，不进入Git，也不直接覆盖Rock现有树。
+电脑仓库保存AlwayRoute自有业务代码、构建配方、补丁与文档；构建主机保留独立源码副本、OpenWrt构建树、工具链及缓存。第三方源码通过[固定入口](upstream-sources.md)获取，本机阅读副本在`.local/sources/`，不进入Git，也不直接覆盖构建主机现有树。
 
 ## 环境与现有工具
 
@@ -23,7 +23,7 @@ python scripts/sync-source.py --env .local/environments/current.json --apply
 
 ## 远端修改回传
 
-优先在PC修改再同步。若排障直接修改Rock自有文件，先列出实际文件，从build.project_workspace或对应自有包路径回传到`.local/incoming/`，只选择属于本项目的源码／补丁。先dry-run，后复制；不要直接覆盖PC未提交修改。
+优先在PC修改再同步。若排障直接修改构建主机自有文件，先列出实际文件，从build.project_workspace或对应自有包路径回传到`.local/incoming/`，只选择属于本项目的源码／补丁。先dry-run，后复制；不要直接覆盖PC未提交修改。
 
 用`git diff --no-index -- <本机文件> <回传文件>`审查（发现差异返回1正常），合并有价值内容、运行相称检查、创建本地提交，再同步确认。第三方变化整理为本仓库补丁，不能把整个上游工作树回传并加入Git；设备配置、备份和订阅也不属于回传源码。
 

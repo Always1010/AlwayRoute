@@ -11,7 +11,7 @@
 | 准备公开仓库 | [隐私与首次公开](privacy-and-publication.md)、[许可范围](../LICENSE.md)、[第三方声明](../THIRD_PARTY_NOTICES.md) |
 | 维护分流数据 | [规则维护与来源](../config/routing/README.md)、[管理后端](../firmware/openwrt/alwayroute-manager/README.md) |
 | 升级与恢复 | [部署检查边界](operations/deployment.md)、[恢复条件](operations/recovery.md) |
-| 核对硬件与接线 | [4A适配及基本拓扑](devices/xiaomi-4a.md) |
+| 核对支持范围与硬件 | [设备列表](devices/README.md)、[移植流程](device-porting.md)、[4A适配及示例拓扑](devices/xiaomi-4a.md) |
 | 查历史依据与失败 | [执行报告索引](reports/README.md)、[独立运行路线决策](reports/2026-10-22-route-decision.md) |
 
 ## 文档维护

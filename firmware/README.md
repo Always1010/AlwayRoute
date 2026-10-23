@@ -1,10 +1,10 @@
-# 4A固件构建配方
+# AlwayRoute 固件构建与设备适配
 
 本目录保存自有包、seed、补丁、构建和只读镜像检查工具，不保存固件、节点／订阅、主机私钥或设备备份。当前部署身份统一见[状态](../docs/status.md)，本文件说明构建输入和流程，不能当作设备刷写授权。
 
 ## 固定输入与生产差异
 
-上游来源、提交、归档和树哈希在[sources.lock.json](sources.lock.json)：OpenWrt25.12.6、固定LuCI／packages与sing-box1.13.21；现有Go1.27.3用于MIPSLE softfloat、CGO关闭构建。电脑阅读入口见[上游获取](../docs/upstream-sources.md)。目标为第一版千兆4A，硬件边界见[设备适配](../docs/devices/xiaomi-4a.md)。
+上游来源、提交、归档和树哈希在[sources.lock.json](sources.lock.json)：OpenWrt25.12.6、固定LuCI／packages与sing-box1.13.21；现有Go1.27.3用于MIPSLE softfloat、CGO关闭构建。电脑阅读入口见[上游获取](../docs/upstream-sources.md)。当前唯一实机验证目标为第一版千兆4A，其参数和专用补丁必须保留；其他设备另建适配，不覆盖4A配置。支持范围见[设备列表](../docs/devices/README.md)，分层和移植流程见[多设备适配](../docs/device-porting.md)。
 
 `tools/build-core.py`保留完整上游CLI／注册表及固定tags。默认构建不启用密码overlay；最后部署核心则明确选择`--crypto-inline`、匹配PGO和`--experimental-crypto mipsle-asm-r2`。选项、PGO哈希、补丁、模块及来源校验见[完整功能加密优化](../docs/reports/2026-10-23-crypto-optimization.md)。缺失当时PGO输入时不能承诺逐字节复现，不应以默认构建产物冒充已部署核心。
 
