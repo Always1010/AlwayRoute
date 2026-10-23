@@ -50,6 +50,7 @@ node tests/ui/build-preview.cjs
 
 ```sh
 # 模型、订阅、事务和下载脚本
+python3 tests/manager/check-imports.py /path/to/ucode
 python3 tests/manager/run-tests.py /path/to/ucode -
 
 # 真实模块导入

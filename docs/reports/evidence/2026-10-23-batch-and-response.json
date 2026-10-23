@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-23",
+  "manager_version": "1.0.0-r9",
+  "ui_version": "1.0.0-r4",
+  "manager_signed_bytes": 92959,
+  "manager_sha256": "95517d438941a65d71d9ffd961ac1890ca699ae6f9eb17a8625c019c3719b78b",
+  "ui_signed_bytes": 19627,
+  "ui_sha256": "b73ecaac9c4d6fb5c27dd2cd730d395eb92e505ec1a53b3b8c87e574536b0203",
+  "payload_files_verified": 37,
+  "final_incremental_build_seconds": 70.87,
+  "checks": {"ui": 39, "model": 81, "transactions": 98, "selection": 9, "traffic": 9, "downloader": 8, "rpc_methods": 17, "real_module_import": true},
+  "rpc_before_ms": {"get": [2370, 2350, 2350, 2420], "status": [2830, 3720], "traffic": [2190, 2200]},
+  "rpc_after_ms": {"get": [30, 40, 30], "status": [490, 510, 510], "traffic": [30, 10, 10], "job_status": [10, 10, 10]},
+  "hot_switch": {"observation_seconds": 7.085, "restore_observation_seconds": 6.185, "includes_wireless_ssh_polling": true, "core_pid_unchanged": true, "original_choice_restored": true},
+  "selected_cancel": {"total": 8, "completed": 2, "partial_results_visible": true},
+  "first_all": {"revision": 38, "total": 38, "completed": 38, "passed": 13, "failed": 25, "seconds": 81.1},
+  "final_all": {"revision": 40, "total": 38, "completed": 38, "passed": 13, "failed": 25, "seconds": 84.22},
+  "pc_https_during_scan": {"certificate_validation": true, "success": 1, "timeout": 1, "tls_eof": 1},
+  "pc_https_after_scan": {"certificate_validation": true, "success": 2, "elapsed_ms": [6016, 2906]},
+  "final": {"revision": 40, "semantic_configuration_unchanged": true, "core_pid_and_boot_unchanged": true, "forwarding_running": true, "served_ui_matches_verified_package": true, "traffic_sample_observed": true, "overlay_available_kib": 1212}
+}

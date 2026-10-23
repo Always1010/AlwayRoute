@@ -83,12 +83,13 @@ YAML用逐字符token及缩进解析，未使用正则抽取字段。
 验证命令（使用已有ucode，不安装依赖）：
 
 ```sh
+python tests/manager/check-imports.py /path/to/ucode
 python tests/manager/run-tests.py /path/to/ucode -
 ucode -L firmware/openwrt/alwayroute-manager/files/usr/share/ucode tests/manager/run.uc
 ```
 
-第一项将模块机械组合到stdin，运行模型/导入、内存适配事务及下载脚本许可检查；
-第二项检查真实模块导入。事务适配器覆盖revision冲突、后台排队、配置校验失败、
+第一项保持import/export进行真实管理模块导入，不调用管理方法；第二项将模块机械组合到stdin，运行模型/导入、内存适配事务及下载脚本许可检查；
+第三项检查模型与订阅的真实模块导入。事务适配器覆盖revision冲突、后台排队、配置校验失败、
 提交写失败恢复、回退、凭证导出脱敏、停机持久、启动中断恢复、转发停止失败、
 适配器缺失及核心恢复失败保持阻断，未访问设备。
 即时配置事务另覆盖运行/停止态配置确认、最新current启动、导入/订阅节点候选失败保持原配置、
