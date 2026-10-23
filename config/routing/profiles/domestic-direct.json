@@ -1,0 +1,257 @@
+{
+  "schema": 1,
+  "description": "常用国内服务选择性直连；共享云和 CDN 不整段直连，cn 后缀最后补充。",
+  "reviewedOn": "2026-10-23",
+  "sources": {
+    "manifest": "../sources.lock.json",
+    "files": [
+      "tencent",
+      "alibaba",
+      "jd",
+      "pinduoduo",
+      "douyin",
+      "doubao",
+      "bytedance",
+      "bilibili",
+      "bilibili-cdn",
+      "xiaohongshu",
+      "kuaishou",
+      "iqiyi",
+      "youku",
+      "hunantv",
+      "baidu",
+      "netease",
+      "meituan",
+      "eleme",
+      "amap",
+      "didi",
+      "ctrip",
+      "kingsoft",
+      "wps",
+      "dingtalk",
+      "feishu",
+      "zhihu",
+      "sina",
+      "xiaomi",
+      "cmb",
+      "ccb",
+      "geolocation-cn"
+    ]
+  },
+  "groups": [
+    {
+      "id": "Domestic",
+      "name": "国内直连",
+      "selected": "direct"
+    }
+  ],
+  "routes": [
+    {
+      "category": "腾讯、微信和QQ",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "qq.com",
+        "weixin.com",
+        "wechat.com",
+        "gtimg.com",
+        "servicewechat.com",
+        "tenpay.com"
+      ]
+    },
+    {
+      "category": "淘宝、天猫和支付宝",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "taobao.com",
+        "tmall.com",
+        "alipay.com",
+        "alipayobjects.com"
+      ]
+    },
+    {
+      "category": "京东和拼多多",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "jd.com",
+        "360buyimg.com",
+        "pinduoduo.com",
+        "yangkeduo.com",
+        "pddpic.com"
+      ]
+    },
+    {
+      "category": "抖音",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "douyin.com",
+        "douyincdn.com",
+        "douyinpic.com",
+        "douyinstatic.com",
+        "douyinvod.com",
+        "amemv.com"
+      ]
+    },
+    {
+      "category": "豆包",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "doubao.com",
+        "doubaocdn.com"
+      ]
+    },
+    {
+      "category": "哔哩哔哩",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "bilibili.com",
+        "bilivideo.com",
+        "hdslb.com",
+        "biliapi.net",
+        "acgvideo.com"
+      ]
+    },
+    {
+      "category": "小红书和快手",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "xiaohongshu.com",
+        "xhscdn.com",
+        "xhslink.com",
+        "kuaishou.com",
+        "gifshow.com",
+        "ksapisrv.com"
+      ]
+    },
+    {
+      "category": "国内长视频",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "iqiyi.com",
+        "iqiyipic.com",
+        "qiyi.com",
+        "youku.com",
+        "ykimg.com",
+        "mgtv.com",
+        "hunantv.com"
+      ]
+    },
+    {
+      "category": "百度和网盘",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "baidu.com",
+        "bdstatic.com",
+        "bdimg.com",
+        "baidupcs.com"
+      ]
+    },
+    {
+      "category": "网易邮箱和音乐",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "163.com",
+        "126.com",
+        "127.net",
+        "126.net"
+      ]
+    },
+    {
+      "category": "美团、点评和饿了么",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "meituan.com",
+        "meituan.net",
+        "dianping.com",
+        "dpfile.com",
+        "sankuai.com",
+        "ele.me"
+      ]
+    },
+    {
+      "category": "地图、出行和购票",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "amap.com",
+        "didichuxing.com",
+        "xiaojukeji.com",
+        "ctrip.com"
+      ]
+    },
+    {
+      "category": "办公和协作",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "wpscdn.com",
+        "dingtalk.com",
+        "feishucdn.com",
+        "feishuimg.com",
+        "feishuapp.com"
+      ]
+    },
+    {
+      "category": "社区",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "zhihu.com",
+        "zhimg.com",
+        "weibo.com"
+      ]
+    },
+    {
+      "category": "小米和银行",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "mi.com",
+        "xiaomi.com",
+        "cmbchina.com",
+        "ccb.com"
+      ]
+    },
+    {
+      "category": "豆包设备采样关联主机",
+      "outbound": "Domestic",
+      "type": "domain",
+      "values": [
+        "mon.zijieapi.com",
+        "dig.bdurl.net"
+      ],
+      "evidence": "2026-10-23与豆包连接同时出现的主机；使用精确域名"
+    },
+    {
+      "category": "淘宝常见图片和静态主机",
+      "outbound": "Domestic",
+      "type": "domain",
+      "values": [
+        "img.alicdn.com",
+        "imgextra.alicdn.com",
+        "gw.alicdn.com",
+        "g.alicdn.com"
+      ],
+      "evidence": "只匹配明确主机，不直连整个alicdn.com"
+    },
+    {
+      "category": "国内域名补充",
+      "outbound": "Domestic",
+      "type": "suffix",
+      "values": [
+        "cn"
+      ],
+      "evidence": "排在明确服务例外之后；域名后缀不能保证服务器的地理位置"
+    }
+  ]
+}

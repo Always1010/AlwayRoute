@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "description": "2026-10-23 revision 20 已部署规则的组合记录；不包含节点、订阅或设备凭据。",
+  "appliedOn": "2026-10-23",
+  "appliedRevision": 20,
+  "profileFiles": [
+    "../profiles/youtube-supplement.json",
+    "../profiles/tiktok.json",
+    "../profiles/domestic-direct.json"
+  ],
+  "existingGroupSelections": {
+    "Other": "Proxy"
+  },
+  "ruleCounts": {
+    "YouTube": 4,
+    "TikTok": 38,
+    "Domestic": 78,
+    "total": 120
+  }
+}

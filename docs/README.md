@@ -15,6 +15,7 @@
 | 源码 | [上游源码获取入口](upstream-sources.md) | 固定版本下载 OpenWrt、LuCI、packages 与 sing-box 到被 Git 忽略的本机目录 |
 | 构建 | [固件构建说明](../firmware/README.md) | 固定输入、包集成、构建保护及镜像检查 |
 | 接口 | [v1 契约](../contracts/v1.md) | 前后端配置模型与 RPC 边界 |
+| 分流数据 | [分流清单与组合说明](../config/routing/README.md) | TikTok、国内直连、YouTube 补充独立维护，上游来源单独锁定 |
 | 验证 | [测试说明](../tests/README.md) | 测试分区、执行环境、命令与覆盖边界 |
 | 设备 | [小米 4A 设备与网络记录](devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
 | 当前固件与刷写 | [最新管理功能整机集成](reports/2026-10-23-latest-firmware-flash.md) | 最新检测功能写入 ROM，保留原代理核心；277 项镜像检查、刷后恢复，可写空间 1428 KiB |

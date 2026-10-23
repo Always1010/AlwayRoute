@@ -13,6 +13,8 @@ AlwayRoute/
 ├── contracts/
 │   ├── v1.md                          # 配置模型与 RPC 契约
 │   └── fixtures/                      # 合成配置、订阅输入样本
+├── config/
+│   └── routing/                       # 分流数据：业务清单、来源锁文件和部署组合
 ├── firmware/
 │   ├── README.md                      # 固定构建输入、集成步骤和限制
 │   ├── sources.lock.json              # 上游来源、版本、下载入口与源码树哈希
@@ -24,13 +26,15 @@ AlwayRoute/
 │   │   ├── alwayroute-manager/        # ucode 管理后端、RPC、ACL 与服务脚本
 │   │   ├── alwayroute-forwarding/     # LAN 透明转发适配器及打包配方
 │   │   └── luci-app-alwayroute/        # LuCI 页面、公共模块、样式与菜单
-│   └── tools/                         # 在 Rock 使用的构建监督及镜像检查工具
+│   ├── tools/                         # 在 Rock 使用的核心构建、实验适配、监督和镜像检查工具
+│   └── tests/                         # 固件密码实验的 Go 差分检查及实验说明
 ├── scripts/
 │   ├── sync-rock.sh                   # 通用源码同步入口，默认 dry-run
 │   └── fetch-sources.py               # 按锁定版本获取上游源码到 .local/sources/
 ├── tests/
 │   ├── README.md                      # 测试入口、环境和覆盖范围
 │   ├── manager/                       # 模型、订阅、事务、下载及超时检查
+│   ├── firmware/                      # 构建监督及密码输入来源的主机检查
 │   ├── integration/                   # 接口边界、转发、首启与运行时检查
 │   └── ui/                            # Node 测试与离线页面预览
 └── docs/
@@ -52,6 +56,7 @@ AlwayRoute/
 | 位置 | 保存内容 | 维护时同时关注 |
 | --- | --- | --- |
 | `contracts/v1.md`、`contracts/fixtures/` | 管理模型、接口约定及合成样本 | 前后端实现、权限和对应测试 |
+| `config/routing/` | `profiles/` 按业务保存分流数据，`sources.lock.json` 锁定公共来源，`deployments/` 记录组合顺序 | 规则优先级、来源引用、组合数量及部署报告；不是接口契约样本 |
 | `firmware/openwrt/alwayroute-core/Makefile` | 外部核心 ELF、来源信息与许可证的安装配方 | 外部输入哈希及增量构建依赖 |
 | `firmware/openwrt/alwayroute-manager/files/usr/share/ucode/alwayroute/` | `model.uc`、`subscription.uc`、`store.uc`：模型生成、订阅解析与配置事务 | `contracts/`、`tests/manager/` |
 | `firmware/openwrt/alwayroute-manager/files/usr/share/rpcd/` | RPC 实现和 `acl.d/` 权限 | 前端 `api.js` 与接口边界检查 |
@@ -59,8 +64,10 @@ AlwayRoute/
 | `firmware/openwrt/alwayroute-forwarding/files/` | nftables／策略路由适配脚本 | 隔离转发测试和实机网络验证 |
 | `firmware/openwrt/luci-app-alwayroute/htdocs/luci-static/resources/` | `view/alwayroute/app.js` 页面及 `alwayroute/` 下 API、模型和样式 | 契约、Node 检查及浏览器预览 |
 | `firmware/openwrt/luci-app-alwayroute/root/` | LuCI 菜单等安装文件 | rpcd ACL 与页面入口绑定 |
-| `firmware/tools/` | `run-native-build.py` 构建监督、`inspect-image.py` 镜像检查 | 固定 Rock 路径、版本、哈希及检查配置 |
-| `scripts/` | 跨组件开发工作流，目前为 `sync-rock.sh` | 同步白名单、排除项和目标路径 |
+| `firmware/tools/` | 核心构建、实验 overlay、`run-native-build.py` 构建监督、`inspect-image.py` 镜像检查 | 固定 Rock 路径、版本、哈希及检查配置 |
+| `firmware/tests/` | 随密码实验适配器使用的 Go 差分测试及实验说明 | 固定补丁、overlay 输入路径和实验状态；不安装进固件 |
+| `tests/firmware/` | 对构建监督和密码来源校验的主机检查 | `firmware/tools/`，与上述实验中编译到上游包的 Go 测试职责不同 |
+| `scripts/` | 跨组件开发工作流：`sync-rock.sh` 同步、`fetch-sources.py` 上游获取 | 同步排除项、目标路径和固定版本来源 |
 
 包内的 `files/`、`root/` 和 `htdocs/` 沿用对应安装布局；最终设备路径和权限以各包 `Makefile` 为准。后端细节见[管理包说明](../firmware/openwrt/alwayroute-manager/README.md)，构建集成见[固件说明](../firmware/README.md)。
 
@@ -74,8 +81,15 @@ AlwayRoute/
 2. 接口或配置语义写入 `contracts/`；可共享样本放入 `contracts/fixtures/`，使用合成域名和身份值，不保存真实订阅或节点凭证。
 3. 测试按 `manager/`、`integration/`、`ui/` 归属存放；测试桩与预览模拟器保留在 `tests/`，不混入生产包。
 4. 与固件构建、镜像检查直接相关的工具放入 `firmware/tools/`；跨组件工作流脚本放入 `scripts/`；一次性本机诊断文件放入 `.local/`，复用前再审查归档。
+   公开配置数据放入 `config/` 的对应业务目录，不放进 `scripts/`。分流规则按业务命名并拆分，共用来源只维护一个锁文件；组合记录引用清单，不复制规则。真实设备配置仍属于私有数据，不因配置目录存在而纳入 Git。
 5. 文档按[文档导航中的维护规则](README.md#维护规则)归档；根目录保留项目入口和仓库级规则。
 6. 改名或移动前检查全部引用，特别是测试中的仓库相对路径、包安装路径和文档链接。源码同步不使用 `--delete`，Rock 残留旧文件必须单独审查处理。
 7. 完成修改后运行与改动相称的检查，按 `AGENTS.md` 创建中文 Conventional Commit；不同目的分开提交，远程推送需用户在当前请求中明确要求。
 
-本次整理将完整文档导航集中到 `docs/README.md`，补充本结构说明及测试入口；现有源码、包布局、脚本和历史报告路径保持原位，便于沿用已有构建和测试引用。
+## 2026-10-23 命名与归属复核
+
+检查了整理前全部 92 个受 Git 管理文件的路径与目录职责，并搜索了分流数据、脚本、测试和实验补丁的引用。确认的问题是 `scripts/routing-profiles/cn-tiktok.json` 名称只突出国内和 TikTok，却还包含 YouTube 补充，且静态配置数据混入脚本目录；现已迁到 `config/routing/`，按三个业务拆分，来源锁定与部署组合独立维护。此次整理没有改动分流行为、规则数量或运行设备。
+
+其他目录没有发现需要批量移动的同类混放。OpenWrt 包的 `files/`、`root/`、`htdocs/` 是安装布局；`firmware/tests/` 的 Go 文件是实验 overlay 的构建输入，而 `tests/firmware/` 检查主机工具，保留两者并补全索引。`docs/reports/evidence/` 保存报告使用的脱敏证据，保持关联；按日期命名的历史报告保留当时观察和原补丁名称，不因候选撤回而改写历史或给现存补丁重新编号。
+
+源码同步不自动删除旧路径；本次仅整理本机仓库，未来同步到 Rock 前仍须查看 dry-run，单独审查工作副本旧路径的清理，不涉及正在构建的 OpenWrt 树。

@@ -14,7 +14,7 @@
 
 原有节点、订阅、覆盖设置和其余组选择保持。Other 仍位于组列表末尾。后台 configure job 成功，服务与透明转发均运行；`healthy` 保持原有的 `unverified`，不把有限测试改写为全面交付验收。
 
-使用的公开数据位于 [cn-tiktok.json](../../scripts/routing-profiles/cn-tiktok.json)，使用方式见[清单说明](../../scripts/routing-profiles/README.md)。上游参考固定为 V2Fly domain-list-community 提交 `5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83`，记录 33 个参考文件的 URL 和 SHA-256；不是设备自动下载的全量规则库。
+使用的公开数据现按业务分为 [YouTube 补充](../../config/routing/profiles/youtube-supplement.json)、[TikTok](../../config/routing/profiles/tiktok.json)和[国内直连](../../config/routing/profiles/domestic-direct.json)，当次顺序见[revision 20 组合记录](../../config/routing/deployments/2026-10-23-revision-20.json)，使用方式见[清单说明](../../config/routing/README.md)。上游参考固定为 V2Fly domain-list-community 提交 `5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83`，[来源锁文件](../../config/routing/sources.lock.json)记录 33 个参考文件的 URL 和 SHA-256；不是设备自动下载的全量规则库。原数据保存在 `scripts/routing-profiles/cn-tiktok.json`，后续按用户要求仅整理仓库目录和命名；规则内容与顺序、设备 revision 20 均未改变。
 
 | 自定义规则 | 数量 | 内容 |
 | --- | --- | --- |
