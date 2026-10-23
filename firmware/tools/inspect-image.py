@@ -28,7 +28,6 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('image', type=pathlib.Path)
 parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
 parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
-parser.add_argument('--ip-package', choices=('ip-full', 'ip-tiny'), default='ip-full')
 parser.add_argument('--core-sha256', type=sha256_arg, default=default_core_sha256)
 parser.add_argument('--output', type=pathlib.Path, default=work / 'image-inspection.json')
 args = parser.parse_args()
@@ -94,6 +93,33 @@ check('core_elf_mipsle', core[:6] == b'\x7fELF\x01\x01' and struct.unpack_from('
 check('core_matches_tested_payload', core_sha == expected_core_sha)
 build_info = json.loads(readfile('usr/share/alwayroute/build-info.json'))
 check('core_provenance', build_info['input_elf_sha256'] == expected_core_sha)
+if args.profile == 'manager':
+    pinned = pathlib.Path('/srv/alwayroute/sources/sing-box-1.13.21')
+    tags = 'with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0'
+    check('core_full_cli', build_info.get('cli_profile') == 'full' and build_info.get('entry_package') == './cmd/sing-box')
+    check('core_full_registry', build_info.get('registry_profile') == 'upstream' and build_info.get('registry_patch_sha256') is None)
+    check('core_pinned_source', build_info.get('source_sha256') == 'c994018d7c2a8fc9fcf6080e4b9cc4f2f915e755342238b77e46fc0806fe96db')
+    check('core_registry_matches_pinned_source', build_info.get('registry_sha256') == hashlib.sha256((pinned/'include/registry.go').read_bytes()).hexdigest())
+    check('core_original_feature_tags', build_info.get('tags') == tags)
+    check('core_isolated_build_environment', build_info.get('build_environment') == {
+        'GOFLAGS':'', 'GOENV':'off', 'GOWORK':'off', 'GOEXPERIMENT':'',
+        'GOROOT':'/srv/alwayroute/toolchains/go1.27.3/go',
+        'GOTOOLCHAIN':'local', 'GOPROXY':'off'})
+    with tempfile.TemporaryDirectory(prefix='inspect-core-') as directory:
+        elf = pathlib.Path(directory)/'sing-box'
+        elf.write_bytes(core)
+        embedded = tool('/srv/alwayroute/toolchains/go1.27.3/go/bin/go', 'version', '-m', str(elf)).decode()
+    settings = {}
+    for line in embedded.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) == 2 and fields[0] == 'build' and '=' in fields[1]:
+            key, value = fields[1].split('=', 1)
+            settings[key] = value.strip('"')
+    check('core_embedded_target', all(settings.get(k) == v for k, v in {'GOOS':'linux','GOARCH':'mipsle','GOMIPS':'softfloat','CGO_ENABLED':'0'}.items()))
+    check('core_embedded_tags', settings.get('-tags') == tags)
+    check('core_embedded_full_entry', '\n\tpath\tgithub.com/sagernet/sing-box/cmd/sing-box\n' in embedded)
+    # Go's embedded settings are not exhaustive: -overlay is not recorded there.
+    check('core_no_explicit_overlay', not any(str(flag).startswith(('-overlay','-modfile')) for flag in build_info.get('command', [])))
 startup = readfile('etc/uci-defaults/99-alwayroute-management')
 check('management_defaults_match_reviewed_input', startup == (source / 'files/etc/uci-defaults/99-alwayroute-management').read_bytes())
 key = readfile('etc/dropbear/authorized_keys')
@@ -182,7 +208,7 @@ packages = {}
 for line in manifest.read_text().splitlines():
     name, version = line.split(' - ', 1)
     packages[name] = version
-for name in ['alwayroute-core', 'kmod-mt7603', 'kmod-mt76x2', 'kmod-nft-tproxy', args.ip_package, 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only']:
+for name in ['alwayroute-core', 'kmod-mt7603', 'kmod-mt76x2', 'kmod-nft-tproxy', 'ip-full', 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only']:
     check('package_' + name, name in packages)
 expected_package_delta = None
 if args.profile == 'manager':
@@ -195,33 +221,16 @@ if args.profile == 'manager':
     baseline_packages = dict(line.split(' - ', 1) for line in baseline_manifest.read_text().splitlines())
     manager_packages = {'alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute'}
     added_packages = set(packages) - set(baseline_packages)
-    if args.ip_package == 'ip-full':
-        expected_package_delta = {'added': sorted(manager_packages), 'removed': []}
-        check('manager_only_three_added_packages', added_packages == manager_packages)
-        check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
-    else:
-        removed_packages = set(baseline_packages) - set(packages)
-        # OpenWrt's ABI suffix is part of the manifest package name.
-        allowed_removed_packages = {'ip-full', 'libbpf1', 'libelf1', 'zlib'}
-        expected_package_delta = {
-            'added': sorted(manager_packages | {'ip-tiny'}),
-            'removed_required': ['ip-full'],
-            'removed_allowed': sorted(allowed_removed_packages),
-        }
-        check('manager_only_manager_and_ip_tiny_added_packages', added_packages == manager_packages | {'ip-tiny'})
-        check('manager_only_ip_full_dependencies_removed', 'ip-full' in removed_packages and removed_packages <= allowed_removed_packages)
-        check('manager_remaining_baseline_packages_unchanged', all(
-            packages.get(name) == version
-            for name, version in baseline_packages.items()
-            if name not in removed_packages
-        ))
+    expected_package_delta = {'added': sorted(manager_packages), 'removed': []}
+    check('manager_only_three_added_packages', added_packages == manager_packages)
+    check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
 check('no_ppp', 'ppp' not in packages and 'ppp-mod-pppoe' not in packages)
 overlay_start = ((offset + used + 65535) // 65536) * 65536
 report = {
     'image': str(image), 'profile': args.profile, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
     'expected': {
         'core_sha256': expected_core_sha,
-        'ip_package': args.ip_package,
+        'ip_package': 'ip-full',
         'manager_package_delta': expected_package_delta,
     },
     'uimage_payload_end': kernel_end, 'squashfs_bytes_used': used,
