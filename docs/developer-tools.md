@@ -5,6 +5,7 @@
 | 入口 | 用途与边界 |
 | --- | --- |
 | `scripts/fetch-sources.py` | 锁定上游源码获取／校验；保持独立于设备连接 |
+| `scripts/build-routing.py` | 构建主机校验固定规则源并生成本地 `.srs` 与来源清单；显式允许下载，默认 IPv4，不安装工具或改写既有产物 |
 | `scripts/sync-source.py` | PC 到独立源码副本；默认预览、应用要求计划一致、传输已校验快照、不删除远端文件 |
 | `.local/lab/scripts/sync-rock.sh` | 使用本地 current 环境的兼容入口，也接受显式 `--env` |
 | `firmware/tools/sync-packages.py` | 构建机把明确选择的自有包集成到 package；默认预览、完整哈希验证，目标旧文件拒绝且不删除 |

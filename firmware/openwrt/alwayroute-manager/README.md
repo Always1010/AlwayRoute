@@ -13,6 +13,10 @@ LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重�
 每个服务独立 JSON 保存域名后缀与精确域名。该目录不列入 conffiles，随包升级替换；
 规则维护、匹配语义与来源锁统一见仓库 [config/routing/](../../../config/routing/README.md)，不维护第二份预设说明。
 包目录由 OpenWrt `package.mk` 递归追踪，修改服务数据参与增量重建。
+国内组另引用 `/usr/share/alwayroute/rules/` 中的通用域名和目的 IP 二进制集合，
+路由与 DNS 共享域名数据；未匹配域名解析后先重查手工地址覆盖，再进行国内 IP 补漏。
+这些构建主机生成的外部输入由 `PKG_FILE_DEPENDS` 跟踪，不进入用户模型和 capabilities 大数组，
+也不在设备启动时联网下载。构建命令、版本锁与第三方许可仍以规则维护说明为准。
 下载默认仅 HTTPS、默认验证证书、20秒总时限、128KiB上限；不使用公共转换服务。
 每个订阅可由管理员显式设置`allowHttp:true`，仅为该来源允许http://输入；
 缺字段、false或非布尔true均不构成许可。HTTP没有传输加密，不全局放开，也不允许其他scheme。
