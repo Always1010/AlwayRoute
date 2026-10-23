@@ -16,6 +16,8 @@
 | `ui/build-preview.cjs`、`ui/preview-runtime.js` | 用生产页面生成带合成 RPC 的离线预览 | Node 生成；浏览器人工检查 |
 | `manager/run-tests.py` | 组合并执行模型、订阅、内存事务及下载脚本测试 | Python 与已有 ucode（含 fs／digest 模块） |
 | `manager/run.uc` | 通过真实模块导入检查模型与订阅 | 匹配的 ucode 与模块搜索路径 |
+| `tools/test_routing_build.py`、`firmware/test_routing_payload.py` | 固定规则输入的哈希、范围及镜像载荷一致性 | 已有 Python，无网络与设备访问 |
+| `integration/routing-core.py` | 真实核心的域名／DNS、IP 补漏、Other 与手工阻断 | 构建主机已有 ucode／sing-box；仅合成回环服务 |
 | `manager/test-timeout.py` | shell watchdog 退出码、截止超时和中断清理 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/check-contract.py` | UI／RPC 方法、ACL 和菜单绑定的静态一致性 | 已有 Python，可在电脑运行 |
 | `integration/forwarding-test.py` | 用替身命令检查转发所有权、失败清理等行为 | POSIX shell 与 Python，适合 构建主机 |
@@ -47,6 +49,13 @@ python3 tests/manager/run-tests.py /path/to/ucode -
 
 # 真实模块导入
 /path/to/ucode -L firmware/openwrt/alwayroute-manager/files/usr/share/ucode tests/manager/run.uc
+
+# 国内规则输入与镜像绑定；不下载规则
+python3 tests/tools/test_routing_build.py
+python3 tests/firmware/test_routing_payload.py
+
+# 真实核心、临时端口及合成 DNS／回环连接，不访问生产配置
+python3 tests/integration/routing-core.py --ucode /path/to/ucode --sing-box /path/to/host/sing-box
 
 # 运行时兼容性
 /path/to/ucode tests/integration/runtime-api.uc

@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 import urllib.request
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / 'config/routing/sources.lock.json'
@@ -68,7 +69,23 @@ def validate_source(name, data):
     return {field: len(values) for field, values in rule.items()}
 
 
-def build(lock, cache, output, core, fetch=False):
+def compile_source(name, data, ip_family):
+    source = json.loads(data)
+    if name == 'domestic-ip' and ip_family == 'ipv4':
+        source['rules'][0]['ip_cidr'] = [value for value in source['rules'][0]['ip_cidr']
+                                        if ipaddress.ip_network(value).version == 4]
+    return json.dumps(source, ensure_ascii=False, separators=(',', ':')).encode()
+
+
+def filesystem_srs(data):
+    """Keep the standard SRS container; let SquashFS compress its payload once."""
+    if data[:3] != b'SRS' or len(data) < 5:
+        raise ValueError('Compiler returned an invalid SRS container')
+    payload = zlib.decompress(data[4:])
+    return data[:4] + zlib.compress(payload, level=0)
+
+
+def build(lock, cache, output, core, fetch=False, ip_family='ipv4'):
     if output.exists():
         raise ValueError('Choose a new output directory; existing output is never replaced')
     version = subprocess.run([str(core), 'version'], capture_output=True, text=True, check=True, timeout=15).stdout
@@ -84,16 +101,22 @@ def build(lock, cache, output, core, fetch=False):
     license_data = cached_input(lock['ruleSetLicense'], cache, fetch)
     output.mkdir(parents=True)
     manifest = {'schema': 1, 'compilerVersion': '1.13.21', 'compilerSha256': digest(core.read_bytes()),
-                'sourceLockSha256': digest(LOCK.read_bytes()), 'ruleSets': [], 'license': lock['ruleSetLicense']}
+                'sourceLockSha256': digest(LOCK.read_bytes()), 'ipFamily': ip_family,
+                'storageCompression': 'zlib-stored',
+                'ruleSets': [], 'license': lock['ruleSetLicense']}
     # Keep source JSON beside the output for audit/reproduction, outside the install payload.
     sources = output / 'sources'
     sources.mkdir()
     for spec, data, counts in inputs:
-        source = sources / (spec['name'] + '.json')
-        source.write_bytes(data)
+        (sources / (spec['name'] + '.json')).write_bytes(data)
+        compiled_source = compile_source(spec['name'], data, ip_family)
+        source = sources / (spec['name'] + '-compiled.json')
+        source.write_bytes(compiled_source)
         target = output / (spec['name'] + '.srs')
         subprocess.run([str(core), 'rule-set', 'compile', str(source), '--output', str(target)], check=True, timeout=60)
-        manifest['ruleSets'].append({**spec, 'counts': counts, 'file': target.name,
+        target.write_bytes(filesystem_srs(target.read_bytes()))
+        manifest['ruleSets'].append({**spec, 'sourceCounts': counts,
+                                    'counts': validate_source(spec['name'], compiled_source), 'file': target.name,
                                     'binarySha256': digest(target.read_bytes()), 'binaryBytes': target.stat().st_size})
     (output / 'LICENSE').write_bytes(license_data)
     (output / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
@@ -106,13 +129,15 @@ def main():
     parser.add_argument('--cache', type=Path, default=ROOT / '.local/routing-cache')
     parser.add_argument('--output', type=Path, required=True, help='Fresh private/ignored output directory')
     parser.add_argument('--fetch', action='store_true')
+    parser.add_argument('--ip-family', choices=('ipv4', 'dual'), default='ipv4',
+                        help='Installed IP ranges; default matches the current IPv4 routing scope')
     args = parser.parse_args()
     for path in (args.cache.resolve(), args.output.resolve()):
         if path.is_relative_to(ROOT) and not path.is_relative_to(ROOT / '.local'):
             parser.error('Generated data must stay under .local or outside the repository')
     try:
         manifest = build(json.loads(LOCK.read_text(encoding='utf-8')), args.cache.resolve(),
-                         args.output.resolve(), args.sing_box.resolve(), args.fetch)
+                         args.output.resolve(), args.sing_box.resolve(), args.fetch, args.ip_family)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         parser.exit(1, str(error) + '\n')
     print(json.dumps({'ruleSets': [{k: x[k] for k in ('name', 'counts', 'binaryBytes', 'binarySha256')}

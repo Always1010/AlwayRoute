@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import zlib
 
 SPEC = importlib.util.spec_from_file_location('routing_build', Path(__file__).resolve().parents[2] / 'scripts/build-routing.py')
 routing = importlib.util.module_from_spec(SPEC)
@@ -22,6 +23,15 @@ class RoutingInputs(unittest.TestCase):
             with self.assertRaises(ValueError):
                 routing.validate_source('domestic-domain', data)
 
+    def test_filesystem_container_preserves_exact_rule_payload(self):
+        payload = b'synthetic rule payload' * 100
+        original = b'SRS\x02' + zlib.compress(payload)
+        packed = routing.filesystem_srs(original)
+        self.assertEqual(packed[:4], original[:4])
+        self.assertEqual(zlib.decompress(packed[4:]), payload)
+        with self.assertRaises(ValueError):
+            routing.filesystem_srs(b'invalid')
+
     def test_corrupt_cache_is_rejected_without_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
             cache = Path(directory)
@@ -36,6 +46,13 @@ class RoutingInputs(unittest.TestCase):
             data = json.dumps({'version': 2, 'rules': [{'ip_cidr': [network]}]}).encode()
             with self.assertRaises(ValueError):
                 routing.validate_source('domestic-ip', data)
+
+    def test_ipv4_payload_filter_retains_the_original_source(self):
+        data = json.dumps({'version': 2, 'rules': [{'ip_cidr': ['192.0.2.0/24', '2001:db8::/32']}]}).encode()
+        selected = json.loads(routing.compile_source('domestic-ip', data, 'ipv4'))
+        self.assertEqual(selected['rules'][0]['ip_cidr'], ['192.0.2.0/24'])
+        self.assertEqual(json.loads(routing.compile_source('domestic-ip', data, 'dual')), json.loads(data))
+        self.assertEqual(len(json.loads(data)['rules'][0]['ip_cidr']), 2)
 
     def test_missing_cache_does_not_download_implicitly(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -192,6 +192,37 @@ def inspect_management(readfile, listed_paths, source, reviewed, check):
     return hashlib.sha256(expected).hexdigest()
 
 
+def inspect_routing(readfile, inputs, lock_path, check):
+    """Bind installed compiled rules to the reviewed lock and external build inputs."""
+    lock = json.loads(lock_path.read_bytes())
+    expected_manifest = (inputs / 'manifest.json').read_bytes()
+    actual_manifest = readfile('usr/share/alwayroute/rules/manifest.json')
+    check('routing_manifest_input', actual_manifest == expected_manifest)
+    manifest = json.loads(actual_manifest)
+    check('routing_source_lock', manifest.get('sourceLockSha256') == hashlib.sha256(lock_path.read_bytes()).hexdigest())
+    check('routing_compiler_version', manifest.get('compilerVersion') == '1.13.21')
+    check('routing_ip_family', manifest.get('ipFamily') in ('ipv4', 'dual'))
+    check('routing_storage_compression', manifest.get('storageCompression') == 'zlib-stored')
+    check('routing_required_sets', [s.get('name') for s in manifest.get('ruleSets', [])] == ['domestic-domain', 'domestic-ip'])
+    check('routing_license_source', manifest.get('license') == lock['ruleSetLicense'])
+    license_data = readfile('usr/share/alwayroute/rules/LICENSE')
+    check('routing_license_payload', license_data == (inputs / 'LICENSE').read_bytes()
+          and hashlib.sha256(license_data).hexdigest() == lock['ruleSetLicense']['sha256'])
+    hashes = {}
+    for source, compiled in zip(lock['ruleSets'], manifest['ruleSets'], strict=True):
+        name = source['name']
+        check('routing_source_' + name, all(compiled.get(k) == value for k, value in source.items()))
+        check('routing_filename_' + name, compiled.get('file') == name + '.srs')
+        target = 'usr/share/alwayroute/rules/' + name + '.srs'
+        expected = (inputs / (name + '.srs')).read_bytes()
+        actual = readfile(target)
+        sha = hashlib.sha256(actual).hexdigest()
+        check('routing_payload_' + name, actual == expected and sha == compiled['binarySha256']
+              and len(actual) == compiled['binaryBytes'])
+        hashes[target] = {'input_sha256': hashlib.sha256(expected).hexdigest(), 'installed_sha256': sha}
+    return hashes
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env', type=pathlib.Path, required=True, help='Validated build-host environment JSON')
@@ -322,6 +353,11 @@ def main(argv=None):
                 actual = readfile(target)
                 check('manager_input_' + target, actual == expected)
                 input_hashes[target] = {'input_sha256': input_sha, 'installed_sha256': hashlib.sha256(actual).hexdigest()}
+        input_hashes.update(inspect_routing(readfile, source / 'alwayroute-input/routing',
+                            pathlib.Path(__file__).resolve().parents[2] / 'config/routing/sources.lock.json', check))
+        check('routing_no_source_json', not any(
+            path.startswith('usr/share/alwayroute/rules/') and path.endswith('.json')
+            and path != 'usr/share/alwayroute/rules/manifest.json' for path in listed_paths))
         check('manager_no_embedded_user_state', not any(
             path == 'etc/config/alwayroute' or path == 'etc/init.d/sing-box'
             or path == 'etc/alwayroute' or path.startswith('etc/alwayroute/')

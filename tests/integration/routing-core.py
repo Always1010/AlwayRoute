@@ -4,6 +4,7 @@ Requires existing build-host ucode and sing-box. No external DNS, production
 ports, router, credentials or persistent configuration are used.
 """
 import argparse
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,9 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = ROOT / 'firmware/openwrt/alwayroute-manager/files/usr/share/ucode'
 POLICIES = ROOT / 'firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies'
+SPEC = importlib.util.spec_from_file_location('routing_build', ROOT / 'scripts/build-routing.py')
+routing = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(routing)
 QUERIES = []
 ANSWERS = {'other.synthetic.invalid': '127.0.0.2', 'blocked.synthetic.invalid': '127.0.0.3'}
 
@@ -149,6 +153,7 @@ printf('%J',generate(m));"""
                 target = path.with_suffix('.srs')
                 subprocess.run([str(args.sing_box), 'rule-set', 'compile', str(path), '-o', str(target)],
                     capture_output=True, check=True, timeout=15)
+                target.write_bytes(routing.filesystem_srs(target.read_bytes()))
                 entry['path'] = str(target)
             config['dns']['servers'] = [{'type': 'udp', 'tag': s.role, 'server': '127.0.0.1',
                                         'server_port': s.server_address[1]} for s in servers[:2]]
