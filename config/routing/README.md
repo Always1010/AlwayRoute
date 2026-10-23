@@ -1,6 +1,6 @@
 # 分流数据来源与历史记录
 
-正式服务规则的唯一数据源是管理包的 [policies 目录](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/)，随 `alwayroute-manager` 安装到设备 `/usr/share/alwayroute/policies/`。本目录只保留 [sources.lock.json](sources.lock.json) 与 [历史部署组合](deployments/2026-10-23-revision-20.json)，不保存另一套可独立导入的业务清单。
+正式服务规则的唯一数据源是管理包的 [policies 目录](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/)，随 `alwayroute-manager` 安装到设备 `/usr/share/alwayroute/policies/`。本目录只保留 [sources.lock.json](sources.lock.json) 和来源说明，不保存另一套业务规则或按日期命名的部署配置。
 
 ## 正式服务目录
 
@@ -28,6 +28,6 @@
 
 ## 历史部署与维护
 
-[revision 20 组合记录](deployments/2026-10-23-revision-20.json) 保留当时新增的 120 条自定义规则数量、组合顺序与 Other 出口，`policyFiles` 指向当前完整服务数据。当前文件已包含完整 YouTube 服务，不能按当前列表反推当时仅 4 条 YouTube 补充规则。记录中的 `historicalData.gitCommit` 指定保留旧 `config/routing/profiles/` 文件的 Git 提交，按该提交还原历史值、类型和顺序；设备部署事实见[部署报告](../../docs/reports/2026-10-23-domestic-tiktok-routing.md)。
+历史部署事实与验证结果统一放入 [docs/reports](../../docs/README.md)，不作为当前配置数据。revision 20 的旧值和顺序可从 Git 提交 `1e27197a89b31ee9e73a6c7c98ad619218b0086b` 的旧 profiles 还原，设备部署事实见[当次报告](../../docs/reports/2026-10-23-domestic-tiktok-routing.md)。
 
-新增和维护业务只修改正式 `policies/` 服务文件，必要时更新 `catalog.json`；更新参考来源时修改本目录唯一的来源锁并核对上述审查说明。需要记录一次实际部署时，在 `deployments/` 新建按日期和 revision 命名的历史记录，引用正式服务文件并锁定对应 Git 提交，不复制业务规则。历史记录不能直接作为当前配置导入，不能用记录中的 revision 代替提交时读取的最新 revision。
+新增和维护业务只修改正式 `policies/` 服务文件，必要时更新 `catalog.json`；更新参考来源时修改本目录唯一的来源锁并核对上述审查说明。新的部署、迁移和测试结果写入报告，不再生成带日期的配置清单，也不复制业务规则。

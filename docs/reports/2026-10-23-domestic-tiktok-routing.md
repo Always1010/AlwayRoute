@@ -14,7 +14,7 @@
 
 原有节点、订阅、覆盖设置和其余组选择保持。Other 仍位于组列表末尾。后台 configure job 成功，服务与透明转发均运行；`healthy` 保持原有的 `unverified`，不把有限测试改写为全面交付验收。
 
-当次使用的公开数据现已归入管理包的完整 [YouTube](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/youtube.json)、[TikTok](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/tiktok.json) 和[国内服务](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/domestic.json) 规则集；当次组合顺序、规则数量和历史 Git 提交见 [revision 20 组合记录](../../config/routing/deployments/2026-10-23-revision-20.json)，当前维护方式见[分流数据说明](../../config/routing/README.md)。当前 YouTube 文件为完整服务，不能视作当时 4 条补充规则的快照，历史值与顺序需从记录锁定的 Git 提交还原。上游参考固定为 V2Fly domain-list-community 提交 `5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83`，[来源锁文件](../../config/routing/sources.lock.json)记录 33 个参考文件的 URL 和 SHA-256；不是设备自动下载的全量规则库。后续正式项目整理没有改写本文记录的设备 revision 20 部署事实。
+当次使用的公开数据现已归入管理包的完整 [YouTube](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/youtube.json)、[TikTok](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/tiktok.json) 和[国内服务](../../firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/domestic.json) 规则集；当次组合顺序与规则数量由本文记录，旧清单可从 Git 提交 `1e27197a89b31ee9e73a6c7c98ad619218b0086b` 还原，当前维护方式见[分流数据说明](../../config/routing/README.md)。当前 YouTube 文件为完整服务，不能视作当时 4 条补充规则的快照，历史值与顺序需从上述 Git 提交还原。上游参考固定为 V2Fly domain-list-community 提交 `5b6a77d14fb904a1255f02e2e1b2bcc36ed31f83`，[来源锁文件](../../config/routing/sources.lock.json)记录 33 个参考文件的 URL 和 SHA-256；不是设备自动下载的全量规则库。后续正式项目整理没有改写本文记录的设备 revision 20 部署事实。
 
 | 自定义规则 | 数量 | 内容 |
 | --- | --- | --- |

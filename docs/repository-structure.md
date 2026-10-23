@@ -14,7 +14,7 @@ AlwayRoute/
 │   ├── v1.md                          # 配置模型与 RPC 契约
 │   └── fixtures/                      # 合成配置、订阅输入样本
 ├── config/
-│   └── routing/                       # 分流数据来源锁与历史部署组合
+│   └── routing/                       # 分流数据来源锁与审查说明
 ├── firmware/
 │   ├── README.md                      # 固定构建输入、集成步骤和限制
 │   ├── sources.lock.json              # 上游来源、版本、下载入口与源码树哈希
@@ -56,7 +56,7 @@ AlwayRoute/
 | 位置 | 保存内容 | 维护时同时关注 |
 | --- | --- | --- |
 | `contracts/v1.md`、`contracts/fixtures/` | 管理模型、接口约定及合成样本 | 前后端实现、权限和对应测试 |
-| `config/routing/` | `sources.lock.json` 锁定公共参考来源，`deployments/` 记录历史组合并引用正式服务数据和 Git 提交 | 历史数量、顺序、来源与部署报告；不保存第二套业务规则 |
+| `config/routing/` | `sources.lock.json` 锁定公共参考来源；业务数据唯一主本位于管理包 policies，部署事实归入 reports | 历史数量、顺序、来源与部署报告；不保存第二套业务规则 |
 | `firmware/openwrt/alwayroute-manager/files/usr/share/alwayroute/policies/` | 唯一正式服务规则：`catalog.json` 文件名索引，各服务独立 JSON 保存后缀与精确域名 | 后端目录加载、规则优先级、来源说明及包安装；随包升级替换 |
 | `firmware/openwrt/alwayroute-core/Makefile` | 外部核心 ELF、来源信息与许可证的安装配方 | 外部输入哈希及增量构建依赖 |
 | `firmware/openwrt/alwayroute-manager/files/usr/share/ucode/alwayroute/` | `model.uc`、`subscription.uc`、`store.uc`：模型生成、订阅解析与配置事务 | `contracts/`、`tests/manager/` |
