@@ -156,17 +156,15 @@ export function validate(m) {
 };
 export function generate(m) {
  validate(m);
- let outbounds=[{type:'direct',tag:'direct'}], rules=[{port:53,action:'hijack-dns'}],dnsRules=[];
- if(m.mode=='rule')push(rules,{action:'sniff',sniffer:['tls','http','quic']});
+ let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[];
  for(let n in effective(m)) {
   let o={type:'vmess',tag:n.id,server:n.server,server_port:n.port,uuid:n.uuid,security:n.security ?? 'auto',alter_id:n.alterId ?? 0};
   if(n.tls?.enabled) o.tls={enabled:true,server_name:n.tls.serverName ?? n.server};
   if(n.transport) o.transport={type:'ws',path:n.transport.path ?? '/',headers: n.transport.host ? {Host:n.transport.host}: {}};
-  push(outbounds,o);
+  push(outbounds,o);push(choices,n.id);
  }
  for(let g in m.groups) {
-  let selected=g.selected=='block'?'direct':g.selected,members=['direct'];
-  if(selected!='direct')push(members,selected);
+  let selected=g.selected=='block'?'direct':g.selected,members=clone(choices);
   if(g.id!='Proxy' && index(members,'Proxy')<0)push(members,'Proxy');
   push(outbounds,{type:'selector',tag:g.id,outbounds:members,default:selected,interrupt_exist_connections:false});
  }
