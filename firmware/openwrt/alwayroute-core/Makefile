@@ -21,7 +21,8 @@ define Package/alwayroute-core
 endef
 
 define Package/alwayroute-core/description
-  Fixed, externally built static MIPSLE softfloat sing-box core.
+  Fixed, externally built static sing-box core for the selected target.
+  Image inspection must verify its CPU architecture and reviewed provenance.
   This evaluation package does not enable forwarding or install a proxy UI.
 endef
 

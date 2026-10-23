@@ -19,13 +19,16 @@ sys.path.insert(0, str(project / 'firmware/tools'))
 spec = importlib.util.spec_from_file_location('native_build', project / 'firmware/tools/run-native-build.py')
 supervisor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(supervisor)
+from target_profile import load_device, seed_text
+device = load_device()
 
 for case in ['fresh', 'stale', 'missing', 'oversize', 'make-failed', 'budget']:
     with tempfile.TemporaryDirectory(prefix='alwayroute-supervisor-test-') as directory:
         work = Path(directory)
         source = work / 'source'
-        image = source / supervisor.IMAGE_RELATIVE
+        image = source / device['image']['path']
         image.parent.mkdir(parents=True)
+        (source / '.config').write_text(seed_text(device))
         if case == 'stale':
             image.write_bytes(b'old image')
         environment = work / 'environment.json'
@@ -46,7 +49,7 @@ for case in ['fresh', 'stale', 'missing', 'oversize', 'make-failed', 'budget']:
                 self.stopped = case != 'budget'
                 if case in ('fresh', 'oversize', 'make-failed', 'budget'):
                     with image.open('wb') as stream:
-                        stream.truncate(supervisor.IMAGE_LIMIT_BYTES + 1 if case == 'oversize' else 8)
+                        stream.truncate(device['image']['max_bytes'] + 1 if case == 'oversize' else 8)
 
             def poll(self):
                 return (2 if case == 'make-failed' else 0) if self.stopped else None

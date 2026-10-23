@@ -1,7 +1,7 @@
-"""Incremental 4A image build supervisor, run on the POSIX build host.
+"""Incremental device image build supervisor, run on the POSIX build host.
 
 --env selects existing build paths and resource limits, not a remote executor.
-Without it the existing Rock layout, -j8, 30 GiB and two-hour limit are retained.
+A separate --device recipe selects the image path and capacity limits.
 Requires existing prerequisites; installs no software and never cleans caches.
 Preserve existing native-build.log/state files before a deliberate next run.
 """
@@ -16,7 +16,8 @@ import subprocess
 import time
 import traceback
 
-from build_context import build_context, IMAGE_LIMIT_BYTES, IMAGE_RELATIVE
+from build_context import build_context
+from target_profile import DEFAULT_DEVICE, load_device, require_build_target
 
 
 def refuse_active_make(source):
@@ -62,11 +63,13 @@ def run_build(context):
     work = context['build_root'].resolve(strict=True)
     if not source.is_dir() or source.parent != work:
         raise SystemExit('OpenWrt source must be an existing directory inside its build workspace')
+    require_build_target(source, context['device'])
     # Read-only check protects older, unguarded supervisors too. Repeat under the
     # lock to close the race between two guarded starts.
     refuse_active_make(source)
     with build_lock(work):
         refuse_active_make(source)
+        require_build_target(source, context['device'])
         return supervise(context, source, work)
 
 
@@ -74,7 +77,8 @@ def supervise(context, source, work):
     statefile = work / 'native-build-state.json'
     begin = time.monotonic()
     process = None
-    image = source / IMAGE_RELATIVE
+    device = context['device']
+    image = source / device['image']['path']
     previous_image = image_stamp(image)
     command = ['make', '-j' + str(context['jobs']), 'V=s']
     with (work / 'native-build.log').open('wb') as log:
@@ -89,7 +93,8 @@ def supervise(context, source, work):
                 'started_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'command': command, 'disk_limit_bytes': context['disk_limit_bytes'],
                 'timeout_seconds': context['timeout_seconds'],
-                'status': 'running', 'incremental': True,
+                'status': 'running', 'incremental': True, 'device': device['id'],
+                'image_limit_bytes': device['image']['max_bytes'],
             }
             while process.poll() is None:
                 usage = subprocess.run(['du', '-sb', str(work)], capture_output=True, text=True, timeout=60)
@@ -116,14 +121,14 @@ def supervise(context, source, work):
             # A successful make alone must never authorize that stale image.
             current_image = image_stamp(image)
             fresh_image = current_image is not None and current_image != previous_image
-            bounded_image = fresh_image and image.stat().st_size <= IMAGE_LIMIT_BYTES
+            bounded_image = fresh_image and image.stat().st_size <= device['image']['max_bytes']
             accepted = returncode == 0 and bounded_image and 'stop_reason' not in state
             state.update(
                 status='succeeded' if accepted else 'failed', returncode=returncode,
                 elapsed_seconds=round(time.monotonic() - begin, 3), image_inspection_required=True,
                 image_fresh=fresh_image, image_within_size_limit=bool(bounded_image))
             if returncode == 0 and not accepted and 'stop_reason' not in state:
-                state['stop_reason'] = 'make returned zero without a fresh image within the evaluation size limit'
+                state['stop_reason'] = 'make returned zero without a fresh image within the device size limit'
             statefile.write_text(json.dumps(state, indent=2) + '\n')
             print(json.dumps(state), flush=True)
             return 0 if accepted else returncode or 1
@@ -142,9 +147,12 @@ def supervise(context, source, work):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--env', type=Path, help='Validated environment JSON; default: existing Rock paths and limits')
+    parser.add_argument('--env', type=Path, required=True, help='Validated build-host environment JSON')
+    parser.add_argument('--device', default=DEFAULT_DEVICE, help='Repository device recipe name')
     args = parser.parse_args(argv)
-    return run_build(build_context(args.env))
+    context = build_context(args.env)
+    context['device'] = load_device(args.device)
+    return run_build(context)
 
 
 if __name__ == '__main__':

@@ -20,7 +20,7 @@ sys.path.insert(0, str(tools))
 from build_context import build_context
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--env', type=Path, help='Environment JSON on the build host; default: existing Rock layout')
+parser.add_argument('--env', type=Path, required=True, help='Explicit environment JSON on the build host')
 parser.add_argument('--candidate', type=Path, required=True, help='mipsle-asm-r2 ELF, with adjacent .build-info.json and original overlay stage')
 parser.add_argument('--standard', type=Path, required=True, help='Standard ELF, with adjacent .build-info.json')
 args = parser.parse_args()

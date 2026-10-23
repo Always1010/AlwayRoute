@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "xiaomi-4a-gigabit",
+  "name": "小米路由器 4A 千兆版（第一版）",
+  "architecture": "mipsle-softfloat",
+  "target": "ramips/mt7621",
+  "board": "xiaomi,mi-router-4a-gigabit",
+  "excluded_boards": ["xiaomi,mi-router-4a-gigabit-v2"],
+  "seed_files": ["openwrt/common.config", "devices/xiaomi-4a-gigabit.config"],
+  "patches": ["openwrt/patches/001-4a-evaluation-image-limit.patch"],
+  "image": {
+    "path": "bin/targets/ramips/mt7621/openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin",
+    "manifest_suffix": "-squashfs-sysupgrade.bin",
+    "format": "uimage-mips-squashfs",
+    "max_bytes": 13565952,
+    "stock_install_max_bytes": 13631488,
+    "firmware_partition_bytes": 15204352,
+    "erase_block_bytes": 65536,
+    "squashfs_block_bytes": 524288
+  },
+  "required_packages": ["kmod-mt7603", "kmod-mt76x2"],
+  "forbidden_packages": ["ppp", "ppp-mod-pppoe"],
+  "allowed_crypto_backends": ["poly1305-32", "mipsle-asm", "mipsle-asm-r2"]
+}

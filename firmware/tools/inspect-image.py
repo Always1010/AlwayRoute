@@ -1,4 +1,4 @@
-"""Read-only inspection of the single approved 4A evaluation image.
+"""Read-only inspection using a selected device recipe and supported image layout.
 
 Run on the build host after make produced its target image and native host tools.
 This script never connects to or writes a router.
@@ -16,6 +16,8 @@ import tempfile
 import zlib
 
 from build_context import build_context
+from target_profile import (DEFAULT_DEVICE, architecture, load_device, require_image_validator,
+                            validate_crypto_target)
 
 
 default_core_sha256 = 'f2abdeffaaec58568d7471e44e0fe0d9557eee6a3011ffc2c6f36fcaac396d76'
@@ -101,9 +103,9 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
     # Regenerate only the pinned overrides; compare their actual bytes and scope.
     with tempfile.TemporaryDirectory(prefix='inspect-crypto-') as directory:
         stage = pathlib.Path(directory) / 'stage'
-        context = build_context() if module_root is None or go_root is None else None
-        helper.prepare_overlay(module_root if module_root is not None else context['cache_root'] / 'gomodcache/golang.org/x/crypto@v0.48.0',
-                               go_root if go_root is not None else context['go_root'], stage)
+        if module_root is None or go_root is None:
+            raise ValueError('Explicit crypto module and Go paths are required')
+        helper.prepare_overlay(module_root, go_root, stage)
         name = 'poly1305-32bit-experiment.json' if legacy else 'assembly-experiment.json'
         expected_manifest = json.loads((stage / name).read_text())
         check('core_crypto_exact_generated_sources', manifest.get('output_sha256') == expected_manifest['output_sha256'])
@@ -139,9 +141,47 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
     check('core_crypto_actual_poly1305_assembly', multiply_accumulates == (0 if legacy else 38))
 
 
+def inspect_layout(data, device, check):
+    require_image_validator(device)
+    check('bounded_by_evaluation_limit', len(data) <= device['image']['max_bytes'])
+    check('fits_stock_OS1', len(data) <= device['image']['stock_install_max_bytes'])
+    check('image_header_available', len(data) >= 64)
+    h = struct.unpack('>7I4B32s', data[:64])
+    check('uimage_magic', h[0] == 0x27051956)
+    header = bytearray(data[:64])
+    header[4:8] = bytes(4)
+    check('uimage_header_crc', zlib.crc32(header) & 0xFFFFFFFF == h[1])
+    kernel_end = 64 + h[3]
+    check('kernel_payload_bounds', 64 < kernel_end < len(data))
+    check('kernel_data_crc', zlib.crc32(data[64:kernel_end]) & 0xFFFFFFFF == h[6])
+    check('linux_mips_kernel', h[7:10] == (5, 5, 2))
+    # This target appends SquashFS immediately after its uImage loader payload.
+    offset = kernel_end
+    check('squashfs_header_available', offset + 96 <= len(data))
+    check('squashfs_at_kernel_end', data[offset:offset+4] == b'hsqs')
+    check('squashfs_v4', struct.unpack_from('<HH', data, offset + 28) == (4, 0))
+    used = struct.unpack_from('<Q', data, offset + 40)[0]
+    check('squashfs_bounds', offset + used <= len(data))
+    check('squashfs_xz', struct.unpack_from('<H', data, offset + 20)[0] == 4)
+    squashfs_block_size = struct.unpack_from('<I', data, offset + 12)[0]
+    check('squashfs_512k_blocks', squashfs_block_size == device['image']['squashfs_block_bytes'])
+    return kernel_end, offset, used, squashfs_block_size
+
+
+def inspect_identity(metadata, core, device, check):
+    devices = metadata.get('new_supported_devices', metadata.get('supported_devices', []))
+    check('metadata_device', device['board'] in devices)
+    check('metadata_excludes_v2', not set(device['excluded_boards']) & set(devices))
+    check('metadata_target', metadata['version']['target'] == device['target'])
+    arch = architecture(device['architecture'])
+    check('core_elf_target', len(core) >= 20 and core[:6] == bytes([127, 69, 76, 70, arch['elf_class'], arch['elf_data']])
+          and struct.unpack_from('<H' if arch['elf_data'] == 1 else '>H', core, 18)[0] == arch['elf_machine'])
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--env', type=pathlib.Path, help='Validated environment JSON; paths apply on this build host (default: existing Rock layout)')
+    parser.add_argument('--env', type=pathlib.Path, required=True, help='Validated build-host environment JSON')
+    parser.add_argument('--device', default=DEFAULT_DEVICE, help='Repository device recipe name')
     parser.add_argument('image', type=pathlib.Path)
     parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
     parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
@@ -151,6 +191,9 @@ def main(argv=None):
     parser.add_argument('--output', type=pathlib.Path, help='Report path (default: <OpenWrt tree parent>/image-inspection.json)')
     args = parser.parse_args(argv)
     context = build_context(args.env)
+    device = load_device(args.device)
+    require_image_validator(device)
+    validate_crypto_target(device['architecture'], args.experimental_crypto, device)
     source = context['openwrt_tree']
     work = context['build_root']
     if args.profile == 'manager' and args.baseline_image is None:
@@ -158,6 +201,8 @@ def main(argv=None):
     if args.experimental_crypto and args.profile != 'manager':
         parser.error('--experimental-crypto requires --profile manager')
     image = args.image.resolve()
+    if not image.name.endswith(device['image']['manifest_suffix']):
+        parser.error('Image filename does not match the selected device manifest suffix')
     data = image.read_bytes()
     expected_core_sha = args.core_sha256
     checks = {}
@@ -176,32 +221,9 @@ def main(argv=None):
         return r.stdout
 
 
-    check('bounded_by_evaluation_limit', len(data) <= 13248 * 1024)
-    check('fits_stock_OS1', len(data) <= 0xD00000)
-    h = struct.unpack('>7I4B32s', data[:64])
-    check('uimage_magic', h[0] == 0x27051956)
-    header = bytearray(data[:64])
-    header[4:8] = bytes(4)
-    check('uimage_header_crc', zlib.crc32(header) & 0xFFFFFFFF == h[1])
-    kernel_end = 64 + h[3]
-    check('kernel_payload_bounds', 64 < kernel_end < len(data))
-    check('kernel_data_crc', zlib.crc32(data[64:kernel_end]) & 0xFFFFFFFF == h[6])
-    check('linux_mips_kernel', h[7:10] == (5, 5, 2))
-    # This target appends SquashFS immediately after its uImage loader payload.
-    offset = kernel_end
-    check('squashfs_at_kernel_end', data[offset:offset+4] == b'hsqs')
-    check('squashfs_v4', struct.unpack_from('<HH', data, offset + 28) == (4, 0))
-    used = struct.unpack_from('<Q', data, offset + 40)[0]
-    check('squashfs_bounds', offset + used <= len(data))
-    check('squashfs_xz', struct.unpack_from('<H', data, offset + 20)[0] == 4)
-    squashfs_block_size = struct.unpack_from('<I', data, offset + 12)[0]
-    check('squashfs_512k_blocks', squashfs_block_size == 524288)
+    kernel_end, offset, used, squashfs_block_size = inspect_layout(data, device, check)
     fwtool = source / 'staging_dir/host/bin/fwtool'
     metadata = json.loads(tool(str(fwtool), '-i', '/dev/stdout', str(image)))
-    devices = metadata.get('new_supported_devices', metadata.get('supported_devices', []))
-    check('metadata_device', 'xiaomi,mi-router-4a-gigabit' in devices)
-    check('metadata_excludes_v2', 'xiaomi,mi-router-4a-gigabit-v2' not in devices)
-    check('metadata_target', metadata['version']['target'] == 'ramips/mt7621')
     check('metadata_version', metadata['version']['version'] == '25.12.6')
     unsquashfs = source / 'staging_dir/host/bin/unsquashfs4'
 
@@ -212,7 +234,7 @@ def main(argv=None):
 
     core = readfile('usr/bin/sing-box')
     core_sha = hashlib.sha256(core).hexdigest()
-    check('core_elf_mipsle', core[:6] == b'\x7fELF\x01\x01' and struct.unpack_from('<H', core, 18)[0] == 8)
+    inspect_identity(metadata, core, device, check)
     # Packaging may strip the ELF again; distinguish a changed payload explicitly.
     check('core_matches_tested_payload', core_sha == expected_core_sha)
     build_info = json.loads(readfile('usr/share/alwayroute/build-info.json'))
@@ -242,7 +264,7 @@ def main(argv=None):
             if len(fields) == 2 and fields[0] == 'build' and '=' in fields[1]:
                 key, value = fields[1].split('=', 1)
                 settings[key] = value.strip('"')
-        check('core_embedded_target', all(settings.get(k) == v for k, v in {'GOOS':'linux','GOARCH':'mipsle','GOMIPS':'softfloat','CGO_ENABLED':'0'}.items()))
+        check('core_embedded_target', all(settings.get(k) == v for k, v in architecture(device['architecture'])['go_env'].items()))
         check('core_embedded_tags', settings.get('-tags') == tags)
         check('core_embedded_full_entry', '\n\tpath\tgithub.com/sagernet/sing-box/cmd/sing-box\n' in embedded)
     startup = readfile('etc/uci-defaults/99-alwayroute-management')
@@ -328,12 +350,12 @@ def main(argv=None):
             interpreter = first_line[2:].split()[0] if first_line.startswith(b'#!') and first_line[2:].strip() else b''
             check('executable_text_shebang_' + path, interpreter.startswith(b'/') and interpreter.decode().lstrip('/') in listed_paths)
     check('no_embedded_ssh_host_keys', not any('squashfs-root/etc/dropbear/dropbear_' in line and '_host_key' in line for line in listing.splitlines()))
-    manifest = image.with_name(image.name.replace('-squashfs-sysupgrade.bin', '.manifest'))
+    manifest = image.with_name(image.name.removesuffix(device['image']['manifest_suffix']) + '.manifest')
     packages = {}
     for line in manifest.read_text().splitlines():
         name, version = line.split(' - ', 1)
         packages[name] = version
-    for name in ['alwayroute-core', 'kmod-mt7603', 'kmod-mt76x2', 'kmod-nft-tproxy', 'ip-full', 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only']:
+    for name in ['alwayroute-core', 'kmod-nft-tproxy', 'ip-full', 'luci-base', 'luci-mod-admin-full', 'uhttpd', 'dropbear', 'firewall4', 'odhcp6c', 'odhcpd-ipv6only'] + device['required_packages']:
         check('package_' + name, name in packages)
     expected_package_delta = None
     if args.profile == 'manager':
@@ -342,17 +364,19 @@ def main(argv=None):
         baseline_data = args.baseline_image.read_bytes()
         baseline_kernel_end = 64 + struct.unpack_from('>I', baseline_data, 12)[0]
         check('manager_kernel_payload_unchanged', data[64:kernel_end] == baseline_data[64:baseline_kernel_end])
-        baseline_manifest = args.baseline_image.with_name(args.baseline_image.name.replace('-squashfs-sysupgrade.bin', '.manifest'))
+        baseline_manifest = args.baseline_image.with_name(args.baseline_image.name.removesuffix(device['image']['manifest_suffix']) + '.manifest')
         baseline_packages = dict(line.split(' - ', 1) for line in baseline_manifest.read_text().splitlines())
         manager_packages = {'alwayroute-forwarding', 'alwayroute-manager', 'luci-app-alwayroute'}
         added_packages = set(packages) - set(baseline_packages)
         expected_package_delta = {'added': sorted(manager_packages), 'removed': []}
         check('manager_only_three_added_packages', added_packages == manager_packages)
         check('manager_baseline_packages_unchanged', all(packages.get(name) == version for name, version in baseline_packages.items()))
-    check('no_ppp', 'ppp' not in packages and 'ppp-mod-pppoe' not in packages)
-    overlay_start = ((offset + used + 65535) // 65536) * 65536
+    check('device_forbidden_packages_absent', not set(device['forbidden_packages']) & set(packages))
+    erase = device['image']['erase_block_bytes']
+    overlay_start = ((offset + used + erase - 1) // erase) * erase
+    check('overlay_within_firmware_partition', overlay_start <= device['image']['firmware_partition_bytes'])
     report = {
-        'image': str(image), 'profile': args.profile, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
+        'image': str(image), 'profile': args.profile, 'device': device['id'], 'architecture': device['architecture'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
         'expected': {
             'core_sha256': expected_core_sha,
             'ip_package': 'ip-full',
@@ -361,9 +385,9 @@ def main(argv=None):
         'uimage_payload_end': kernel_end, 'squashfs_bytes_used': used,
         'squashfs_block_size': squashfs_block_size,
         'overlay_start_relative_firmware': overlay_start,
-        'physical_firmware_bytes': 0xE80000,
-        'raw_overlay_capacity_bytes_before_filesystem_overhead': 0xE80000 - overlay_start,
-        'stock_OS1_remaining_after_image': 0xD00000 - len(data),
+        'physical_firmware_bytes': device['image']['firmware_partition_bytes'],
+        'raw_overlay_capacity_bytes_before_filesystem_overhead': device['image']['firmware_partition_bytes'] - overlay_start,
+        'stock_OS1_remaining_after_image': device['image']['stock_install_max_bytes'] - len(data),
         'core_bytes': len(core), 'core_sha256': core_sha,
         'metadata': metadata, 'package_count': len(packages), 'checks': checks,
         'boot_verified': False, 'flashing_performed': False,

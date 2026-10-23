@@ -1,19 +1,16 @@
 """Resolve build-host paths without connecting hosts or changing configuration.
 
-Without --env the existing Rock task layout is retained. Environment files are
-validated by the repository workflow module; these tools still run on the build
-host even when its environment describes an SSH executor.
+An explicit environment selects private build-host paths. These tools still run
+on that host even when its environment describes an SSH executor. Device recipes
+are selected separately and never change connection or cache locations.
 """
 from pathlib import Path
 import sys
 
 
-DEFAULT_TASK_ROOT = Path('/srv/alwayroute')
-IMAGE_RELATIVE = Path('bin/targets/ramips/mt7621/openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin')
-IMAGE_LIMIT_BYTES = 13248 * 1024
-
-
 def build_context(environment=None, *, default_jobs=8, default_timeout=7200):
+    if environment is None:
+        raise ValueError('Select --env with build.task_root; no personal build layout is assumed')
     build = {}
     if environment is not None:
         scripts = Path(__file__).resolve().parents[2] / 'scripts'
@@ -21,7 +18,9 @@ def build_context(environment=None, *, default_jobs=8, default_timeout=7200):
             sys.path.insert(0, str(scripts))
         from alwayroute_context import load_environment
         build = load_environment(environment).get('build', {})
-    task = Path(build.get('task_root', DEFAULT_TASK_ROOT))
+    if 'task_root' not in build:
+        raise ValueError('The selected environment requires build.task_root')
+    task = Path(build['task_root'])
     tree = Path(build.get('openwrt_tree', task / 'openwrt-build/source'))
     toolchains = Path(build.get('toolchain_root', task / 'toolchains'))
     go_root = toolchains / 'go1.27.3/go'

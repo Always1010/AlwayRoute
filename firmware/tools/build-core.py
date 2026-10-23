@@ -1,4 +1,4 @@
-"""Build the pinned 4A core on the build host using existing source and Go caches.
+"""Build the pinned core for a selected CPU architecture on the build host using existing source and Go caches.
 
 No downloads, toolchain installation, source-tree edits or global configuration.
 All upstream CLI commands and registrations remain available under the pinned tags.
@@ -15,6 +15,8 @@ import tarfile
 import time
 
 from build_context import build_context
+from target_profile import (ARCHITECTURES, DEFAULT_DEVICE, GO_ARCH_OPTIONS, architecture,
+                            load_device, validate_crypto_target)
 
 
 ARCHIVE_SHA = 'c994018d7c2a8fc9fcf6080e4b9cc4f2f915e755342238b77e46fc0806fe96db'
@@ -38,9 +40,21 @@ HOT_PACKAGES = [
 ]
 
 
+def core_environment(context, arch):
+    return {**{k: v for k, v in os.environ.items() if k not in GO_ARCH_OPTIONS},
+           **arch['go_env'], 'GOMAXPROCS': str(context['jobs']), 'GOTOOLCHAIN': 'local', 'GOPROXY': 'off',
+           'GOFLAGS': '', 'GOENV': 'off', 'GOWORK': 'off', 'GOEXPERIMENT': '',
+           'GOROOT': str(context['go_root']),
+           'GOCACHE': str(context['cache_root'] / 'gocache'),
+           'GOMODCACHE': str(context['cache_root'] / 'gomodcache'),
+           'GOPATH': str(context['cache_root'] / 'gopath'), 'TMPDIR': str(context['cache_root'] / 'tmp')}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--env', type=Path, help='Validated environment JSON; paths apply on this build host (default: existing Rock layout)')
+    parser.add_argument('--env', type=Path, required=True, help='Validated build-host environment JSON')
+    parser.add_argument('--device', default=DEFAULT_DEVICE, help='Device recipe providing the default architecture and crypto allowlist')
+    parser.add_argument('--architecture', choices=tuple(ARCHITECTURES), help='Override for a standalone core; does not declare device compatibility')
     parser.add_argument('--output', type=Path, required=True, help='Fresh ELF destination on this build host')
     parser.add_argument('--pgo', type=Path, help='Device CPU profile; keeps all features and the pinned compiler')
     parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
@@ -51,6 +65,11 @@ def main(argv=None):
     compiler.add_argument('--crypto-inline', action='store_true', help='Size candidate: preserve crypto inlining while disabling it in other packages')
     args = parser.parse_args(argv)
     context = build_context(args.env, default_jobs=2, default_timeout=1800)
+    device = load_device(args.device)
+    arch_name = args.architecture or device['architecture']
+    arch = architecture(arch_name)
+    validate_crypto_target(arch_name, args.experimental_crypto,
+                           device if arch_name == device['architecture'] else None)
     source = context['sing_box_source']
     archive = context['sing_box_archive']
     output = args.output.resolve()
@@ -77,13 +96,7 @@ def main(argv=None):
     if 'go1.27.3 ' not in version:
         raise SystemExit('Unexpected Go toolchain: ' + version)
     output.parent.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, 'GOOS': 'linux', 'GOARCH': 'mipsle', 'GOMIPS': 'softfloat',
-           'CGO_ENABLED': '0', 'GOMAXPROCS': str(context['jobs']), 'GOTOOLCHAIN': 'local', 'GOPROXY': 'off',
-           'GOFLAGS': '', 'GOENV': 'off', 'GOWORK': 'off', 'GOEXPERIMENT': '',
-           'GOROOT': str(go.parent.parent),
-           'GOCACHE': str(context['cache_root'] / 'gocache'),
-           'GOMODCACHE': str(context['cache_root'] / 'gomodcache'),
-           'GOPATH': str(context['cache_root'] / 'gopath'), 'TMPDIR': str(context['cache_root'] / 'tmp')}
+    env = core_environment(context, arch)
     started = time.monotonic()
     gcflags = ['all=-l'] if args.no_inline else [p+'=-l' for p in COLD_PACKAGES] if args.cold_no_inline else []
     if args.crypto_inline:
@@ -125,7 +138,8 @@ def main(argv=None):
     data = output.read_bytes()
     metadata = {'version': '1.13.21-alwayroute-router', 'source_sha256': ARCHIVE_SHA,
                 'input_elf_sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data),
-                'go': '1.27.3', 'architecture': 'linux/mipsle softfloat', 'CGO_ENABLED': 0,
+                'go': '1.27.3', 'architecture': arch['description'], 'CGO_ENABLED': 0,
+                'architecture_id': arch_name, 'target_go_env': arch['go_env'],
                 'tags': TAGS, 'gcflags': gcflags, 'profile_version': 1,
                 'entry_package': ENTRY, 'cli_profile': 'full', 'registry_profile': 'upstream',
                 'registry_sha256': hashlib.sha256((source/'include/registry.go').read_bytes()).hexdigest(),

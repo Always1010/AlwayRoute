@@ -13,6 +13,7 @@ AlwayRoute/
 ├── firmware/
 │   ├── README.md              # 当前构建配方与检查入口
 │   ├── sources.lock.json      # 上游版本、提交、来源与树哈希
+│   ├── devices/               # 设备参数、设备seed与补丁选择
 │   ├── openwrt/               # 自有四包、seed、首启脚本、补丁
 │   ├── tools/                 # 核心构建、overlay、监督、镜像检查
 │   └── tests/                 # overlay编译输入及Go差分测试
