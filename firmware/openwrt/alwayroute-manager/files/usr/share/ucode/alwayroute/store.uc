@@ -1,7 +1,7 @@
 'use strict';
 import * as fs from 'fs';
 import { sha256 } from 'digest';
-import { fail, clone, empty, normalize, validate, effective, generate, policyCatalog } from 'alwayroute.model';
+import { fail, clone, empty, normalize, validate, effective, generate, policyCatalog, modelLimits } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
@@ -204,7 +204,7 @@ function checkNodes(args,m) {
  return response;
 }
 function execute(method,args) {
- if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:{nodes:128,rules:128,subscriptions:16,inputBytes:131072},forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,logs:true,policyPresets:policyCatalog()};
+ if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:modelLimits(),forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
  if(method=='status') {let current=model();return {ok:true,state:state(current),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};}

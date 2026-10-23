@@ -1,4 +1,6 @@
 'use strict';
+import { sha256 } from 'digest';
+import { loadPolicies } from 'alwayroute.policies';
 
 export function fail(code, message) { die('ALWAYROUTE:'+code+':'+message); };
 export function clone(value) { return json(sprintf('%J', value)); };
@@ -14,34 +16,44 @@ function text(value, max) {
 };
 function id(value) { return type(value) == 'string' && match(value, /^[A-Za-z0-9_-]{1,64}$/) != null; }
 function integer(value, min, max) { return type(value) == 'int' && value >= min && value <= max; }
-const POLICY_VERSION = 1;
-const POLICIES = [
- {id:'Proxy',name:'代理',default:true,description:'未命中业务组的常用境外网站',domains:['github.com','githubassets.com','githubusercontent.com','github.io','netflix.com','nflxext.com','nflximg.com','nflxso.net','nflxvideo.net','disneyplus.com','disney-plus.net','dssott.com','spotify.com','scdn.co','reddit.com','redd.it','wikipedia.org','wikimedia.org','twitch.tv','medium.com','stackoverflow.com']},
- {id:'OpenAI',name:'OpenAI',default:true,description:'OpenAI、ChatGPT 及静态内容',domains:['openai.com','chatgpt.com','oaistatic.com','oaiusercontent.com']},
- {id:'Claude',name:'Claude',default:true,description:'Anthropic 与 Claude',domains:['anthropic.com','claude.ai','claude.com']},
- {id:'Google',name:'Google',default:true,description:'Google 通用服务；YouTube 规则优先',domains:['google.com','googleapis.com','gstatic.com','googleusercontent.com','googleadservices.com','google-analytics.com','withgoogle.com','blogger.com','blogspot.com']},
- {id:'YouTube',name:'YouTube',default:true,description:'YouTube 页面、短链、视频与静态内容',domains:['youtube.com','youtu.be','youtube-nocookie.com','googlevideo.com','ytimg.com']},
- {id:'X',name:'X',default:true,description:'X（原 Twitter）页面、短链与静态内容',domains:['x.com','twitter.com','t.co','twimg.com']},
- {id:'Telegram',name:'Telegram',default:true,description:'Telegram 官方网页与公开链接',domains:['telegram.org','telegram.me','telegram.dog','t.me','telesco.pe','telegra.ph']},
- {id:'Other',name:'Other',default:true,description:'所有规则均未命中时的最终出口',domains:[]},
- {id:'Microsoft',name:'Microsoft',default:false,description:'Microsoft、Microsoft 365 与常用消费服务',domains:['microsoft.com','microsoftonline.com','live.com','office.com','office365.com','outlook.com','windows.com','azure.com','bing.com','xbox.com','cloud.microsoft','static.microsoft','usercontent.microsoft']},
- {id:'Apple',name:'Apple',default:false,description:'Apple、iCloud、商店与静态内容',domains:['apple.com','icloud.com','icloud-content.com','itunes.apple.com','apps.apple.com','mzstatic.com','cdn-apple.com','apple-dns.net']},
- {id:'Meta',name:'Meta',default:false,description:'Meta、Facebook、Instagram 与 WhatsApp',domains:['meta.com','facebook.com','fb.com','fbcdn.net','instagram.com','cdninstagram.com','whatsapp.com','whatsapp.net']},
- {id:'Discord',name:'Discord',default:false,description:'Discord 页面、API 与内容分发',domains:['discord.com','discord.gg','discordapp.com','discordapp.net']},
- {id:'Steam',name:'Steam',default:false,description:'Steam 商店、社区、内容与 API',domains:['steampowered.com','steamcommunity.com','steamstatic.com','steamcontent.com','steamserver.net','steam-api.com','valvesoftware.com']}
-];
+const POLICY_VERSION = 2;
+const LIMITS = {nodes:128,rules:512,subscriptions:16,groups:16,inputBytes:131072,ruleValues:128};
+const POLICIES = loadPolicies();
+export function modelLimits() { return clone(LIMITS); };
 export function policyCatalog() { return clone(POLICIES); };
-function policyDomains(id) {
- let domains=[],seen={};
- for(let p in POLICIES)if(id=='Proxy' || p.id==id)for(let domain in p.domains)if(!seen[domain]){push(domains,domain);seen[domain]=true;}
- return domains;
+function policyMatch(id) {
+ let result={domain:[],domain_suffix:[]},seen={};
+ for(let p in POLICIES)if(p.id==id || (id=='Proxy' && p.id!='Domestic')) {
+  for(let key,values in {domain:p.exactDomains,domain_suffix:p.domains})for(let value in values) {
+   let identity=key+':'+value;
+   if(!seen[identity]){push(result[key],value);seen[identity]=true;}
+  }
+ }
+ return result;
 };
+function groupDefault(id) { return id=='Proxy' || id=='Other' || id=='Domestic'?'direct':'Proxy'; }
 export function empty() {
- return { schema: 1, policyVersion: POLICY_VERSION, revision: 0, mode: 'rule', defaultOutbound: 'Other', nodes: [], subscriptions: [], overrides: {},
- groups: [{id:'Proxy',name:'代理',selected:'direct'}, {id:'OpenAI',name:'OpenAI',selected:'Proxy'},
- {id:'Claude',name:'Claude',selected:'Proxy'}, {id:'Google',name:'Google',selected:'Proxy'},
- {id:'YouTube',name:'YouTube',selected:'Proxy'}, {id:'X',name:'X',selected:'Proxy'},
- {id:'Telegram',name:'Telegram',selected:'Proxy'}, {id:'Other',name:'Other',selected:'direct'}], rules: [] };
+ let groups=[];for(let p in POLICIES)if(p.default)push(groups,{id:p.id,name:p.name,selected:groupDefault(p.id)});
+ return {schema:1,policyVersion:POLICY_VERSION,revision:0,mode:'rule',defaultOutbound:'Other',nodes:[],subscriptions:[],overrides:{},groups,rules:[]};
+};
+function ruleValues(r) { return r.values ?? [r.value]; }
+function migratePolicies(n) {
+ // Only remove unchanged rules generated by the former public service profile.
+ // Edited, disabled or user-created rules retain their original priority.
+ let catalog={};for(let p in POLICIES)catalog[p.id]=p;
+ n.rules=filter(n.rules,function(r) {
+  if(!r.enabled || (r.type!='domain' && r.type!='suffix') || length(ruleValues(r))!=1)return true;
+  let value=ruleValues(r)[0],p=catalog[r.outbound];
+  if(!p || index(r.type=='domain'?p.exactDomains:p.domains,value)<0)return true;
+  return r.id!='route_'+substr(sha256(r.outbound+chr(0)+r.type+chr(0)+value),0,16);
+ });
+ for(let wanted in ['TikTok','Domestic']) {
+  let present=false;for(let g in n.groups)if(g.id==wanted)present=true;
+  if(!present && length(n.groups)<LIMITS.groups) {
+   let other=pop(n.groups);push(n.groups,{id:wanted,name:catalog[wanted].name,selected:groupDefault(wanted)});push(n.groups,other);
+  }
+ }
+ n.policyVersion=POLICY_VERSION;return n;
 };
 function legacyFallback(m) {
  let target=m.defaultOutbound;
@@ -53,6 +65,7 @@ function legacyFallback(m) {
 export function normalize(m) {
  let n=clone(m);
  if(type(n)!='object' || n.policyVersion==POLICY_VERSION)return n;
+ if(n.policyVersion==1 && type(n.groups)=='array' && type(n.rules)=='array')return migratePolicies(n);
  if(n.policyVersion!=null)return n;
  if(type(n.groups)!='array' || type(n.rules)!='array')return n;
  let fallback=legacyFallback(n), merged={GitHub:true,Netflix:true,Disney:true,Spotify:true}, kept=[];
@@ -69,8 +82,8 @@ export function normalize(m) {
  for(let p in POLICIES)if(p.default && p.id!='Other')for(let g in n.groups)if(g.id==p.id){push(ordered,g);orderedIds[g.id]=true;}
  for(let g in n.groups)if(g.id!='Other' && !orderedIds[g.id])push(ordered,g);
  for(let g in n.groups)if(g.id=='Other')push(ordered,g);
- n.groups=ordered;n.defaultOutbound='Other';n.policyVersion=POLICY_VERSION;
- return n;
+ n.groups=ordered;n.defaultOutbound='Other';n.policyVersion=1;
+ return migratePolicies(n);
 };
 export function node(n) {
  fields(n, ['id','name','type','enabled','source','sourceKey','server','port','uuid','security','alterId','tls','transport']);
@@ -110,7 +123,7 @@ export function validate(m) {
  fields(m,['schema','policyVersion','revision','mode','defaultOutbound','nodes','subscriptions','overrides','groups','rules']);
  require(m.schema == 1 && m.policyVersion == POLICY_VERSION && integer(m.revision,0,2147483646), '模型版本无效');
  require(index(['rule','global','direct'],m.mode)>=0,'模式无效');
- for (let key,limit in {nodes:128,subscriptions:16,groups:16,rules:128}) require(type(m[key])=='array' && length(m[key])<=limit,'数量超限或列表无效');
+ for (let key,limit in {nodes:LIMITS.nodes,subscriptions:LIMITS.subscriptions,groups:LIMITS.groups,rules:LIMITS.rules}) require(type(m[key])=='array' && length(m[key])<=limit,'数量超限或列表无效');
  require(type(m.overrides)=='object' && length(keys(m.overrides)) <= 128,'覆盖设置无效');
  let ids = {direct:true,block:true}, sourceIds = {};
  for (let s in m.subscriptions) {
@@ -140,18 +153,24 @@ export function validate(m) {
  require(m.defaultOutbound=='Other', '默认出口必须由 Other 策略组管理');
  let ruleIds={};
  for(let r in m.rules) {
-  fields(r,['id','enabled','type','value','outbound']);
+  fields(r,['id','enabled','type','value','values','outbound']);
   require(id(r.id) && !ruleIds[r.id] && type(r.enabled)=='bool','规则标识或开关无效'); ruleIds[r.id]=true;
-  require(usable[r.outbound] && text(r.value,253),'规则出口或值无效');
-  require(index(['domain','suffix','ip','cidr'],r.type)>=0,'规则类型不支持');
-  if(r.type=='ip' || r.type=='cidr') {
-   let parts=split(r.value,'/'), octets=split(parts[0],'.');
-   require(length(octets)==4 && length(parts)==(r.type=='cidr'?2:1),'仅支持 IPv4/IP CIDR');
-   for(let octet in octets) require(match(octet,/^[0-9]{1,3}$/) && int(octet)<=255,'IPv4 地址无效');
-   if(r.type=='cidr') require(match(parts[1],/^[0-9]{1,2}$/) && int(parts[1])<=32,'CIDR 前缀无效');
-  } else require(match(r.value,/^[A-Za-z0-9._-]+$/),'域名规则无效');
+  require(usable[r.outbound], '规则出口无效');
+  require(index(['domain','suffix','regex','ip','cidr'],r.type)>=0,'规则类型不支持');
+  require((r.value!=null)!=(r.values!=null),'规则必须只提供一个 value 或 values');
+  let values=ruleValues(r);require(type(values)=='array' && length(values)>0 && length(values)<=LIMITS.ruleValues,'规则匹配值数量无效');
+  let seen={};
+  for(let value in values) {
+   require(text(value,r.type=='regex'?1024:253) && !seen[value], '规则匹配值无效或重复');seen[value]=true;
+   if(r.type=='ip' || r.type=='cidr') {
+    let parts=split(value,'/'), octets=split(parts[0],'.');
+    require(length(octets)==4 && length(parts)==(r.type=='cidr'?2:1),'仅支持 IPv4/IP CIDR');
+    for(let octet in octets) require(match(octet,/^[0-9]{1,3}$/) && int(octet)<=255,'IPv4 地址无效');
+    if(r.type=='cidr') require(match(parts[1],/^[0-9]{1,2}$/) && int(parts[1])<=32,'CIDR 前缀无效');
+   } else if(r.type!='regex')require(match(value,/^[A-Za-z0-9._-]+$/),'域名规则无效');
+  }
  }
- require(length(sprintf('%J',m))<=131072,'配置超过128KiB');
+ require(length(sprintf('%J',m))<=LIMITS.inputBytes,'配置超过128KiB');
  return m;
 };
 export function generate(m) {
@@ -179,18 +198,20 @@ export function generate(m) {
  }
  if(m.mode=='rule') for(let r in m.rules) {
   if(!r.enabled) continue;
-  let rule={}; rule[r.type=='domain'?'domain':r.type=='suffix'?'domain_suffix':'ip_cidr']=[r.type=='ip'?r.value+'/32':r.value];
+  let field=r.type=='domain'?'domain':r.type=='suffix'?'domain_suffix':r.type=='regex'?'domain_regex':'ip_cidr';
+  let values=ruleValues(r);if(r.type=='ip')values=map(values,value=>value+'/32');
+  let rule={};rule[field]=values;
   if(r.outbound=='block') rule.action='reject'; else {rule.action='route';rule.outbound=r.outbound;}
   push(rules,rule);
-  if(r.type=='domain' || r.type=='suffix') {let d={};d[r.type=='domain'?'domain':'domain_suffix']=[r.value];domainDns(d,r.outbound);}
+  if(r.type=='domain' || r.type=='suffix' || r.type=='regex') {let d={};d[field]=values;domainDns(d,r.outbound);}
  }
  if(m.mode=='rule') {
   let groupIds={};for(let g in m.groups)groupIds[g.id]=true;
-  for(let wanted in ['OpenAI','Claude','YouTube','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Proxy']) {
-   let domains=policyDomains(wanted);
-   if(groupIds[wanted] && length(domains)) {
-    push(rules,{domain_suffix:domains,action:'route',outbound:wanted});
-    domainDns({domain_suffix:domains},wanted);
+  for(let wanted in ['OpenAI','Claude','YouTube','TikTok','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Domestic','Proxy']) {
+   let matched=policyMatch(wanted);
+   if(groupIds[wanted] && (length(matched.domain) || length(matched.domain_suffix))) {
+    let rule=clone(matched);rule.action='route';rule.outbound=wanted;push(rules,rule);
+    domainDns(matched,wanted);
    }
   }
  }

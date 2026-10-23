@@ -14,9 +14,9 @@ let uuid='00000000-0000-4000-8000-000000000001';
 let source={v:'2',ps:'Sample',add:'example.invalid',port:'443',id:uuid,aid:'0',net:'ws',type:'none',host:'example.invalid',path:'/vmess',tls:'tls',sni:'example.invalid'};
 let uri='vmess://'+b64enc(sprintf('%J',source));
 let nodes=parse(uri,'demo',sha256),m=empty();
-check(join(',',map(m.groups,g=>g.id))=='Proxy,OpenAI,Claude,Google,YouTube,X,Telegram,Other','new model has ordered default policy groups');
+check(join(',',map(m.groups,g=>g.id))=='Proxy,OpenAI,Claude,Google,YouTube,TikTok,X,Telegram,Domestic,Other','new model has ordered default policy groups');
 let catalog=policyCatalog();
-check(length(catalog)==13 && catalog[0].id=='Proxy' && catalog[0].default && !catalog[8].default,'policy catalog exposes default and optional services');
+check(length(catalog)==15 && catalog[0].id=='Proxy' && catalog[0].default && !catalog[10].default,'policy catalog exposes default and optional services');
 check(index(catalog[0].domains,'github.com')>=0 && index(catalog[0].domains,'netflix.com')>=0 && index(catalog[0].domains,'spotify.com')>=0,'merged services have real Proxy match domains');
 check(length(nodes)==1 && nodes[0].transport.type=='ws','VMess URI imports');
 m.subscriptions=[{id:'demo',name:'Demo',url:'https://example.invalid/sub',enabled:true,intervalHours:24}];m.nodes=nodes;
@@ -62,8 +62,7 @@ check(generate(m).route.rules[2].action=='reject','block uses sing-box route act
 let orderedRules=generate(m).route.rules;
 check(orderedRules[3].outbound=='direct' && routeIndex(orderedRules,'YouTube')>3,'custom domain rule precedes matching built-in service');
 check(routeIndex(orderedRules,'YouTube')<routeIndex(orderedRules,'Google') && routeIndex(orderedRules,'Proxy')>routeIndex(orderedRules,'Telegram'),'YouTube precedes Google and Proxy follows business groups');
-let dnsModel=clone(m),dnsOther=pop(dnsModel.groups);
-push(dnsModel.groups,{id:'Domestic',name:'国内直连',selected:'direct'});push(dnsModel.groups,dnsOther);
+let dnsModel=clone(m);
 dnsModel.rules=[{id:'exception',enabled:true,type:'domain',value:'overseas.example.cn',outbound:'YouTube'},
  {id:'domestic',enabled:true,type:'suffix',value:'cn',outbound:'Domestic'},
  {id:'disabled',enabled:false,type:'suffix',value:'disabled.invalid',outbound:'direct'},
@@ -92,13 +91,33 @@ let scale=clone(m);scale.nodes=[];scale.groups=[{id:'Proxy',name:'Proxy',selecte
 for(let i=0;i<128;i++){let n=clone(nodes[0]);n.id='n'+i;n.name='Node '+i;push(scale.nodes,n);}
 for(let i=0;i<14;i++)push(scale.groups,{id:'G'+i,name:'Group '+i,selected:i%2?'Proxy':'n'+i});
 push(scale.groups,{id:'Other',name:'Other',selected:'block'});
-scale.rules=[];for(let i=0;i<128;i++)push(scale.rules,{id:'r'+i,enabled:true,type:'suffix',value:'rule'+i+'.example.invalid',outbound:'direct'});
+scale.rules=[];for(let i=0;i<512;i++)push(scale.rules,{id:'r'+i,enabled:true,type:'suffix',value:'rule'+i+'.example.invalid',outbound:'direct'});
 let scaleConfig=generate(scale),selectorMembers=0,complete=true,allChoices=['direct'];
 for(let n in effective(scale))push(allChoices,n.id);
 for(let g in scale.groups){let o=outbound(scaleConfig,g.id),selected=g.selected=='block'?'direct':g.selected,expected=clone(allChoices);if(g.id!='Proxy')push(expected,'Proxy');selectorMembers+=length(o.outbounds);if(o.default!=selected || index(o.outbounds,selected)<0 || join(',',o.outbounds)!=join(',',expected))complete=false;}
 check(length(scaleConfig.outbounds)==145 && outbound(scaleConfig,'n127') && outbound(scaleConfig,'Proxy').default=='n127' && selectorMembers==2079 && complete,'128 nodes and 16 groups retain complete ordered memberships without duplicate Proxy references');
-check(length(scaleConfig.route.rules)==132 && scaleConfig.route.rules[1].action=='sniff' && scaleConfig.route.rules[1].sniffer==null && scaleConfig.route.rules[131].action=='reject','maximum rule model retains all 128 custom rules, full sniffing and terminal block fallback');
+check(length(scaleConfig.route.rules)==516 && scaleConfig.route.rules[1].action=='sniff' && scaleConfig.route.rules[1].sniffer==null && scaleConfig.route.rules[515].action=='reject','maximum rule model retains all 512 custom rules, full sniffing and terminal block fallback');
 for(let mode in ['global','direct']){scale.mode=mode;let c=generate(scale);check(length(c.route.rules)==2 && c.route.rules[0].action=='hijack-dns' && c.route.rules[1].action=='sniff' && c.route.rules[1].sniffer==null && c.route.final==(mode=='global'?'Proxy':'direct') && length(outbound(c,'Other').outbounds)==130,'maximum '+mode+' model preserves sniffing and complete selectors without applying custom rules or terminal reject');}
+
+let multi=clone(m);multi.rules=[{id:'many',enabled:true,type:'suffix',values:['one.example.cn','two.example.cn'],outbound:'Domestic'},
+ {id:'pattern',enabled:true,type:'regex',values:['(^|\\.)tiktokcdn(-us|-eu)?\\.com$'],outbound:'TikTok'}];
+let multiConfig=generate(multi);
+check(length(multiConfig.route.rules[2].domain_suffix)==2 && multiConfig.route.rules[3].domain_regex[0]==multi.rules[1].values[0] && multiConfig.dns.rules[0].server=='bootstrap' && multiConfig.dns.rules[1].server=='proxy-dns','multi-value and regex rules produce one matching route and DNS block each');
+let badMulti=clone(multi);badMulti.rules[0].value='ambiguous.invalid';rejected(()=>validate(badMulti),'scalar and list values cannot be mixed');
+badMulti=clone(multi);badMulti.rules[0].values=['same.invalid','same.invalid'];rejected(()=>validate(badMulti),'duplicate values rejected');
+badMulti=clone(multi);badMulti.rules[0].values=[];rejected(()=>validate(badMulti),'empty value lists rejected');
+badMulti=clone(multi);badMulti.rules[0].values=[];for(let i=0;i<129;i++)push(badMulti.rules[0].values,'host'+i+'.invalid');rejected(()=>validate(badMulti),'per-rule list limit enforced');
+let migratedProfile=clone(m);migratedProfile.policyVersion=1;migratedProfile.rules=[];
+for(let p in catalog)if(index(['YouTube','TikTok','Domestic'],p.id)>=0)for(let type,values in {domain:p.exactDomains,suffix:p.domains})for(let value in values)push(migratedProfile.rules,{id:'route_'+substr(sha256(p.id+chr(0)+type+chr(0)+value),0,16),enabled:true,type,value,outbound:p.id});
+let edited=clone(migratedProfile.rules[0]);edited.enabled=false;let editedId=edited.id;
+migratedProfile.rules[0]=edited;push(migratedProfile.rules,{id:'manual',enabled:true,type:'suffix',value:'manual.invalid',outbound:'direct'});
+let profileResult=normalize(migratedProfile);
+check(profileResult.policyVersion==2 && length(profileResult.rules)==2 && profileResult.rules[0].id==editedId && profileResult.rules[1].id=='manual','migration removes only unchanged generated service rules and preserves edited or manual overrides');
+let native=generate(profileResult);
+check(index(route(native.route.rules,'YouTube').domain_suffix,'ggpht.com')>=0 && index(route(native.route.rules,'YouTube').domain,'youtubei.googleapis.com')>=0 && length(route(native.route.rules,'TikTok').domain_suffix)==30 && length(route(native.route.rules,'Domestic').domain_suffix)==72,'complete service data produces grouped native rules without consuming custom slots');
+check(index(route(native.route.rules,'Proxy').domain_suffix,'cn')<0,'disabled domestic group cannot make the Proxy fallback claim all cn domains');
+let noDomestic=clone(profileResult);noDomestic.groups=filter(noDomestic.groups,g=>g.id!='Domestic');
+check(routeIndex(generate(noDomestic).route.rules,'Domestic')<0 && normalize(noDomestic).groups[length(noDomestic.groups)-1].id=='Other','current policy version does not re-add a deleted domestic group');
 
 let legacy=clone(m);delete legacy.policyVersion;legacy.defaultOutbound='Netflix';
 legacy.groups=[{id:'Proxy',name:'代理',selected:nodes[0].id},{id:'OpenAI',name:'OpenAI',selected:'Proxy'},
@@ -106,7 +125,7 @@ legacy.groups=[{id:'Proxy',name:'代理',selected:nodes[0].id},{id:'OpenAI',name
  {id:'Custom',name:'自定义',selected:nodes[0].id}];
 legacy.rules=[{id:'old_disney',enabled:true,type:'suffix',value:'example.invalid',outbound:'Disney'}];
 let migrated=normalize(legacy);
-check(migrated.policyVersion==1 && migrated.defaultOutbound=='Other' && group(migrated,'Other').selected=='Proxy','legacy fallback moves to Other');
+check(migrated.policyVersion==2 && migrated.defaultOutbound=='Other' && group(migrated,'Other').selected=='Proxy','legacy fallback moves to Other');
 check(!group(migrated,'Netflix') && !group(migrated,'Disney') && group(migrated,'Custom').selected==nodes[0].id && migrated.groups[length(migrated.groups)-1].id=='Other','migration removes merged fixed groups, preserves custom groups and keeps Other last');
 check(migrated.rules[0].outbound=='Proxy' && validate(migrated).schema==1,'migration redirects rules that referenced merged groups');
 let legacyProxy=clone(legacy);legacyProxy.defaultOutbound='Proxy';
