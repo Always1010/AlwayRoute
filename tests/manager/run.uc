@@ -118,6 +118,8 @@ check(index(route(native.route.rules,'YouTube').domain_suffix,'ggpht.com')>=0 &&
 check(index(route(native.route.rules,'Proxy').domain_suffix,'cn')<0,'disabled domestic group cannot make the Proxy fallback claim all cn domains');
 let noDomestic=clone(profileResult);noDomestic.groups=filter(noDomestic.groups,g=>g.id!='Domestic');
 check(routeIndex(generate(noDomestic).route.rules,'Domestic')<0 && normalize(noDomestic).groups[length(noDomestic.groups)-1].id=='Other','current policy version does not re-add a deleted domestic group');
+let noYouTube=clone(profileResult);noYouTube.rules=[];noYouTube.groups=filter(noYouTube.groups,g=>g.id!='YouTube');let fallbackRules=generate(noYouTube).route.rules;
+check(routeIndex(fallbackRules,'Proxy')<routeIndex(fallbackRules,'Domestic') && index(route(fallbackRules,'Proxy').domain_suffix,'ggpht.cn')>=0,'known overseas cn domains retain Proxy fallback when a dedicated service group is deleted');
 
 let legacy=clone(m);delete legacy.policyVersion;legacy.defaultOutbound='Netflix';
 legacy.groups=[{id:'Proxy',name:'代理',selected:nodes[0].id},{id:'OpenAI',name:'OpenAI',selected:'Proxy'},
@@ -126,6 +128,7 @@ legacy.groups=[{id:'Proxy',name:'代理',selected:nodes[0].id},{id:'OpenAI',name
 legacy.rules=[{id:'old_disney',enabled:true,type:'suffix',value:'example.invalid',outbound:'Disney'}];
 let migrated=normalize(legacy);
 check(migrated.policyVersion==2 && migrated.defaultOutbound=='Other' && group(migrated,'Other').selected=='Proxy','legacy fallback moves to Other');
+check(group(migrated,'Domestic').selected=='direct','unversioned models initialize the new domestic service with direct');
 check(!group(migrated,'Netflix') && !group(migrated,'Disney') && group(migrated,'Custom').selected==nodes[0].id && migrated.groups[length(migrated.groups)-1].id=='Other','migration removes merged fixed groups, preserves custom groups and keeps Other last');
 check(migrated.rules[0].outbound=='Proxy' && validate(migrated).schema==1,'migration redirects rules that referenced merged groups');
 let legacyProxy=clone(legacy);legacyProxy.defaultOutbound='Proxy';

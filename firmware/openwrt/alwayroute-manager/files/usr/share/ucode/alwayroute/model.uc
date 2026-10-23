@@ -76,7 +76,7 @@ export function normalize(m) {
  let present={};for(let g in n.groups)present[g.id]=true;
  if(!present.Other && length(n.groups)<16){push(n.groups,{id:'Other',name:'Other',selected:fallback});present.Other=true;}
  else if(present.Other)for(let g in n.groups)if(g.id=='Other')g.selected=fallback;
- for(let p in POLICIES)if(p.default && p.id!='Other' && !present[p.id] && length(n.groups)<16){push(n.groups,{id:p.id,name:p.name,selected:p.id=='Proxy'?'direct':'Proxy'});present[p.id]=true;}
+ for(let p in POLICIES)if(p.default && p.id!='Other' && !present[p.id] && length(n.groups)<16){push(n.groups,{id:p.id,name:p.name,selected:groupDefault(p.id)});present[p.id]=true;}
  if(!present.Other)fail('MIGRATION_REQUIRED','策略组已满，无法在不删除自定义组的情况下添加 Other');
  let ordered=[],orderedIds={};
  for(let p in POLICIES)if(p.default && p.id!='Other')for(let g in n.groups)if(g.id==p.id){push(ordered,g);orderedIds[g.id]=true;}
@@ -207,7 +207,7 @@ export function generate(m) {
  }
  if(m.mode=='rule') {
   let groupIds={};for(let g in m.groups)groupIds[g.id]=true;
-  for(let wanted in ['OpenAI','Claude','YouTube','TikTok','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Domestic','Proxy']) {
+  for(let wanted in ['OpenAI','Claude','YouTube','TikTok','Google','X','Telegram','Microsoft','Apple','Meta','Discord','Steam','Proxy','Domestic']) {
    let matched=policyMatch(wanted);
    if(groupIds[wanted] && (length(matched.domain) || length(matched.domain_suffix))) {
     let rule=clone(matched);rule.action='route';rule.outbound=wanted;push(rules,rule);
