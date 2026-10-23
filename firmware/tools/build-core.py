@@ -46,9 +46,13 @@ compiler = parser.add_mutually_exclusive_group()
 compiler.add_argument('--no-inline', action='store_true', help='Comparison only: retain the old all=-l compiler setting')
 compiler.add_argument('--cold-no-inline', action='store_true', help='Disable inlining only in CLI and configuration/file conversion packages')
 compiler.add_argument('--crypto-inline', action='store_true', help='Size candidate: preserve crypto inlining while disabling it in other packages')
+parser.add_argument('--counter-inline', action='store_true',
+                    help='Inline only the counter/Mutex chain; requires --crypto-inline and the traffic-counter-mutex candidate')
 args = parser.parse_args()
 if len(args.performance_candidate) != len(set(args.performance_candidate)):
     parser.error('Each --performance-candidate may be specified only once')
+if args.counter_inline and (not args.crypto_inline or 'traffic-counter-mutex' not in args.performance_candidate):
+    parser.error('--counter-inline requires --crypto-inline and --performance-candidate traffic-counter-mutex')
 source = ROOT / 'sources/sing-box-1.13.21'
 archive = ROOT / 'artifacts/sing-box-v1.13.21-source.tar.gz'
 output = args.output.resolve()
@@ -86,6 +90,9 @@ started = time.monotonic()
 gcflags = ['all=-l'] if args.no_inline else [p+'=-l' for p in COLD_PACKAGES] if args.cold_no_inline else []
 if args.crypto_inline:
     gcflags = ['all=-l'] + [p+'=' for p in HOT_PACKAGES]
+if args.counter_inline:
+    gcflags += [p+'=' for p in ('internal/sync', 'sync',
+                               'github.com/sagernet/sing-box/experimental/clashapi/trafficontrol')]
 command = [str(go), 'build', '-p', '2', '-trimpath', '-buildvcs=false', '-tags', TAGS,
            '-pgo', str(args.pgo.resolve()) if args.pgo else 'off']
 crypto = None
