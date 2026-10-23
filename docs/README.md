@@ -18,8 +18,9 @@
 | 分流数据 | [分流清单与组合说明](../config/routing/README.md) | TikTok、国内直连、YouTube 补充独立维护，上游来源单独锁定 |
 | 验证 | [测试说明](../tests/README.md) | 测试分区、执行环境、命令与覆盖边界 |
 | 设备 | [小米 4A 设备与网络记录](devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
-| 当前固件与刷写 | [最新管理功能整机集成](reports/2026-10-23-latest-firmware-flash.md) | 最新检测功能写入 ROM，保留原代理核心；277 项镜像检查、刷后恢复，可写空间 1428 KiB |
-| 最新分流配置 | [TikTok、国内直连与组 DNS 部署](reports/2026-10-23-domestic-tiktok-routing.md) | 后端接口新增两组、120 条规则，国内 DNS 随组直连；仅更新管理脚本 overlay，未重编核心或刷机 |
+| 当前固件与规则 | [正式服务目录、多值规则与整机部署](reports/2026-10-23-native-service-rules.md) | manager r4／网页 r3已写入ROM；15服务原生分流，手工0/512、每条128值，294项镜像检查，revision 23 |
+| 上次整机集成 | [节点检测管理功能整机集成](reports/2026-10-23-latest-firmware-flash.md) | 当时检测功能写入ROM；277项检查与刷后恢复，已由本轮整机更新接续 |
+| 分流配置历史 | [TikTok、国内直连与组 DNS 部署](reports/2026-10-23-domestic-tiktok-routing.md) | 初次接口新增两组和120条规则；本轮已迁入正式服务数据，不再占手工额度 |
 | 最新性能复测 | [Flash 核心、直连与多策略组脱敏简报](reports/2026-10-23-flash-core-retest.md) | 实际 WAN 直连约 199 Mbps；局域网 NAT 718、Other 直连 480、加密代理 156–167 Mbps；含延迟、内存与双向并发 |
 | 性能实验历史 | [200M 可行性、实验撤回与直连测速](reports/2026-10-23-200m-feasibility.md) | 未采用实验清理与稳定性失败；此报告的历史测速由后续 Flash 同条件复测补充 |
 | 最新功能验证 | [单节点与整订阅检测](reports/2026-10-23-node-check.md) | 串行进度及取消，38 节点与持续透明代理实测，两个管理包合计增加约 1.36 KiB |

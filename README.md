@@ -52,7 +52,7 @@
 
 单节点与整订阅的连通性／延迟检测已部署，默认串行，显示进度并支持取消，不自动切换节点。38 节点实测期间，同一条透明代理下载连接持续传输了约 35.7 MiB，45 次短 HTTPS 请求全部成功，但 CPU 和延迟有增加；两个管理包合计增加约 1.36 KiB。细节及边界见[节点检测实测报告](docs/reports/2026-10-23-node-check.md)。
 
-随后通过后端接口新增 TikTok、国内直连两个策略组，Other 保持代理；当前 10 组、120 条自定义规则，保存与应用 revision 20。管理后端已修复策略组实际直连时的 DNS 分流，仅覆盖部署 model.uc，未重编核心或刷机，overlay 当前可用 1372 KiB。豆包真实终端连接已确认命中国内直连，YouTube 原移动端封面故障根因尚未复现，见[分流部署记录](docs/reports/2026-10-23-domestic-tiktok-routing.md)。
+随后将分流整理为正式初始项目：15个服务的数据在管理包 policies 目录各有唯一主本，完整YouTube规则统一保存，TikTok与国内服务原生分流；当前10组、手工规则0/512，每条支持128值及正则，保存与应用revision 23。原120条通用规则已迁出手工区，域名与DNS按服务合并为匹配块。manager r4／网页r3已保留配置写入ROM，代理核心不变，overlay可用1428KiB；Other代理、国内直连，TikTok独立节点保留。详见[正式服务与整机部署](docs/reports/2026-10-23-native-service-rules.md)。
 
 最新复测直接使用 Flash 核心，4 并发、180 秒并附加短请求：VMess TCP 167.22 Mbps、WS/TLS 156.43 Mbps，Other 经核心直连 479.94 Mbps，关闭代理的局域网 NAT 回环 718.15 Mbps；后者不是 WAN 口极限。关闭代理后，实际 WAN 公网下载为 198.60 Mbps。四策略组分别走不同节点下载为 163.94 Mbps，双向并发上下行合计 167.57 Mbps。延迟、内存、恢复与覆盖边界见[脱敏性能简报](docs/reports/2026-10-23-flash-core-retest.md)。此前未通过验收的性能实验仍保持撤回，取舍见[实验清理记录](docs/reports/2026-10-23-200m-feasibility.md)。
 

@@ -3,10 +3,10 @@
 本文维护 AlwayRoute 使用的小米 4A 路由器信息、访问方式及相关网络状态。实测结果、官方型号规格和待确认事项分别记录，避免将型号资料当作本机实测值。
 
 - 最后更新：2026-10-23（Asia/Shanghai）
-- 当前阶段：最新节点／订阅检测功能已集成整机镜像并保留配置刷入；代理核心保持，未采用的 200M 实验不在镜像中
+- 当前阶段：正式服务目录、多值／正则规则与DNS分流已写入整机ROM；manager r4／网页r3，代理核心保持
 - 当前目标：由 4A 独立提供局域网统一代理和完整 Web 节点／规则管理；Rock 5B 负责开发、构建和检查
 - 变更状态：已获单独批准刷入基础候选，恢复原 Wi-Fi 名称／密码，设置 LuCI 登录认证并开放 LAN 访问；尚未完成完整代理交付验收
-- 关联文档：[项目需求](../requirements.md)、[实施方案](../implementation-plan.md)、[当前部署记录](../reports/2026-10-23-latest-firmware-flash.md)、[核心优化记录](../reports/2026-10-23-crypto-optimization.md)、[最新性能与清理记录](../reports/2026-10-23-200m-feasibility.md)
+- 关联文档：[项目需求](../requirements.md)、[实施方案](../implementation-plan.md)、[当前部署记录](../reports/2026-10-23-native-service-rules.md)、[核心优化记录](../reports/2026-10-23-crypto-optimization.md)、[最新性能与清理记录](../reports/2026-10-23-200m-feasibility.md)
 
 ## 1. 设备身份与当前系统
 
