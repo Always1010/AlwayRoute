@@ -18,6 +18,7 @@
 | `firmware/test_device_test_runner.py`、`firmware/test_benchmark_summary.py` | 现有测试二进制执行保护、历史性能结果白名单与条件保留 | 已有Python，不编译、不执行设备测试、不连接设备 |
 | `ui/build-preview.cjs`、`ui/preview-runtime.js` | 用生产页面生成带合成 RPC 的离线预览 | Node 生成；浏览器人工检查 |
 | `manager/run-tests.py` | 组合并执行模型、订阅、内存事务及下载脚本测试 | Python 与已有 ucode（含 fs／digest 模块） |
+| `manager/check-imports.py` | 保留export/import的真实模块编译，弥补组合测试不覆盖的模块语法 | 已有host ucode；只导入，不调用管理方法 |
 | `manager/selection.uc`、`manager/traffic.uc` | 热切换边界、独立流量采样的过期/并发/重启保护，由上述入口运行 | 已有 ucode；内存替身，不启动服务 |
 | `manager/run.uc` | 通过真实模块导入检查模型与订阅 | 匹配的 ucode 与模块搜索路径 |
 | `tools/test_routing_build.py`、`firmware/test_routing_payload.py` | 固定规则输入的哈希、范围及镜像载荷一致性 | 已有 Python，无网络与设备访问 |

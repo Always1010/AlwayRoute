@@ -22,4 +22,4 @@ export function selectionPlan(previous, next, runtime) {
  for(let o in comparable.outbounds)if(o.type=='selector')delete o.default;
  if(sprintf('%J',original)!=sprintf('%J',comparable))return null;
  return {changes,config:candidate};
-}
+};

@@ -15,7 +15,7 @@ export function invalidateTraffic() {
  fs.unlink(ROOT+'/traffic.json');
  // A separate epoch also rejects a sample spanning a restart of the same revision.
  if(!writeTrafficFile('traffic-epoch.json',{id:trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? sprintf('%d',time()))}))fs.unlink(ROOT+'/traffic-epoch.json');
-}
+};
 export function trafficSnapshot() {
  let revision=readTrafficFile('state.json')?.appliedRevision,epoch=readTrafficFile('traffic-epoch.json');
  if(revision==null)return {ok:true,available:false,upload:null,download:null,unit:'bytes/s',reason:'当前配置尚未应用'};
@@ -26,7 +26,7 @@ export function trafficSnapshot() {
  }
  let valid=epoch && sample?.epoch==epoch.id && sample.revision==revision && sample.available===true && now>=sample.time && now-sample.time<=15;
  return {ok:true,available:!!valid,upload:valid?sample.upload:null,download:valid?sample.download:null,unit:'bytes/s',sampledAt:valid?sample.time:null,reason:valid?null:'等待核心流量采样'};
-}
+};
 export function sampleTraffic() {
  let lock=fs.open(ROOT+'/traffic.lock','ae',0600);
  if(!lock || !lock.lock('xn')){lock?.close();return;}
@@ -42,4 +42,4 @@ export function sampleTraffic() {
   }
  }catch(e){}
  lock.lock('u');lock.close();
-}
+};
