@@ -189,7 +189,11 @@ func TestAlwayRouteFramingLongStream(t *testing.T) {
 							e1, e2 = candidate.ReadBuffer(leftBuffer), baseline.ReadBuffer(rightBuffer)
 							left, right = leftBuffer.Bytes(), rightBuffer.Bytes()
 						}
-						if e1 != nil || e2 != nil || len(left) == 0 || !bytes.Equal(left, right) ||
+						// Pinned buf.Buffer.ReadFrom reports ErrShortBuffer when
+						// full, even if that read consumed the final cached byte.
+						matchingErrors := e1 == nil && e2 == nil || readIndex%2 == 1 &&
+							e1 == io.ErrShortBuffer && e2 == io.ErrShortBuffer && leftBuffer.IsFull() && rightBuffer.IsFull()
+						if !matchingErrors || len(left) == 0 || !bytes.Equal(left, right) ||
 							len(left) > len(want)-offset || !bytes.Equal(left, want[offset:offset+len(left)]) || wire.Len() != oldWire.Len() {
 							t.Fatalf("frame %d offset %d: payload %x/%x, errors %v/%v, wire remaining %d/%d", frame, offset, left, right, e1, e2, wire.Len(), oldWire.Len())
 						}
