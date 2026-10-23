@@ -10,7 +10,8 @@
 的参数名 `msg` 改为 `D`，匹配原汇编 `D_base/D_len`，使 asmdecl 检查通过；参数类型、
 偏移、调用、算法均未改变。另将两个 noasm build constraint 适配到 x/crypto v0.48.0。
 原作者的 Go BSD、Linux／WireGuard GPL-2.0 OR MIT 来源与许可声明均保留在补丁中。
-本候选使用原作者 MIPS32r1 路径，不开启未合入 Go 的 `GOMIPS_r2/r5` 宏。
+基础 `mipsle-asm` 候选和下方未加汇编参数的测试命令使用原作者 MIPS32r1 路径。
+显式 `mipsle-asm-r2` 候选使用后文说明的 `GOMIPS_r2` 宏，不启用 `GOMIPS_r5`。
 
 `crypto-assembly-overlay.py` 核对模块 go.mod、两份库的四个 glue／状态布局文件和补丁
 SHA-256，拒绝既有 stage；不下载或修改缓存／GOROOT。Go 禁止 overlay 替换 GOMODCACHE
