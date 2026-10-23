@@ -5,10 +5,12 @@ All upstream CLI commands and registrations remain available under the pinned ta
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tarfile
 import time
 
@@ -35,6 +37,8 @@ HOT_PACKAGES = [
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--pgo', type=Path, help='Device CPU profile; keeps all features and the pinned compiler')
+parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
+                    help='Explicit candidate only; retains full core and never modifies upstream trees')
 compiler = parser.add_mutually_exclusive_group()
 compiler.add_argument('--no-inline', action='store_true', help='Comparison only: retain the old all=-l compiler setting')
 compiler.add_argument('--cold-no-inline', action='store_true', help='Disable inlining only in CLI and configuration/file conversion packages')
@@ -79,6 +83,32 @@ if args.crypto_inline:
     gcflags = ['all=-l'] + [p+'=' for p in HOT_PACKAGES]
 command = [str(go), 'build', '-p', '2', '-trimpath', '-buildvcs=false', '-tags', TAGS,
            '-pgo', str(args.pgo.resolve()) if args.pgo else 'off']
+crypto = None
+if args.experimental_crypto:
+    legacy = args.experimental_crypto == 'poly1305-32'
+    helper_path = Path(__file__).with_name('poly1305-32bit-overlay.py' if legacy else 'crypto-assembly-overlay.py')
+    spec = importlib.util.spec_from_file_location('crypto_candidate', helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    stage = output.parent / (output.name + '.crypto-stage')
+    helper.prepare_overlay(ROOT / 'build-cache/gomodcache/golang.org/x/crypto@v0.48.0', go.parent.parent, stage)
+    modfile = stage / 'core.mod'
+    modfile.write_text((source / 'go.mod').read_text() + '\nreplace golang.org/x/crypto => ' + str(stage / 'module') + '\n')
+    shutil.copyfile(source / 'go.sum', stage / 'core.sum')
+    command += ['-overlay=' + str(stage / 'overlay.json'), '-modfile=' + str(modfile)]
+    asmflags = []
+    if args.experimental_crypto == 'mipsle-asm-r2':
+        # MT7621 1004Kc implements MIPS32r2. Limit this macro to ChaCha's two
+        # copies; GOMIPS stays softfloat and the installed compiler is unchanged.
+        asmflags = [p + '=-D GOMIPS_r2' for p in (
+            'golang.org/x/crypto/chacha20', 'vendor/golang.org/x/crypto/chacha20')]
+        command += ['-asmflags=' + flag for flag in asmflags]
+    manifest_name = 'poly1305-32bit-experiment.json' if legacy else 'assembly-experiment.json'
+    crypto = {'backend': args.experimental_crypto, 'experimental': True,
+              'upstream_approved': False, 'asmflags': asmflags,
+              'manifest': json.loads((stage / manifest_name).read_text()),
+              'overlay_sha256': hashlib.sha256((stage / 'overlay.json').read_bytes()).hexdigest(),
+              'modfile_sha256': hashlib.sha256(modfile.read_bytes()).hexdigest()}
 command += ['-gcflags='+flag for flag in gcflags]
 command += ['-ldflags', '-s -w -buildid= -X internal/godebug.defaultGODEBUG=multipathtcp=0 '
             '-checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.13.21-alwayroute-router',
@@ -93,6 +123,7 @@ metadata = {'version': '1.13.21-alwayroute-router', 'source_sha256': ARCHIVE_SHA
             'entry_package': ENTRY, 'cli_profile': 'full', 'registry_profile': 'upstream',
             'registry_sha256': hashlib.sha256((source/'include/registry.go').read_bytes()).hexdigest(),
             'registry_patch_sha256': None, 'command': command,
+            'crypto_candidate': crypto,
             'build_environment': {k: env[k] for k in ['GOFLAGS','GOENV','GOWORK','GOEXPERIMENT','GOROOT','GOTOOLCHAIN','GOPROXY']},
             'pgo_sha256': hashlib.sha256(args.pgo.read_bytes()).hexdigest() if args.pgo else None,
             'embedded_build_info': subprocess.check_output([str(go), 'version', '-m', str(output)], env=env, text=True),

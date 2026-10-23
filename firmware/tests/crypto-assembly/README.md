@@ -59,3 +59,24 @@ done
 需要实验核心时，另建临时 `-modfile`，复制主模块的 go.mod／go.sum，在临时 go.mod 追加
 `replace golang.org/x/crypto => <stage/module 的绝对路径>`，并同时传入 overlay；不得编辑原始
 go.mod、module cache 或 GOROOT。默认构建不创建或引用这些实验文件。
+
+完整核心的显式候选构建已接入 `firmware/tools/build-core.py`，例如：
+
+```sh
+python3 firmware/tools/build-core.py --crypto-inline \
+  --pgo "$ROOT/artifacts/alwayroute-bottleneck-20261023/mixed-cpu.pprof" \
+  --experimental-crypto mipsle-asm-r2 \
+  --output "$ROOT/artifacts/crypto-candidate/sing-box-mipsle"
+```
+
+`mipsle-asm` 使用原始 shift/or；`mipsle-asm-r2` 仅对模块版和标准 TLS vendor 版
+ChaCha 包追加 `-D GOMIPS_r2` 汇编参数，使用原补丁已有的 ROTR 路径。Go 编译器、
+`GOMIPS=softfloat`、20 轮算法、Poly1305 校验及全部核心功能均保持。
+MT7621 的 1004Kc 支持 MIPS32r2；该候选没有 CPU 运行时分派，不能作为通用 mipsle
+二进制分发。构建记录保留明确的实验状态，不能将本地验证描述为上游批准。
+
+镜像检查默认拒绝密码 overlay。检查明确选定的候选时，必须另外传入同名
+`--experimental-crypto`，并以实际设备测试过的 ELF SHA-256 调用检查器。通过构建和
+镜像检查都不等于完成运行验收；吞吐比较须保留单连接与多连接、TCP 与 TLS，并在
+相同存储／内存条件下比较。新增保护页测试用于检测越界读取／写入，不能替代完整
+AEAD 向量、认证失败和状态边界测试。
