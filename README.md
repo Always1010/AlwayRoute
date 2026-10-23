@@ -10,13 +10,10 @@ AlwayRoute 面向 OpenWrt 路由器，提供基于 sing-box 的代理管理与�
 
 ## 从这里开始
 
-- [文档导航](docs/README.md)：使用、开发、构建、设备维护及历史证据。
-- [需求与验收](docs/requirements.md)、[剩余实施计划](docs/implementation-plan.md)：产品范围和未完成工作。
-- [开发流程](docs/development-workflow.md)、[环境配置](docs/operations/environments.md)：源码主本、独立构建副本、增量缓存及设备访问角色。
-- [固件构建](firmware/README.md)、[上游源码获取](docs/upstream-sources.md)：固定输入、自有包、核心及镜像检查。
-- [接口契约](contracts/v1.md)、[测试入口](tests/README.md)：前后端边界与针对性检查。
-- [开发工具](docs/developer-tools.md)、[隐私与首次公开](docs/privacy-and-publication.md)：正式入口、本地历史文件及审查范围。
-- [设备适配](docs/devices/README.md)、[移植方案](docs/device-porting.md)、[执行报告索引](docs/reports/README.md)：支持范围、适配层次、验证条件和失败记录。
+- [支持设备](docs/devices/README.md)：目前仅验证小米路由器 4A 千兆版第一版，其他型号和修订不能混刷。
+- [当前能力与限制](docs/status.md)：功能、性能和尚待实机验收的范围。
+- [开发与构建](docs/README.md)：开发指南、固件构建、接口与测试入口。
+- [历史记录](docs/reports/README.md)：历次验证、失败实验及替代关系；一次性仓库整理见本地环境资料。
 
 ## 仓库内容
 

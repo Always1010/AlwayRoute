@@ -28,7 +28,8 @@ AlwayRoute/
     ├── development-workflow.md
     ├── upstream-sources.md
     ├── operations/            # 环境、访问、部署与恢复
-    ├── devices/               # 公共硬件适配及基本拓扑
+    ├── devices/               # 公共硬件适配与刷机说明
+    ├── archive/               # 一次性整理与开发环境历史
     └── reports/               # 索引、执行事实、失败与脱敏证据
 ```
 
