@@ -4,7 +4,9 @@ Run on Rock after make has produced its target image and native host tools.
 This script never connects to or writes a router.
 """
 import argparse
+import base64
 import hashlib
+import importlib.util
 import json
 import pathlib
 import re
@@ -24,15 +26,129 @@ def sha256_arg(value):
     return value.lower()
 
 
+def validate_crypto_provenance(build_info, embedded, core, backend, pinned, check):
+    """Bind candidate inputs to embedded dependency data and actual instructions."""
+    command = build_info.get('command', [])
+    overlay_flags = [str(flag) for flag in command if str(flag).startswith(('-overlay', '-modfile'))]
+    candidate = build_info.get('crypto_candidate')
+    dependencies, current = [], None
+    settings = {}
+    for line in embedded.splitlines():
+        fields = line.strip().split('\t')
+        if fields[0] == 'dep':
+            current = {'path': fields[1], 'version': fields[2],
+                       'checksum': fields[3] if len(fields) > 3 else '', 'replacement': None}
+            dependencies.append(current)
+        elif fields[0] == '=>' and current is not None:
+            current['replacement'] = fields[1:]
+        elif fields[0] == 'build' and len(fields) == 2 and '=' in fields[1]:
+            key, value = fields[1].split('=', 1)
+            settings[key] = json.loads(value) if value.startswith('"') else value
+    crypto_deps = [dep for dep in dependencies if dep['path'] == 'golang.org/x/crypto']
+    check('core_crypto_embedded_dependency', len(crypto_deps) == 1 and crypto_deps[0]['version'] == 'v0.48.0')
+    dependency = crypto_deps[0]
+    checksum = 'h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts='
+    if not backend:
+        check('core_no_explicit_overlay', not overlay_flags and not candidate)
+        check('core_crypto_standard_dependency', dependency['replacement'] is None and dependency['checksum'] == checksum)
+        check('core_crypto_standard_assembler', '-asmflags' not in settings
+              and not any(str(flag).startswith('-asmflags') for flag in command))
+        return
+
+    check('core_explicit_crypto_candidate', isinstance(candidate, dict) and candidate.get('backend') == backend
+          and candidate.get('experimental') is True and candidate.get('upstream_approved') is False)
+    legacy = backend == 'poly1305-32'
+    helper_path = pathlib.Path(__file__).with_name('poly1305-32bit-overlay.py' if legacy else 'crypto-assembly-overlay.py')
+    spec = importlib.util.spec_from_file_location('crypto_candidate', helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    manifest = candidate['manifest']
+    check('core_crypto_pinned_patch', manifest.get('patch_sha256') == helper.PATCH_SHA256)
+    check('core_crypto_pinned_inputs', manifest.get('input_sha256') == helper.INPUT_SHA256
+          and manifest.get('module_go_mod_sha256') == helper.MODULE_SHA256)
+    expected_asmflags = [p + '=-D GOMIPS_r2' for p in ('golang.org/x/crypto/chacha20',
+                         'vendor/golang.org/x/crypto/chacha20')] if backend == 'mipsle-asm-r2' else []
+    check('core_crypto_asm_scope', candidate.get('asmflags') == expected_asmflags
+          and [s for s in command if str(s).startswith('-asmflags')] == ['-asmflags=' + s for s in expected_asmflags])
+    # Go 1.27 records only the last repeated per-package flag in BuildInfo.
+    check('core_crypto_embedded_assembler', settings.get('-asmflags') == (expected_asmflags[-1] if expected_asmflags else None))
+    check('core_crypto_overlay_arguments', len(overlay_flags) == 2 and overlay_flags[0].startswith('-overlay=')
+          and overlay_flags[1].startswith('-modfile='))
+    overlay_path = pathlib.Path(overlay_flags[0].split('=', 1)[1])
+    modfile = pathlib.Path(overlay_flags[1].split('=', 1)[1])
+    check('core_crypto_build_inputs_available', overlay_path.is_absolute() and modfile.is_absolute()
+          and overlay_path.is_file() and modfile.is_file())
+    check('core_crypto_overlay_digest', hashlib.sha256(overlay_path.read_bytes()).hexdigest() == candidate.get('overlay_sha256'))
+    check('core_crypto_modfile_digest', hashlib.sha256(modfile.read_bytes()).hexdigest() == candidate.get('modfile_sha256'))
+    original_stage = overlay_path.parent
+    check('core_crypto_embedded_replace', dependency['replacement'] == [str(original_stage / 'module'), '(devel)'])
+
+    # Hash the entire unmodified snapshot using Go dirhash.Hash1, not just the
+    # handful of patched files. Added, missing or changed AEAD files must fail.
+    module = original_stage / 'module'
+    paths = list(module.rglob('*')) if module.is_dir() else []
+    check('core_crypto_snapshot_regular_files', module.is_dir() and not module.is_symlink()
+          and all(not p.is_symlink() and (p.is_file() or p.is_dir()) for p in paths))
+    names = sorted(p.relative_to(module).as_posix() for p in paths if p.is_file())
+    check('core_crypto_snapshot_valid_names', all('\n' not in name for name in names))
+    digest_lines = ''.join(hashlib.sha256((module / name).read_bytes()).hexdigest()
+                           + '  golang.org/x/crypto@v0.48.0/' + name + '\n' for name in names)
+    snapshot_sum = 'h1:' + base64.b64encode(hashlib.sha256(digest_lines.encode()).digest()).decode()
+    check('core_crypto_module_snapshot_unchanged', snapshot_sum == checksum)
+
+    # Regenerate only the pinned overrides; compare their actual bytes and scope.
+    with tempfile.TemporaryDirectory(prefix='inspect-crypto-') as directory:
+        stage = pathlib.Path(directory) / 'stage'
+        helper.prepare_overlay(pathlib.Path('/srv/alwayroute/build-cache/gomodcache/golang.org/x/crypto@v0.48.0'),
+                               pathlib.Path('/srv/alwayroute/toolchains/go1.27.3/go'), stage)
+        name = 'poly1305-32bit-experiment.json' if legacy else 'assembly-experiment.json'
+        expected_manifest = json.loads((stage / name).read_text())
+        check('core_crypto_exact_generated_sources', manifest.get('output_sha256') == expected_manifest['output_sha256'])
+        expected_overlay = json.loads((stage / 'overlay.json').read_text().replace(str(stage), str(original_stage)))
+        check('core_crypto_exact_overlay_scope', json.loads(overlay_path.read_text()) == expected_overlay)
+        check('core_crypto_generated_files_unchanged', all(
+            hashlib.sha256((original_stage / name).read_bytes()).hexdigest() == digest
+            for name, digest in expected_manifest['output_sha256'].items()))
+        check('core_crypto_modfile_only_expected_replace', modfile.read_text() == (pinned / 'go.mod').read_text()
+              + '\nreplace golang.org/x/crypto => ' + str(original_stage / 'module') + '\n')
+
+    # Verify both ChaCha copies actually contain r2 rotations. Self-reported flags
+    # do not prove that the module scope matched. Other candidates must stay r1.
+    check('core_crypto_elf32_sections', len(core) >= 52 and core[:6] == b'\x7fELF\x01\x01')
+    section_offset = struct.unpack_from('<I', core, 32)[0]
+    section_size, section_count, names_index = struct.unpack_from('<HHH', core, 46)
+    check('core_crypto_section_table_bounds', section_size >= 40 and section_count > 0 and names_index < section_count
+          and section_offset + section_size * section_count <= len(core))
+    sections = [struct.unpack_from('<10I', core, section_offset + i * section_size) for i in range(section_count)]
+    string_section = sections[names_index]
+    check('core_crypto_section_names_bounds', string_section[4] + string_section[5] <= len(core))
+    strings = core[string_section[4]:string_section[4] + string_section[5]]
+    text = [s for s in sections if s[0] < len(strings) and strings[s[0]:].split(b'\0', 1)[0] == b'.text']
+    check('core_crypto_text_section_bounds', len(text) == 1 and text[0][4] + text[0][5] <= len(core) and text[0][5] % 4 == 0)
+    rotations, multiply_accumulates = [], 0
+    for (word,) in struct.iter_unpack('<I', core[text[0][4]:text[0][4] + text[0][5]]):
+        if word & 0xffe0003f == 0x00200002:
+            rotations.append(word)
+        if word & 0xfc00003f == 0x70000001:
+            multiply_accumulates += 1
+    check('core_crypto_actual_rotate_instructions', len(rotations) == (64 if backend == 'mipsle-asm-r2' else 0)
+          and all(((word >> 6) & 31) in (16, 20, 24, 25) for word in rotations))
+    check('core_crypto_actual_poly1305_assembly', multiply_accumulates == (0 if legacy else 38))
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('image', type=pathlib.Path)
 parser.add_argument('--profile', choices=('baseline', 'manager'), default='baseline')
 parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for manager: previously inspected baseline image')
 parser.add_argument('--core-sha256', type=sha256_arg, default=default_core_sha256)
+parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
+                    help='Explicitly inspect one pinned experimental backend; default rejects overlays')
 parser.add_argument('--output', type=pathlib.Path, default=work / 'image-inspection.json')
 args = parser.parse_args()
 if args.profile == 'manager' and args.baseline_image is None:
     parser.error('--profile manager requires --baseline-image')
+if args.experimental_crypto and args.profile != 'manager':
+    parser.error('--experimental-crypto requires --profile manager')
 image = args.image.resolve()
 data = image.read_bytes()
 expected_core_sha = args.core_sha256
@@ -93,8 +209,13 @@ check('core_elf_mipsle', core[:6] == b'\x7fELF\x01\x01' and struct.unpack_from('
 check('core_matches_tested_payload', core_sha == expected_core_sha)
 build_info = json.loads(readfile('usr/share/alwayroute/build-info.json'))
 check('core_provenance', build_info['input_elf_sha256'] == expected_core_sha)
+pinned = pathlib.Path('/srv/alwayroute/sources/sing-box-1.13.21')
+with tempfile.TemporaryDirectory(prefix='inspect-core-') as directory:
+    elf = pathlib.Path(directory)/'sing-box'
+    elf.write_bytes(core)
+    embedded = tool('/srv/alwayroute/toolchains/go1.27.3/go/bin/go', 'version', '-m', str(elf)).decode()
+validate_crypto_provenance(build_info, embedded, core, args.experimental_crypto, pinned, check)
 if args.profile == 'manager':
-    pinned = pathlib.Path('/srv/alwayroute/sources/sing-box-1.13.21')
     tags = 'with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0'
     check('core_full_cli', build_info.get('cli_profile') == 'full' and build_info.get('entry_package') == './cmd/sing-box')
     check('core_full_registry', build_info.get('registry_profile') == 'upstream' and build_info.get('registry_patch_sha256') is None)
@@ -105,10 +226,6 @@ if args.profile == 'manager':
         'GOFLAGS':'', 'GOENV':'off', 'GOWORK':'off', 'GOEXPERIMENT':'',
         'GOROOT':'/srv/alwayroute/toolchains/go1.27.3/go',
         'GOTOOLCHAIN':'local', 'GOPROXY':'off'})
-    with tempfile.TemporaryDirectory(prefix='inspect-core-') as directory:
-        elf = pathlib.Path(directory)/'sing-box'
-        elf.write_bytes(core)
-        embedded = tool('/srv/alwayroute/toolchains/go1.27.3/go/bin/go', 'version', '-m', str(elf)).decode()
     settings = {}
     for line in embedded.splitlines():
         fields = line.strip().split(None, 1)
@@ -118,8 +235,6 @@ if args.profile == 'manager':
     check('core_embedded_target', all(settings.get(k) == v for k, v in {'GOOS':'linux','GOARCH':'mipsle','GOMIPS':'softfloat','CGO_ENABLED':'0'}.items()))
     check('core_embedded_tags', settings.get('-tags') == tags)
     check('core_embedded_full_entry', '\n\tpath\tgithub.com/sagernet/sing-box/cmd/sing-box\n' in embedded)
-    # Go's embedded settings are not exhaustive: -overlay is not recorded there.
-    check('core_no_explicit_overlay', not any(str(flag).startswith(('-overlay','-modfile')) for flag in build_info.get('command', [])))
 startup = readfile('etc/uci-defaults/99-alwayroute-management')
 check('management_defaults_match_reviewed_input', startup == (source / 'files/etc/uci-defaults/99-alwayroute-management').read_bytes())
 key = readfile('etc/dropbear/authorized_keys')
