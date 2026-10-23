@@ -1,0 +1,89 @@
+{
+  "date": "2026-10-23",
+  "source_commit": "48dfc118",
+  "package": "luci-app-alwayroute 1.0.0-r5",
+  "apk_sha256": "413663222e5af1dd8b4cd84a21cb238e6bf493bde2818fad39101fb4113df59c",
+  "apk_bytes": 20083,
+  "installed_payloads_verified": 6,
+  "ui_tests_passed": 40,
+  "device_template_distinct_versions": true,
+  "headless_browser": "existing Microsoft Edge, normal HTTP cache enabled",
+  "old_r4_loaded_before_install": true,
+  "normal_reload_after_install": true,
+  "document_cache_control": "no-store",
+  "consecutive_reload_versions_distinct": true,
+  "reloads": [
+    [
+      {
+        "resource": "view/alwayroute/app.js",
+        "status": 200,
+        "transfer_bytes": 55940,
+        "body_bytes": 55640
+      },
+      {
+        "resource": "alwayroute/api.js",
+        "status": 200,
+        "transfer_bytes": 1450,
+        "body_bytes": 1150
+      },
+      {
+        "resource": "alwayroute/model.js",
+        "status": 200,
+        "transfer_bytes": 2969,
+        "body_bytes": 2669
+      },
+      {
+        "resource": "alwayroute/style.css",
+        "status": 200,
+        "transfer_bytes": 3216,
+        "body_bytes": 2916
+      }
+    ],
+    [
+      {
+        "resource": "view/alwayroute/app.js",
+        "status": 200,
+        "transfer_bytes": 55940,
+        "body_bytes": 55640
+      },
+      {
+        "resource": "alwayroute/api.js",
+        "status": 200,
+        "transfer_bytes": 1450,
+        "body_bytes": 1150
+      },
+      {
+        "resource": "alwayroute/model.js",
+        "status": 200,
+        "transfer_bytes": 2969,
+        "body_bytes": 2669
+      },
+      {
+        "resource": "alwayroute/style.css",
+        "status": 200,
+        "transfer_bytes": 3216,
+        "body_bytes": 2916
+      }
+    ]
+  ],
+  "viewport_row_checks": [
+    {
+      "width": 1180,
+      "height": 820,
+      "row_checkboxes": 38,
+      "first_row_visible": true
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "row_checkboxes": 38,
+      "first_row_visible": true
+    }
+  ],
+  "core_pid_unchanged": true,
+  "boot_id_unchanged": true,
+  "configuration_hashes_unchanged": 4,
+  "overlay_free_kib_before": 1412,
+  "overlay_free_kib_after": 1308,
+  "physical_ipad_safari_tested": false
+}
