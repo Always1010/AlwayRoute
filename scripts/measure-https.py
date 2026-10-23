@@ -31,7 +31,8 @@ def command(environment: dict, url: str, timeout: int) -> list[str]:
         argv += ["--interface", traffic.get("source_address") or traffic["source_interface"]]
     argv += ["--url", url]
     if traffic.get("executor") == "ssh":
-        return ssh_argv(traffic["ssh_alias"]) + [shlex.join(argv)]
+        # The SSH account may use zsh: bare =https otherwise triggers its =command expansion.
+        return ssh_argv(traffic["ssh_alias"]) + [shlex.join(["sh", "-c", shlex.join(argv)])]
     return argv
 
 
@@ -39,7 +40,7 @@ def require_bounded_curl(environment: dict) -> None:
     traffic = environment["traffic"]
     argv = ["curl", "--disable", "--version"]
     if traffic.get("executor") == "ssh":
-        argv = ssh_argv(traffic["ssh_alias"]) + [shlex.join(argv)]
+        argv = ssh_argv(traffic["ssh_alias"]) + [shlex.join(["sh", "-c", shlex.join(argv)])]
     result = subprocess.run(argv, capture_output=True, timeout=20, check=False)
     match = re.match(rb"curl (\d+)\.(\d+)\.(\d+)", result.stdout)
     if result.returncode or not match or tuple(map(int, match.groups())) < (8, 4, 0):
@@ -68,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             result = subprocess.run(call, capture_output=True, timeout=args.timeout + 20, check=False)
             metrics = result.stdout.decode("ascii", errors="replace").strip()
             if result.returncode or not re.fullmatch(r"[0-9]{3}(?: [0-9]+(?:\.[0-9]+)?){4}", metrics):
-                raise ContextError("HTTPS measurement failed; no raw output displayed")
+                raise ContextError(f"HTTPS measurement failed (exit {result.returncode}); no raw output displayed")
             code, connect, tls, total, size = metrics.split()
             measurements.append({"http_status": int(code), "connect_seconds": float(connect),
                                  "tls_seconds": float(tls), "total_seconds": float(total), "bytes": float(size)})

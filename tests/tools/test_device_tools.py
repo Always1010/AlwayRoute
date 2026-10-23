@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import subprocess
+import shlex
 import sys
 import tempfile
 import unittest
@@ -47,6 +48,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn(" route ", argv[-1])
         self.assertIn("curl --disable", argv[-1])
         self.assertIn("--noproxy", argv[-1])
+        remote = shlex.split(argv[-1])
+        self.assertEqual(remote[:2], ["sh", "-c"])
+        self.assertIn("=https", shlex.split(remote[2]))
         with self.assertRaises(ContextError):
             measure.command({"traffic": {"executor": "local"}}, "https://example.com/?token=private", 5)
         with patch.object(measure.sys, "platform", "win32"):
