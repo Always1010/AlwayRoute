@@ -262,4 +262,13 @@ check(call('job_status',{}).job.status=='succeeded' && restartCalls>beforeRestar
 files['/etc/alwayroute/previous.json']=sprintf('%J',hotBase);
 files['/etc/alwayroute/applying.json']=sprintf('%J',{previousCurrent:hotBase,previousRevision:13,previousService:{enabled:true},previousRunning:true});
 check(boot() && json(files['/etc/alwayroute/current.json']).revision==13 && filter(json(files['/tmp/alwayroute/runtime.json']).outbounds,o=>o.tag=='Proxy')[0].default==hotTarget && !files['/etc/alwayroute/applying.json'],'interrupted selector transaction boots previous confirmed choice');
+let cachedRaw=files['/etc/alwayroute/current.json'],cachedReply=call('get',{}),originalName=cachedReply.model.nodes[0].name;
+cachedReply.model.nodes[0].name='Reader mutation';
+check(call('get',{}).model.nodes[0].name==originalName,'validated model cache never shares mutable objects with callers');
+let external=clone(call('get',{}).model);external.nodes[0].name='External change';files['/etc/alwayroute/current.json']=sprintf('%J',external);
+check(call('get',{}).model.nodes[0].name=='External change','external byte changes immediately invalidate cached validation');
+files['/etc/alwayroute/current.json']='broken';
+check(!call('get',{}).ok,'corrupt storage cannot fall back to the last cached success');
+files['/etc/alwayroute/current.json']=cachedRaw;
+check(call('get',{}).model.nodes[0].name==originalName,'restored file is read using its own content');
 printf('PASS %d manager transaction checks\n',checks);

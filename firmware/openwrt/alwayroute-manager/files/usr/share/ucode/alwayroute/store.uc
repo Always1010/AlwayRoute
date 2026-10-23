@@ -7,6 +7,7 @@ import { selectionPlan } from 'alwayroute.selection';
 import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
+let verifiedModelBytes=null,verifiedModel=null;
 function init() {if(!fs.access(DATA))fs.mkdir(DATA,0700);if(!fs.access(TMP))fs.mkdir(TMP,0700);}
 function read(path, fallback) {let s=fs.readfile(path);if(s==null)return fallback;try{return json(s);}catch(e){fail('STORAGE_CORRUPT','持久配置损坏，拒绝覆盖；请使用恢复功能');}}
 function write(path,value) {
@@ -19,7 +20,17 @@ function write(path,value) {
 function normalized(m) {return m==null?null:validate(normalize(m));}
 function model() {
  let pending=read(DATA+'/applying.json',null);
- return normalized(pending?.previousCurrent ?? read(DATA+'/current.json',empty()));
+ if(pending?.previousCurrent)return normalized(pending.previousCurrent);
+ let raw=fs.readfile(DATA+'/current.json');
+ if(raw==null)return normalized(empty());
+ // Cache only byte-identical, already validated data. Another worker or an
+ // external edit invalidates this immediately; readers always receive a copy.
+ if(raw===verifiedModelBytes && verifiedModel!=null)return clone(verifiedModel);
+ let decoded;
+ try{decoded=json(raw);}catch(e){fail('STORAGE_CORRUPT','持久配置损坏，拒绝覆盖；请使用恢复功能');}
+ let current=normalized(decoded);
+ verifiedModelBytes=raw;verifiedModel=clone(current);
+ return current;
 }
 function lastGood() {
  let pending=read(DATA+'/applying.json',null);
