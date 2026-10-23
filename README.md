@@ -47,11 +47,11 @@
 
 截至 2026-10-23（Asia/Shanghai），4A 已运行自编 OpenWrt 25.12.6／Linux 6.12.112，SSH 122、公钥认证、WAN DHCP、HTTPS 上网和一次持久化重启通过。原 Wi-Fi 名称／密码已恢复，LuCI 登录认证已验证并仅向 LAN／回环开放。基础候选首启可写空间为 1500KiB（约 1.465MiB），低于此前 1.5MiB 规划目标；完整组件和更新峰值仍须实测。
 
-三个自有包已实现并集成初版：`alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding`。当前已部署完整功能固件基线为 13,435,470 字节、143 个软件包，277 项镜像检查通过；已完成保留配置升级及代理自动恢复。后续单独升级两个管理包后 overlay 可用约 1324 KiB，仍低于此前 1.5 MiB 可用空间规划值。WAN 与 Rock 所连 LAN2 已核对为 1000 Mbps 全双工，早期 100 Mbps 链路记录不再描述现状。
+三个自有包已实现并集成初版：`alwayroute-manager`、`luci-app-alwayroute`、`alwayroute-forwarding`。当前已部署完整功能固件为 13,501,006 字节、143 个软件包，277 项镜像检查通过；最新节点／订阅检测管理包已集成 ROM，已完成保留配置刷写及代理自动恢复。overlay 可用约 1428 KiB，比覆盖安装管理包时增加 104 KiB，仍低于此前 1.5 MiB 可用空间规划值。详情见[最新整机刷写记录](docs/reports/2026-10-23-latest-firmware-flash.md)。WAN 与 Rock 所连 LAN2 已核对为 1000 Mbps 全双工，早期 100 Mbps 链路记录不再描述现状。
 
 单节点与整订阅的连通性／延迟检测已部署，默认串行，显示进度并支持取消，不自动切换节点。38 节点实测期间，同一条透明代理下载连接持续传输了约 35.7 MiB，45 次短 HTTPS 请求全部成功，但 CPU 和延迟有增加；两个管理包合计增加约 1.36 KiB。细节及边界见[节点检测实测报告](docs/reports/2026-10-23-node-check.md)。
 
-当前 Flash 核心此前 60 秒透明代理测试为 VMess TCP 173.08 Mbps、WS/TLS 160.88 Mbps。随后尝试的 I/O、计数锁、RPS／线程及 PGO 优化未证明稳定突破 200 Mbps，组合候选出现核心 panic，实验已从当前代码与构建入口撤回，本轮没有刷入新固件。关闭代理后，经实际 WAN 的公网下载最高测得 185.96 Mbps；受控 LAN 三层 NAT 回环为 638.30 Mbps，后者不能视为 WAN 口极限。测试条件、CPU 占用、恢复检查及取舍见[最新性能报告](docs/reports/2026-10-23-200m-feasibility.md)。
+当前 Flash 核心此前 60 秒透明代理测试为 VMess TCP 173.08 Mbps、WS/TLS 160.88 Mbps。随后尝试的 I/O、计数锁、RPS／线程及 PGO 优化未证明稳定突破 200 Mbps，组合候选出现核心 panic，实验已从当前代码与构建入口撤回，该轮性能实验没有刷入新固件。之后的最新整机刷写保留同一核心，没有重新测量吞吐。关闭代理后的历史实测中，经实际 WAN 的公网下载最高为 185.96 Mbps；受控 LAN 三层 NAT 回环为 638.30 Mbps，后者不能视为 WAN 口极限。测试条件、CPU 占用、恢复检查及取舍见[最新性能报告](docs/reports/2026-10-23-200m-feasibility.md)。
 
 节点失败时不自动改走直连；核心整体故障时保守阻断公网 TCP/UDP，也会影响公网 direct 规则，LAN 管理仍保留。首版不支持把全部 Clash 功能或无限规则库直接搬入这台 16MB Flash／约 124MB RAM 的设备，实际边界见集成报告。
 
