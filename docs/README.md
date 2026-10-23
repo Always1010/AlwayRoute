@@ -17,7 +17,10 @@
 | 接口 | [v1 契约](../contracts/v1.md) | 前后端配置模型与 RPC 边界 |
 | 验证 | [测试说明](../tests/README.md) | 测试分区、执行环境、命令与覆盖边界 |
 | 设备 | [小米 4A 设备与网络记录](devices/xiaomi-4a.md) | 持续维护的设备身份、访问状态、拓扑和操作记录 |
-| 当前设备 | [首刷与基础实机结果](reports/2026-10-23-first-flash-review.md) | OpenWrt 首刷、实际空间、网络及重启 |
+| 最新性能结论 | [200M 可行性、实验撤回与直连测速](reports/2026-10-23-200m-feasibility.md) | 保留现有固件；未采用实验清理、代理稳定性失败、约 186 Mbps 公网直连及约 638 Mbps LAN NAT 回环 |
+| 当前已部署版本 | [完整功能加密优化与刷机记录](reports/2026-10-23-crypto-optimization.md) | 完整核心、143 个包、已部署镜像与此前 Flash 性能结果 |
+| 性能历史 | [早期性能精简与升级记录](reports/2026-10-23-performance-upgrade.md) | 历史精简已由后续完整功能恢复撤回，不描述当前部署状态 |
+| 首刷历史 | [首刷与基础实机结果](reports/2026-10-23-first-flash-review.md) | OpenWrt 首刷、实际空间、网络及重启 |
 | 集成审查 | [管理扩展核查](reports/2026-10-23-manager-integration-audit.md) | 运行时、权限、配置事务及故障边界 |
 | 扩展构建 | [管理扩展构建记录](reports/2026-10-23-manager-build.md) | 签名包、完整镜像、载荷校验及被拒绝的候选 |
 | 构建历史 | [管理入口、备份与路线验证](reports/2026-10-22-4a-baseline-and-route-validation.md) | 原厂基线、备份、核心测试和基础候选构建 |
