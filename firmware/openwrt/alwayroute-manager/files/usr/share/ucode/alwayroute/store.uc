@@ -1,13 +1,14 @@
 'use strict';
 import * as fs from 'fs';
 import { sha256 } from 'digest';
-import { fail, clone, empty, normalize, validate, effective, generate, policyCatalog, modelLimits } from 'alwayroute.model';
+import { fail, clone, empty, normalize, validate, effective, generateValidated, policyCatalog, modelLimits } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
 import { selectionPlan } from 'alwayroute.selection';
 import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
 let verifiedModelBytes=null,verifiedModel=null;
+let verifiedModels=[];
 function init() {if(!fs.access(DATA))fs.mkdir(DATA,0700);if(!fs.access(TMP))fs.mkdir(TMP,0700);}
 function read(path, fallback) {let s=fs.readfile(path);if(s==null)return fallback;try{return json(s);}catch(e){fail('STORAGE_CORRUPT','持久配置损坏，拒绝覆盖；请使用恢复功能');}}
 function write(path,value) {
@@ -17,7 +18,14 @@ function write(path,value) {
  let n=f.write(data),flushed=f.flush(),closed=f.close();
  if(n!=length(data) || !flushed || !closed || !fs.rename(path+'.new',path))fail('STORAGE_ERROR','配置原子保存失败');
 };
-function normalized(m) {return m==null?null:validate(normalize(m));}
+function normalized(m) {
+ if(m==null)return null;
+ let bytes=sprintf('%J',m);
+ for(let cached in verifiedModels)if(cached.bytes==bytes)return clone(cached.model);
+ let current=validate(normalize(m));
+ push(verifiedModels,{bytes,model:clone(current)});while(length(verifiedModels)>3)shift(verifiedModels);
+ return current;
+}
 function model() {
  let pending=read(DATA+'/applying.json',null);
  if(pending?.previousCurrent)return normalized(pending.previousCurrent);
@@ -94,7 +102,7 @@ function coreStatus() {
  return {available:true,groups};
 }
 function checkConfig(m) {
- write(TMP+'/runtime.json',generate(m));
+ write(TMP+'/runtime.json',generateValidated(m));
  if(!command('/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json'))fail('CORE_CHECK_FAILED','核心拒绝配置，原应用保持可恢复');
 }
 function selected(g) {return g.id=='Other' && g.selected=='block'?'direct':g.selected;}
@@ -113,7 +121,7 @@ function putSelection(id,target) {
 function liveSelectionPlan(next) {
  let previous=model(),current=state(previous),good=lastGood();
  if(current.appliedRevision!==previous.revision || good?.revision!==previous.revision || sprintf('%J',good)!=sprintf('%J',previous))return null;
- let plan=selectionPlan(previous,next,read(TMP+'/runtime.json',null));
+ let plan=selectionPlan(previous,next,read(TMP+'/runtime.json',null),true);
  if(!plan || !choicesMatch(previous,coreStatus()))return null;
  let f=forwarding('status');
  if(f.available!==true || f.guarded || f.running!==(previous.mode!='direct'))return null;
@@ -184,7 +192,7 @@ function applyModel(m,commitCurrent,plan) {
  return {ok:true,state:state(m),activation:plan?'selector':'restart'};
 };
 function configureCandidate(next) {
- validate(next);
+ next=normalized(next);
  if(next.mode=='global')for(let g in next.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
  if(running())return applyModel(next,true,liveSelectionPlan(next));
  // A stopped service validates the next start without changing its enabled state.
@@ -296,7 +304,7 @@ function execute(method,args) {
  }
  expected(args,m);
  if(method=='configure') {
-  let next=normalized(clone(args.model));
+  let next=normalize(clone(args.model));
   if(!next)fail('INVALID_MODEL','需要配置模型');
   if(next.revision!=m.revision)fail('REVISION_CONFLICT','模型版本不匹配');
   next.revision=m.revision+1;
@@ -405,7 +413,7 @@ export function boot() {
   restoreMetadata(pending,good,config);
  }
  if(!config.enabled || !good)return false;
- write(TMP+'/runtime.json',generate(good));write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
+ write(TMP+'/runtime.json',generateValidated(good));write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
  if(!forwarding('guard'))fail('FORWARDING_GUARD_FAILED','启动时无法建立故障阻断');return true;
 };
 export function due() {

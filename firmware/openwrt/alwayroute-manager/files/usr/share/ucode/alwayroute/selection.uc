@@ -1,9 +1,10 @@
 'use strict';
-import { clone, generate } from 'alwayroute.model';
+import { clone, validate, generateValidated } from 'alwayroute.model';
 
 // A selector PUT cannot update DNS rules, routes, members, or node parameters.
 // Compare both the model and generated config, failing closed to a full apply.
-export function selectionPlan(previous, next, runtime) {
+export function selectionPlan(previous, next, runtime, validated) {
+ if(validated!==true){validate(previous);validate(next);}
  let before=clone(previous),after=clone(next),changes=[];
  delete before.revision;delete after.revision;
  // get() overlays download status on subscriptions; this is not core config.
@@ -15,7 +16,7 @@ export function selectionPlan(previous, next, runtime) {
   delete g.selected;delete after.groups[i].selected;
  }
  if(!length(changes) || sprintf('%J',before)!=sprintf('%J',after))return null;
- let original=generate(previous),candidate=generate(next);
+ let original=generateValidated(previous),candidate=generateValidated(next);
  if(sprintf('%J',runtime)!=sprintf('%J',original))return null;
  let comparable=clone(candidate);
  for(let o in original.outbounds)if(o.type=='selector')delete o.default;

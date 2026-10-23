@@ -39,6 +39,7 @@ URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通
 `/tmp/alwayroute/`放置生成运行配置、订阅正文、作业进度、实时检查和最多20条脱敏事件，
 不将流量历史写闪存。凭证目录0700，文件0600。flock非阻塞锁配CLOEXEC，防后台子进程继承锁。
 读取current时按原始文件字节缓存已通过完整校验的模型，并始终返回独立副本；内容改变立刻重新校验，损坏文件不能回退旧缓存，applying.previousCurrent仍按事务恢复规则处理。
+事务内最多缓存三份字节相同的已验证模型，避免current/lastgood/恢复副本反复校验；候选在revision递增后完整校验一次。内部generateValidated只接收已验证且未再改动的模型，公开generate仍完整校验，避免重复校验有效节点。
 
 应用流程：expectedRevision校验 → 生成 → `sing-box check` → 转发prepare →
 procd restart → loopback API检查所有selector实际选择 → 转发activate → 提交lastgood。

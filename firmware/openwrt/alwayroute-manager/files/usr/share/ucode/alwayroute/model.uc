@@ -107,14 +107,14 @@ export function node(n) {
  }
  return n;
 };
-export function effective(m) {
+export function effective(m, validated) {
  let result = [];
  for (let original in m.nodes) {
   let n = clone(original), o = m.overrides[n.id];
   if (o?.excluded) continue;
   if (o?.name != null) n.name = o.name;
   if (o?.patch) for (let k,v in o.patch) n[k] = v;
-  node(n);
+   if(validated!==true)node(n);
   if (n.enabled) push(result,n);
  }
  return result;
@@ -173,8 +173,8 @@ export function validate(m) {
  require(length(sprintf('%J',m))<=LIMITS.inputBytes,'配置超过128KiB');
  return m;
 };
-export function generate(m) {
- validate(m);
+// Internal callers use this only after validating the complete, unchanged model.
+export function generateValidated(m) {
  let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[],ruleSets=[],ipOverrides=[];
  let selections={};for(let g in m.groups)selections[g.id]=g.selected;
  function domainDns(rule, target) {
@@ -185,7 +185,7 @@ export function generate(m) {
   for(let key,value in rule)d[key]=value;
   push(dnsRules,d);
  }
- for(let n in effective(m)) {
+ for(let n in effective(m,true)) {
   let o={type:'vmess',tag:n.id,server:n.server,server_port:n.port,uuid:n.uuid,security:n.security ?? 'auto',alter_id:n.alterId ?? 0};
   if(n.tls?.enabled) o.tls={enabled:true,server_name:n.tls.serverName ?? n.server};
   if(n.transport) o.transport={type:'ws',path:n.transport.path ?? '/',headers: n.transport.host ? {Host:n.transport.host}: {}};
@@ -236,4 +236,8 @@ export function generate(m) {
  {type:'tproxy',tag:'lan-tproxy',listen:'0.0.0.0',listen_port:7893}],outbounds,
  dns:{servers:[{type:'local',tag:'bootstrap'},{type:'https',tag:'proxy-dns',server:'1.1.1.1',tls:{enabled:true,server_name:'cloudflare-dns.com'},detour:'Proxy'}],rules:dnsRules,final:m.mode=='direct'?'bootstrap':'proxy-dns',reverse_mapping:true,strategy:'ipv4_only',cache_capacity:512},
  route:{rules,rule_set:ruleSets,final,auto_detect_interface:true,default_domain_resolver:'bootstrap'},experimental:{clash_api:{external_controller:'127.0.0.1:9090',default_mode:m.mode=='direct'?'Direct':m.mode=='global'?'Global':'Rule'}}};
+};
+export function generate(m) {
+ validate(m);
+ return generateValidated(m);
 };

@@ -271,4 +271,7 @@ files['/etc/alwayroute/current.json']='broken';
 check(!call('get',{}).ok,'corrupt storage cannot fall back to the last cached success');
 files['/etc/alwayroute/current.json']=cachedRaw;
 check(call('get',{}).model.nodes[0].name==originalName,'restored file is read using its own content');
+let invalidCandidate=clone(call('get',{}).model);invalidCandidate.nodes[0].port=0;
+call('configure',{expectedRevision:invalidCandidate.revision,model:invalidCandidate});work();
+check(call('job_status',{}).job.error.code=='INVALID_MODEL' && files['/etc/alwayroute/current.json']==cachedRaw,'cached validation cannot admit a modified invalid candidate into optimized generation');
 printf('PASS %d manager transaction checks\n',checks);
