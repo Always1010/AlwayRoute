@@ -52,6 +52,11 @@ for package in internal/poly1305 chacha20poly1305; do
 done
 ```
 
+执行入口统一为 `firmware/tools/run-device-tests.py --env /path/to/operation-environment.json --binary FILE...`。
+默认仅离线校验和计划，`--preflight` 只读验证设备与资源，显式 `--apply` 才执行。
+必须选择本轮全部四个模块／vendor测试产物，不能把单个示例当作完整验收。
+低内存、繁忙作业或未完成配置事务会被拒绝，不为运行测试自动停生产或改系统参数；微基准保持显式、独立执行。
+
 四个二进制都须在设备完整执行 `-test.v -test.timeout=5m`。原 TestBurnin 默认 skip，不开启
 慢速 `-stress`，不缩小其他测试范围，不关闭 vet。上游所有预期 tag、Verify 篡改拒绝和
 AEAD 负例保持；New 的四条非规范初始累加器向量仅在测试中用三个等值常量 fixture 连接旧

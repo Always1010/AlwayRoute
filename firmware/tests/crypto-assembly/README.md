@@ -43,6 +43,18 @@ for package in chacha20 internal/poly1305 chacha20poly1305; do
 done
 ```
 
+正式执行入口为 `firmware/tools/run-device-tests.py`，不再调用 `.local` 中按候选拆开的旧runner。
+在持有这些产物的操作机选择其自己的设备环境：
+
+```sh
+python3 firmware/tools/run-device-tests.py --env /path/to/operation-environment.json \
+  --binary "$STAGE/module_chacha20.test" "$STAGE/vendor_chacha20.test" --preflight
+```
+
+省略 `--preflight` 时仅做离线ELF校验和计划；审查后同参加 `--apply` 才上传并执行。
+选择完整产物清单，不能只检查示例中的一个包就宣称全部差分通过。工具默认完整普通测试5分钟，
+不自动benchmark、不启停生产服务，低内存／繁忙事务时拒绝执行。来源、编译、vet、完整测试与设备稳定性仍是不同门槛。
+
 编译不等于运行验收。设备执行由主 Agent 统一安排，每个二进制使用
 `-test.v -test.timeout=5m` 运行所有常规测试。不要设置 `-test.run` 缩小范围，不要关闭 vet，
 不要开启默认跳过的慢速 `-stress`。这些测试覆盖：
