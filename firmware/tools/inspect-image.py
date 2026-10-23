@@ -26,146 +26,6 @@ def sha256_arg(value):
     return value.lower()
 
 
-def module_file_hashes(module, label, check):
-    paths = list(module.rglob('*')) if module.is_dir() else []
-    check(label + '_regular_files', module.is_dir() and not module.is_symlink()
-          and all(not p.is_symlink() and (p.is_file() or p.is_dir()) for p in paths))
-    names = sorted(p.relative_to(module).as_posix() for p in paths if p.is_file())
-    check(label + '_valid_names', all('\n' not in name for name in names))
-    return {name: hashlib.sha256((module / name).read_bytes()).hexdigest() for name in names}
-
-
-def validate_performance_provenance(build_info, embedded, names, crypto_backend, pinned, check):
-    """Authenticate the composed inputs, then return the original crypto view.
-
-    The existing crypto validator still verifies its complete snapshot, exact
-    overlay, modfile and machine instructions. Only after the actual combined
-    inputs are verified here are its original flags restored in that view.
-    """
-    records = build_info.get('performance_candidates', [])
-    inputs = build_info.get('performance_build_inputs')
-    if not names:
-        check('core_no_performance_candidates', not records and not inputs)
-        return build_info
-    check('core_explicit_performance_candidates', isinstance(records, list)
-          and [record.get('name') for record in records] == sorted(names)
-          and isinstance(inputs, dict))
-    command = build_info.get('command', [])
-    actual_flags = [str(flag) for flag in command if str(flag).startswith(('-overlay', '-modfile'))]
-    base_flags = inputs.get('base_crypto_inputs')
-    expected_overlay, replacements = {}, {}
-    if crypto_backend:
-        check('core_performance_crypto_base_arguments', isinstance(base_flags, list) and len(base_flags) == 2
-              and base_flags[0].startswith('-overlay=') and base_flags[1].startswith('-modfile='))
-        base_overlay = pathlib.Path(base_flags[0].split('=', 1)[1])
-        base_modfile = pathlib.Path(base_flags[1].split('=', 1)[1])
-        check('core_performance_crypto_base_files', base_overlay.is_absolute() and base_overlay.is_file()
-              and base_modfile.is_absolute() and base_modfile.is_file()
-              and base_modfile == base_overlay.parent / 'core.mod')
-        expected_overlay.update(json.loads(base_overlay.read_text())['Replace'])
-        replacements['golang.org/x/crypto'] = str(base_overlay.parent / 'module')
-    else:
-        check('core_performance_no_crypto_base', base_flags == [])
-
-    dependencies, current = {}, None
-    for line in embedded.splitlines():
-        fields = line.strip().split('\t')
-        if fields[0] == 'dep':
-            check('core_performance_unique_dependency_' + fields[1], fields[1] not in dependencies)
-            current = {'version': fields[2], 'replacement': None}
-            dependencies[fields[1]] = current
-        elif fields[0] == '=>' and current is not None:
-            current['replacement'] = fields[1:]
-
-    root = pathlib.Path('/srv/alwayroute')
-    module_specs = {
-        'vmess-framing': ('github.com/sagernet/sing-vmess', 'v0.2.8-0.20250909125414-3aed155119a1',
-                         'h1:aSwUNYUkVyVvdmBSufR8/nRFonwJeKSIROxHcm5br9o='),
-        'ws-header': ('github.com/sagernet/ws', 'v0.0.0-20231204124109-acfe8907c854',
-                      'h1:6uUiZcDRnZSAegryaUGwPC/Fj13JSHwiTftrXhMmYOc='),
-    }
-    combined_stage = None
-    with tempfile.TemporaryDirectory(prefix='inspect-performance-') as directory:
-        for record in records:
-            name = record['name']
-            label = 'core_performance_' + name
-            original_stage = pathlib.Path(record['stage'])
-            check(label + '_stage', original_stage.is_absolute() and original_stage.is_dir()
-                  and not original_stage.is_symlink() and original_stage.name == name)
-            if combined_stage is None:
-                combined_stage = original_stage.parent
-            check(label + '_composition_directory', original_stage.parent == combined_stage)
-            generated_stage = pathlib.Path(directory) / name
-            helper_path = pathlib.Path(__file__).with_name('traffic-counter-overlay.py'
-                          if name == 'traffic-counter-mutex' else 'io-path-overlay.py')
-            spec = importlib.util.spec_from_file_location('performance_candidate', helper_path)
-            helper = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(helper)
-            if name == 'traffic-counter-mutex':
-                overlay = helper.prepare_overlay(pinned, generated_stage)
-                expected_manifest = json.loads((generated_stage / 'traffic-counter-experiment.json').read_text())
-                candidate_overlay = {virtual: str(original_stage / pathlib.Path(actual).relative_to(generated_stage))
-                                     for virtual, actual in overlay['Replace'].items()}
-                check(label + '_overlay_disjoint', not (set(expected_overlay) & set(candidate_overlay)))
-                expected_overlay.update(candidate_overlay)
-                check(label + '_generated_files', all(
-                    (original_stage / relative).is_file() and not (original_stage / relative).is_symlink()
-                    and hashlib.sha256((original_stage / relative).read_bytes()).hexdigest() == digest
-                    for relative, digest in expected_manifest['output_sha256'].items()))
-                check(label + '_individual_overlay_scope', json.loads((original_stage / 'overlay.json').read_text())
-                      == {'Replace': candidate_overlay})
-            else:
-                module, version, checksum = module_specs[name]
-                module_root = root / 'build-cache/gomodcache' / (module + '@' + version)
-                baseline_hashes = module_file_hashes(module_root, label + '_baseline', check)
-                # Authenticate the entire baseline against Go's pinned Hash1;
-                # hashes of just the edited files would miss other source edits.
-                digest_lines = ''.join(digest + '  ' + module + '@' + version + '/' + relative + '\n'
-                                       for relative, digest in baseline_hashes.items())
-                snapshot_sum = 'h1:' + base64.b64encode(hashlib.sha256(digest_lines.encode()).digest()).decode()
-                check(label + '_pinned_module_snapshot', snapshot_sum == checksum
-                      and module + ' ' + version + ' ' + checksum in (pinned / 'go.sum').read_text().splitlines())
-                prepare = helper.prepare_overlay if name == 'vmess-framing' else helper.prepare_ws_overlay
-                expected_manifest = prepare(module_root, generated_stage)
-                expected_manifest['module_replace'] = {module: str(original_stage / 'module')}
-                replacements.update(expected_manifest['module_replace'])
-                expected_files = module_file_hashes(generated_stage / 'module', label + '_expected', check)
-                actual_files = module_file_hashes(original_stage / 'module', label + '_actual', check)
-                check(label + '_complete_module_matches_patch', actual_files == expected_files)
-                dependency = dependencies.get(module)
-                check(label + '_embedded_dependency', dependency is not None and dependency['version'] == version
-                      and dependency['replacement'] == [str(original_stage / 'module'), '(devel)'])
-            check(label + '_exact_manifest', record.get('manifest') == expected_manifest)
-
-    # Reject every undeclared replacement, including an unrelated module.
-    check('core_performance_only_expected_replacements',
-          {module: dep['replacement'] for module, dep in dependencies.items() if dep['replacement'] is not None}
-          == {module: [path, '(devel)'] for module, path in replacements.items()})
-    expected_flags = []
-    if expected_overlay:
-        overlay_path = combined_stage / 'overlay.json'
-        expected_flags.append('-overlay=' + str(overlay_path))
-        check('core_performance_combined_overlay_digest', overlay_path.is_file()
-              and hashlib.sha256(overlay_path.read_bytes()).hexdigest() == inputs.get('overlay_sha256'))
-        check('core_performance_exact_combined_overlay', json.loads(overlay_path.read_text()) == {'Replace': expected_overlay})
-    else:
-        check('core_performance_no_overlay', inputs.get('overlay_sha256') is None)
-    if replacements:
-        modfile = combined_stage / 'core.mod'
-        expected_flags.append('-modfile=' + str(modfile))
-        check('core_performance_combined_modfile_digest', modfile.is_file()
-              and hashlib.sha256(modfile.read_bytes()).hexdigest() == inputs.get('modfile_sha256'))
-        check('core_performance_exact_combined_modfile', modfile.read_text() == (pinned / 'go.mod').read_text() + ''.join(
-            '\nreplace ' + module + ' => ' + path + '\n' for module, path in sorted(replacements.items())))
-        check('core_performance_original_go_sum', (combined_stage / 'core.sum').read_bytes() == (pinned / 'go.sum').read_bytes())
-    else:
-        check('core_performance_no_modfile', inputs.get('modfile_sha256') is None)
-    check('core_performance_exact_build_arguments', actual_flags == expected_flags)
-    base_view = dict(build_info)
-    base_view['command'] = [flag for flag in command if not str(flag).startswith(('-overlay', '-modfile'))] + base_flags
-    return base_view
-
-
 def validate_crypto_provenance(build_info, embedded, core, backend, pinned, check):
     """Bind candidate inputs to embedded dependency data and actual instructions."""
     command = build_info.get('command', [])
@@ -283,19 +143,12 @@ parser.add_argument('--baseline-image', type=pathlib.Path, help='Required for ma
 parser.add_argument('--core-sha256', type=sha256_arg, default=default_core_sha256)
 parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
                     help='Explicitly inspect one pinned experimental backend; default rejects overlays')
-parser.add_argument('--performance-candidate', action='append', default=[],
-                    choices=('vmess-framing', 'ws-header', 'traffic-counter-mutex'),
-                    help='Repeat to explicitly permit the matching pinned performance candidates')
 parser.add_argument('--output', type=pathlib.Path, default=work / 'image-inspection.json')
 args = parser.parse_args()
 if args.profile == 'manager' and args.baseline_image is None:
     parser.error('--profile manager requires --baseline-image')
 if args.experimental_crypto and args.profile != 'manager':
     parser.error('--experimental-crypto requires --profile manager')
-if args.performance_candidate and args.profile != 'manager':
-    parser.error('--performance-candidate requires --profile manager')
-if len(args.performance_candidate) != len(set(args.performance_candidate)):
-    parser.error('Each --performance-candidate may be specified only once')
 image = args.image.resolve()
 data = image.read_bytes()
 expected_core_sha = args.core_sha256
@@ -361,9 +214,7 @@ with tempfile.TemporaryDirectory(prefix='inspect-core-') as directory:
     elf = pathlib.Path(directory)/'sing-box'
     elf.write_bytes(core)
     embedded = tool('/srv/alwayroute/toolchains/go1.27.3/go/bin/go', 'version', '-m', str(elf)).decode()
-crypto_view = validate_performance_provenance(build_info, embedded, args.performance_candidate,
-                                             args.experimental_crypto, pinned, check)
-validate_crypto_provenance(crypto_view, embedded, core, args.experimental_crypto, pinned, check)
+validate_crypto_provenance(build_info, embedded, core, args.experimental_crypto, pinned, check)
 if args.profile == 'manager':
     tags = 'with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0'
     check('core_full_cli', build_info.get('cli_profile') == 'full' and build_info.get('entry_package') == './cmd/sing-box')
@@ -494,7 +345,6 @@ report = {
     'image': str(image), 'profile': args.profile, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(),
     'expected': {
         'core_sha256': expected_core_sha,
-        'performance_candidates': sorted(args.performance_candidate),
         'ip_package': 'ip-full',
         'manager_package_delta': expected_package_delta,
     },

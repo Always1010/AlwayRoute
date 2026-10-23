@@ -39,20 +39,11 @@ parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--pgo', type=Path, help='Device CPU profile; keeps all features and the pinned compiler')
 parser.add_argument('--experimental-crypto', choices=('poly1305-32', 'mipsle-asm', 'mipsle-asm-r2'),
                     help='Explicit candidate only; retains full core and never modifies upstream trees')
-parser.add_argument('--performance-candidate', action='append', default=[],
-                    choices=('vmess-framing', 'ws-header', 'traffic-counter-mutex'),
-                    help='Repeat to combine default-off, pinned I/O/statistics candidates')
 compiler = parser.add_mutually_exclusive_group()
 compiler.add_argument('--no-inline', action='store_true', help='Comparison only: retain the old all=-l compiler setting')
 compiler.add_argument('--cold-no-inline', action='store_true', help='Disable inlining only in CLI and configuration/file conversion packages')
 compiler.add_argument('--crypto-inline', action='store_true', help='Size candidate: preserve crypto inlining while disabling it in other packages')
-parser.add_argument('--counter-inline', action='store_true',
-                    help='Inline only the counter/Mutex chain; requires --crypto-inline and the traffic-counter-mutex candidate')
 args = parser.parse_args()
-if len(args.performance_candidate) != len(set(args.performance_candidate)):
-    parser.error('Each --performance-candidate may be specified only once')
-if args.counter_inline and (not args.crypto_inline or 'traffic-counter-mutex' not in args.performance_candidate):
-    parser.error('--counter-inline requires --crypto-inline and --performance-candidate traffic-counter-mutex')
 source = ROOT / 'sources/sing-box-1.13.21'
 archive = ROOT / 'artifacts/sing-box-v1.13.21-source.tar.gz'
 output = args.output.resolve()
@@ -90,9 +81,6 @@ started = time.monotonic()
 gcflags = ['all=-l'] if args.no_inline else [p+'=-l' for p in COLD_PACKAGES] if args.cold_no_inline else []
 if args.crypto_inline:
     gcflags = ['all=-l'] + [p+'=' for p in HOT_PACKAGES]
-if args.counter_inline:
-    gcflags += [p+'=' for p in ('internal/sync', 'sync',
-                               'github.com/sagernet/sing-box/experimental/clashapi/trafficontrol')]
 command = [str(go), 'build', '-p', '2', '-trimpath', '-buildvcs=false', '-tags', TAGS,
            '-pgo', str(args.pgo.resolve()) if args.pgo else 'off']
 crypto = None
@@ -121,54 +109,6 @@ if args.experimental_crypto:
               'manifest': json.loads((stage / manifest_name).read_text()),
               'overlay_sha256': hashlib.sha256((stage / 'overlay.json').read_bytes()).hexdigest(),
               'modfile_sha256': hashlib.sha256(modfile.read_bytes()).hexdigest()}
-performance, performance_inputs = [], None
-if args.performance_candidate:
-    combined_stage = output.parent / (output.name + '.performance-stage')
-    combined_stage.mkdir()
-    base_crypto_inputs = [flag for flag in command if flag.startswith(('-overlay=', '-modfile='))]
-    combined_overlay, module_replacements = {}, {}
-    if crypto:
-        combined_overlay.update(json.loads((stage / 'overlay.json').read_text())['Replace'])
-        module_replacements.update(crypto['manifest']['module_replace'])
-    for name in sorted(args.performance_candidate):
-        candidate_stage = combined_stage / name
-        helper_path = Path(__file__).with_name('traffic-counter-overlay.py' if name == 'traffic-counter-mutex'
-                                              else 'io-path-overlay.py')
-        spec = importlib.util.spec_from_file_location('performance_candidate', helper_path)
-        helper = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(helper)
-        if name == 'traffic-counter-mutex':
-            overlay = helper.prepare_overlay(source, candidate_stage)
-            if set(combined_overlay) & set(overlay['Replace']):
-                raise ValueError('Overlapping performance/crypto overlay paths')
-            combined_overlay.update(overlay['Replace'])
-            manifest = json.loads((candidate_stage / 'traffic-counter-experiment.json').read_text())
-        else:
-            module_version = ('github.com/sagernet/sing-vmess@v0.2.8-0.20250909125414-3aed155119a1'
-                              if name == 'vmess-framing' else 'github.com/sagernet/ws@v0.0.0-20231204124109-acfe8907c854')
-            prepare = helper.prepare_overlay if name == 'vmess-framing' else helper.prepare_ws_overlay
-            manifest = prepare(ROOT / 'build-cache/gomodcache' / module_version, candidate_stage)
-            if set(module_replacements) & set(manifest['module_replace']):
-                raise ValueError('Overlapping performance/crypto module replacements')
-            module_replacements.update(manifest['module_replace'])
-        performance.append({'name': name, 'stage': str(candidate_stage), 'manifest': manifest})
-    # Preserve the individual crypto stage for its existing strict validator.
-    # The actual command uses exactly one combined overlay and one modfile.
-    command = [flag for flag in command if not flag.startswith(('-overlay=', '-modfile='))]
-    performance_inputs = {'base_crypto_inputs': base_crypto_inputs,
-                          'overlay_sha256': None, 'modfile_sha256': None}
-    if combined_overlay:
-        overlay_path = combined_stage / 'overlay.json'
-        overlay_path.write_text(json.dumps({'Replace': combined_overlay}, indent=2) + '\n')
-        command.append('-overlay=' + str(overlay_path))
-        performance_inputs['overlay_sha256'] = hashlib.sha256(overlay_path.read_bytes()).hexdigest()
-    if module_replacements:
-        modfile = combined_stage / 'core.mod'
-        modfile.write_text((source / 'go.mod').read_text() + ''.join(
-            '\nreplace ' + module + ' => ' + path + '\n' for module, path in sorted(module_replacements.items())))
-        shutil.copyfile(source / 'go.sum', combined_stage / 'core.sum')
-        command.append('-modfile=' + str(modfile))
-        performance_inputs['modfile_sha256'] = hashlib.sha256(modfile.read_bytes()).hexdigest()
 command += ['-gcflags='+flag for flag in gcflags]
 command += ['-ldflags', '-s -w -buildid= -X internal/godebug.defaultGODEBUG=multipathtcp=0 '
             '-checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.13.21-alwayroute-router',
@@ -189,8 +129,5 @@ metadata = {'version': '1.13.21-alwayroute-router', 'source_sha256': ARCHIVE_SHA
             'embedded_build_info': subprocess.check_output([str(go), 'version', '-m', str(output)], env=env, text=True),
             'verified_source_files': len(verified), 'elapsed_seconds': round(time.monotonic() - started, 3),
             'runtime_validation': 'pending device checks; build success is not runtime acceptance'}
-if performance:
-    metadata['performance_candidates'] = performance
-    metadata['performance_build_inputs'] = performance_inputs
 output.with_suffix('.build-info.json').write_text(json.dumps(metadata, indent=2) + '\n')
 print(json.dumps(metadata), flush=True)
