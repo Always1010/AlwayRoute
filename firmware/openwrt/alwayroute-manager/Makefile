@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=9
+PKG_RELEASE:=10
 PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
 ROUTING_INPUT:=$(TOPDIR)/alwayroute-input/routing

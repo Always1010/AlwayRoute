@@ -177,7 +177,9 @@ export function validate(m) {
 };
 // Internal callers use this only after validating the complete, unchanged model.
 export function generateValidated(m) {
- let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'},{action:'sniff'}],dnsRules=[],ruleSets=[],ipOverrides=[];
+ let outbounds=[{type:'direct',tag:'direct'}], choices=['direct'], rules=[{port:53,action:'hijack-dns'}],dnsRules=[],ruleSets=[],ipOverrides=[];
+ // Only rule mode needs application hostnames; DNS must never wait for sniffing.
+ if(m.mode=='rule')push(rules,{action:'sniff',sniffer:['http','tls','quic']});
  let selections={};for(let g in m.groups)selections[g.id]=g.selected;
  function domainDns(rule, target) {
   // Validation permits only one group reference: a non-Proxy group may follow Proxy.

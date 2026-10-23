@@ -30,7 +30,7 @@ m.groups[0].selected=nodes[0].id;validate(m);
 let config=generate(m);check(config.outbounds[1].server_port==443,'typed VMess config');
 check(config.experimental.clash_api.external_controller=='127.0.0.1:9090','API loopback only');
 check(config.route.final=='Other' && outbound(config,'Other').default=='direct','Other is the rule-mode fallback and defaults direct');
-check(config.route.rules[0].action=='hijack-dns' && config.route.rules[0].port==53 && config.route.rules[1].action=='sniff' && config.route.rules[1].sniffer==null,'DNS hijack precedes the full default sniffers');
+check(config.route.rules[0].action=='hijack-dns' && config.route.rules[0].port==53 && config.route.rules[1].action=='sniff' && join(',',config.route.rules[1].sniffer)=='http,tls,quic','DNS hijack precedes only the hostname sniffers needed for routing');
 check(join(',',outbound(config,'Proxy').outbounds)=='direct,'+nodes[0].id && join(',',outbound(config,'OpenAI').outbounds)=='direct,'+nodes[0].id+',Proxy','every selector includes all effective nodes, even those not currently selected');
 source.ps='Renamed';check(parse('vmess://'+b64enc(sprintf('%J',source)),'demo',sha256)[0].id==nodes[0].id,'name changes keep stable IDs');
 check(parse(b64enc(uri),'demo',sha256)[0].id==nodes[0].id,'base64 subscription');
@@ -97,8 +97,8 @@ let scaleConfig=generate(scale),selectorMembers=0,complete=true,allChoices=['dir
 for(let n in effective(scale))push(allChoices,n.id);
 for(let g in scale.groups){let o=outbound(scaleConfig,g.id),selected=g.selected=='block'?'direct':g.selected,expected=clone(allChoices);if(g.id!='Proxy')push(expected,'Proxy');selectorMembers+=length(o.outbounds);if(o.default!=selected || index(o.outbounds,selected)<0 || join(',',o.outbounds)!=join(',',expected))complete=false;}
 check(length(scaleConfig.outbounds)==145 && outbound(scaleConfig,'n127') && outbound(scaleConfig,'Proxy').default=='n127' && selectorMembers==2079 && complete,'128 nodes and 16 groups retain complete ordered memberships without duplicate Proxy references');
-check(length(scaleConfig.route.rules)==516 && scaleConfig.route.rules[1].action=='sniff' && scaleConfig.route.rules[1].sniffer==null && scaleConfig.route.rules[515].action=='reject','maximum rule model retains all 512 custom rules, full sniffing and terminal block fallback');
-for(let mode in ['global','direct']){scale.mode=mode;let c=generate(scale);check(length(c.route.rules)==2 && c.route.rules[0].action=='hijack-dns' && c.route.rules[1].action=='sniff' && c.route.rules[1].sniffer==null && c.route.final==(mode=='global'?'Proxy':'direct') && length(outbound(c,'Other').outbounds)==130,'maximum '+mode+' model preserves sniffing and complete selectors without applying custom rules or terminal reject');}
+check(length(scaleConfig.route.rules)==516 && scaleConfig.route.rules[1].action=='sniff' && join(',',scaleConfig.route.rules[1].sniffer)=='http,tls,quic' && scaleConfig.route.rules[515].action=='reject','maximum rule model retains all 512 custom rules, hostname sniffing and terminal block fallback');
+for(let mode in ['global','direct']){scale.mode=mode;let c=generate(scale);check(length(c.route.rules)==1 && c.route.rules[0].action=='hijack-dns' && c.route.final==(mode=='global'?'Proxy':'direct') && length(outbound(c,'Other').outbounds)==130,'maximum '+mode+' model skips sniffing and preserves complete selectors without applying custom rules or terminal reject');}
 
 let multi=clone(m);multi.rules=[{id:'many',enabled:true,type:'suffix',values:['one.example.cn','two.example.cn'],outbound:'Domestic'},
  {id:'pattern',enabled:true,type:'regex',values:['(^|\\.)tiktokcdn(-us|-eu)?\\.com$'],outbound:'TikTok'}];
@@ -125,7 +125,7 @@ let overrideIP=clone(profileResult);overrideIP.rules=[{id:'address_override',ena
 check(overrideRules[2].action=='reject' && overrideRules[length(overrideRules)-3].action=='resolve' && overrideRules[length(overrideRules)-2].action=='reject' && overrideRules[length(overrideRules)-2].ip_cidr[0]=='192.0.2.0/24' && overrideRules[length(overrideRules)-1].rule_set[0]=='domestic-ip','unmatched domains recheck user IP overrides after resolution and before the country fallback');
 let blockedDomestic=clone(profileResult);group(blockedDomestic,'Other').selected='block';let ipBlocked=generate(blockedDomestic);
 check(ipBlocked.route.rules[length(ipBlocked.route.rules)-2].rule_set[0]=='domestic-ip' && ipBlocked.route.rules[length(ipBlocked.route.rules)-1].action=='reject','domestic IP fallback remains before the Other terminal rejection');
-for(let mode in ['direct','global']){let isolated=clone(profileResult);isolated.mode=mode;let c=generate(isolated);check(length(c.route.rule_set)==0 && length(c.route.rules)==2 && length(c.dns.rules)==0,'domestic domain and IP data are omitted in '+mode+' mode');}
+for(let mode in ['direct','global']){let isolated=clone(profileResult);isolated.mode=mode;let c=generate(isolated);check(length(c.route.rule_set)==0 && length(c.route.rules)==1 && length(c.dns.rules)==0,'domestic domain and IP data are omitted in '+mode+' mode');}
 let followDomestic=clone(profileResult);group(followDomestic,'Domestic').selected='Proxy';let followConfig=generate(followDomestic);
 check(followConfig.dns.rules[length(followConfig.dns.rules)-1].server=='proxy-dns','community domain DNS follows Domestic selection through Proxy');
 check(index(route(native.route.rules,'Proxy').domain_suffix,'cn')<0,'disabled domestic group cannot make the Proxy fallback claim all cn domains');
@@ -153,6 +153,6 @@ check(group(normalize(legacyBlock),'Other').selected=='block','legacy block fall
 let fullLegacy=clone(legacy);fullLegacy.groups=[{id:'Proxy',name:'代理',selected:'direct'}];
 for(let i=0;i<15;i++)push(fullLegacy.groups,{id:'Custom'+i,name:'自定义'+i,selected:'Proxy'});
 rejected(()=>normalize(fullLegacy),'full legacy group set is rejected instead of deleting a custom group');
-m.mode='global';let globalConfig=generate(m);check(length(globalConfig.route.rules)==2 && globalConfig.route.rules[0].action=='hijack-dns' && globalConfig.route.rules[1].action=='sniff' && globalConfig.route.rules[1].sniffer==null && globalConfig.route.final=='Proxy','global mode keeps DNS hijack and full sniffing without applying user rules');
-m.mode='direct';let directConfig=generate(m);check(length(directConfig.route.rules)==2 && directConfig.route.rules[0].action=='hijack-dns' && directConfig.route.rules[1].action=='sniff' && directConfig.route.rules[1].sniffer==null && directConfig.route.final=='direct' && directConfig.dns.final=='bootstrap','direct mode keeps DNS hijack and full sniffing without policy rules or proxy DNS');
+m.mode='global';let globalConfig=generate(m);check(length(globalConfig.route.rules)==1 && globalConfig.route.rules[0].action=='hijack-dns' && globalConfig.route.final=='Proxy','global mode keeps DNS hijack without sniffing or applying user rules');
+m.mode='direct';let directConfig=generate(m);check(length(directConfig.route.rules)==1 && directConfig.route.rules[0].action=='hijack-dns' && directConfig.route.final=='direct' && directConfig.dns.final=='bootstrap','direct mode keeps DNS hijack without sniffing, policy rules or proxy DNS');
 printf('PASS %d manager contract checks\n',checks);
