@@ -44,6 +44,8 @@ python scripts/device.py --env .local/environments/current.json stage artifacts/
 
 ## 有限HTTPS测量
 
+先用`python scripts/network-diagnostics.py --env PATH --url https://example.com/`检查发流主机的解析及实际IPv4路由，比较环境中声明的源地址、接口和网关。该入口要求发流主机已有Python、getent及iproute；只读查询，输出布尔值和数量，实际地址仅可显式保存到私有`.local/`输出。路由不符时先查明接线与配置，工具不自动增加路由。
+
 `python scripts/measure-https.py --env PATH --url https://example.com/`默认只预览；显式`--apply`后从traffic执行主机发起有限请求，不改路由、DNS或代理配置。默认3次、每次15秒、最多1MiB；可在工具限定范围内选择`--count`和`--timeout`。实际执行要求发流主机已有 curl 8.4.0 或更新版本，缺少时失败而不安装。工具禁用默认 curl 配置及代理环境继承。Windows 本地绑定须提供 `source_address`，不支持仅填接口名。URL须是无凭证、无查询参数和fragment的公开HTTPS地址。
 
 输出连接、TLS、总耗时和字节数，不保存响应正文／cookie。源绑定只说明curl采用指定接口或地址，不证明请求一定经4A、WAN或特定策略；`gateway`描述预期路径，不自动配置网关。对照实际路由和设备状态后才能解释测量结果。

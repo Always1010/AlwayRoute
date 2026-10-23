@@ -8,7 +8,6 @@
 | 修改自有代码 | [仓库结构](repository-structure.md)、[接口契约](../contracts/v1.md)、[测试入口](../tests/README.md) |
 | 配置开发和联调环境 | [环境说明](operations/environments.md)、[访问与只读检查](operations/access.md) |
 | 同步与构建 | [开发流程](development-workflow.md)、[上游源码获取](upstream-sources.md)、[固件构建](../firmware/README.md) |
-| 选择正式工具与清理临时文件 | [开发工具清单](developer-tools.md) |
 | 准备公开仓库 | [隐私与首次公开](privacy-and-publication.md)、[许可范围](../LICENSE.md)、[第三方声明](../THIRD_PARTY_NOTICES.md) |
 | 维护分流数据 | [规则维护与来源](../config/routing/README.md)、[管理后端](../firmware/openwrt/alwayroute-manager/README.md) |
 | 升级与恢复 | [部署检查边界](operations/deployment.md)、[恢复条件](operations/recovery.md) |

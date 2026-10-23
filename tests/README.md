@@ -9,6 +9,8 @@
 | `firmware/test_package_sync.py` | 用替身验证包快照同步、目标边界及多余文件拒绝 | 已有Python，不构建或访问设备 |
 | `firmware/test_crypto_provenance.py` | 显式候选／标准核心的密码输入来源和镜像元数据保护 | 已有Python，按输入及构建环境选择Rock |
 | `tools/test_context.py`、`tools/test_sync_source.py`、`tools/test_device_tools.py`、`tools/test_public_audit.py` | 环境／同步／暂存入口与公开材料审计的隔离检查 | 已有Python；具体平台边界见测试 |
+| `tools/test_device_maintenance.py`、`tools/test_network_diagnostics.py` | 设备只读状态、私有备份边界与多网卡路由诊断 | 已有Python，设备／网络命令均使用替身 |
+| `firmware/test_device_test_runner.py`、`firmware/test_benchmark_summary.py` | 现有测试二进制执行保护、历史性能结果白名单与条件保留 | 已有Python，不编译、不执行设备测试、不连接设备 |
 | `ui/build-preview.cjs`、`ui/preview-runtime.js` | 用生产页面生成带合成 RPC 的离线预览 | Node 生成；浏览器人工检查 |
 | `manager/run-tests.py` | 组合并执行模型、订阅、内存事务及下载脚本测试 | Python 与已有 ucode（含 fs／digest 模块） |
 | `manager/run.uc` | 通过真实模块导入检查模型与订阅 | 匹配的 ucode 与模块搜索路径 |
@@ -62,6 +64,17 @@ python3 tests/integration/management-defaults-test.py
 固件实验中编译进上游 Go 包的差分测试单独位于 [firmware/tests/crypto-assembly](../firmware/tests/crypto-assembly/README.md) 和 [firmware/tests/poly1305-32bit](../firmware/tests/poly1305-32bit/README.md)，由对应 overlay 工具读取，不属于 `tests/firmware/` 的主机工具检查；实验默认关闭，执行边界以各实验说明为准。
 
 ## 工作流和密码来源检查
+
+维护本次新增工具时，分别选择对应检查；四项均使用合成数据／替身，不能记作实际路由或密码测试通过：
+
+```sh
+python3 tests/tools/test_device_maintenance.py
+python3 tests/tools/test_network_diagnostics.py
+python3 tests/firmware/test_device_test_runner.py
+python3 tests/firmware/test_benchmark_summary.py
+```
+
+实际设备测试入口为`firmware/tools/run-device-tests.py --env PATH --binary FILE...`。默认仅离线验证；`--preflight`只读检查设备，`--apply`才上传并运行完整普通Go测试。内存不足即拒绝，不自动停止生产核心。编译来源与实验范围仍按对应`firmware/tests/`说明核对。
 
 ```sh
 # 构建监督使用自己的临时环境，不连接设备
