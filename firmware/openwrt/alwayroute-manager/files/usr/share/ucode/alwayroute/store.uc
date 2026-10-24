@@ -285,7 +285,7 @@ function configureCandidate(next) {
  if(next.mode=='global')for(let g in next.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
  if(running())return applyModel(next,true,liveSelectionPlan(next));
  // A stopped service validates the next start without changing its enabled state.
- checkConfig(next);write(DATA+'/current.json',next);system('/bin/sync');
+ checkConfig(next);clearCoreRuntime();write(DATA+'/current.json',next);system('/bin/sync');
  try {event('配置已确认，将用于下次启动');}catch(logError){}
  return {ok:true,state:state(next)};
 }
@@ -504,7 +504,7 @@ export function boot() {
  }
  if(!config.enabled || !good)return false;
  installCoreModel(good);write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
- if(!forwarding('guard'))fail('FORWARDING_GUARD_FAILED','启动时无法建立故障阻断');return true;
+ if(!forwarding('guard')){clearCoreRuntime();fail('FORWARDING_GUARD_FAILED','启动时无法建立故障阻断');}return true;
 };
 export function due() {
  let m=model(),now=time(),responses=[];
