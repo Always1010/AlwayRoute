@@ -8,6 +8,8 @@
 
 | 报告 | 保留价值与后续关系 |
 | --- | --- |
+| [内存、资源、安全与效率审查修复](2026-10-24-security-resource-fixes.md) | 订阅解析预算／HTTPS、UDP socket回收、Windows备份ACL、构建进程组、异步状态、核心认证及发布门禁；源码与隔离验证完成，未部署 |
+| [CI host digest独立冷构建](2026-10-24-ci-host-digest-cold-check.md) | 锁定归档冷编libmd／json-c／ucode，真实fs／digest检查；边界为独立ARM64构建，未执行完整GitHub Runner |
 | [配置切换与恢复修复](2026-10-24-selection-recovery.md) | manager r11；选择读回、受管进程就绪及恢复阶段诊断；恢复转发并验证同出口热切换，设备网络配置保持 |
 | [代理时延优化与 TLS 恢复候选](2026-10-23-latency-optimization.md) | r10 嗅探优化已在 revision46 生效；有限公网样本、TLS 恢复测试和 321 项候选镜像检查，核心尚未刷写 |
 | [节点批量、热切换与页面响应](2026-10-23-batch-and-response.md) | r9／r4组件升级；多选取消、两轮38节点扫描、热切换PID保持、RPC计时及无线管理，保留首次模块加载错误和公网波动边界 |

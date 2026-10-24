@@ -46,7 +46,7 @@ ZIP内部校验列表覆盖解压内容；ZIP和单独BIN的校验值显示在Re
 
 不同 tag 名称的 Actions 缓存互相隔离；默认分支上手动运行建立的缓存可被后续 tag 恢复。因此首版不承诺标签间自动增量复用，必要时先在默认分支手动预热。参见 [GitHub tag 过滤规则](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushbranchestagsbranches-ignoretags-ignore)、[缓存作用域](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache)和[Runner规格](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)。
 
-失败后下载 `firmware-build-logs`，按步骤查看来源、Go、规则、make或镜像检查日志。`manager-imports.log`、`manager-tests.log`、`manager-watchdog.log`、`forwarding-tests.log`、`downloader-security.log` 记录必过运行时测试，不连接个人主机或设备。磁盘不足先核对峰值和依赖范围，再决定拆分构建阶段或调整 Runner；不自动改用付费 Runner、不升级上游、不放宽镜像检查，也不清理个人现有缓存。设备验收另按[测试入口](../tests/README.md)执行；host 隔离测试不能替代真实 nftables 语法、rpcd／procd、转发或吞吐验收。
+失败后下载 `firmware-build-logs`，按步骤查看来源、Go、规则、make或镜像检查日志。`manager-imports.log`、`manager-tests.log`、`manager-init.log`、`manager-watchdog.log`、`forwarding-tests.log`、`downloader-security.log` 记录必过运行时测试，不连接个人主机或设备。磁盘不足先核对峰值和依赖范围，再决定拆分构建阶段或调整 Runner；不自动改用付费 Runner、不升级上游、不放宽镜像检查，也不清理个人现有缓存。设备验收另按[测试入口](../tests/README.md)执行；host 隔离测试不能替代真实 nftables 语法、rpcd／procd、转发或吞吐验收。
 
 ## 离线预览
 
