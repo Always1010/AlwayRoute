@@ -52,6 +52,9 @@ class CiBuildTests(unittest.TestCase):
                         self.assertEqual(str(command[1]), gate_scripts[name])
                         if name in ('manager-imports', 'manager-tests'):
                             self.assertEqual(command[2], ucode)
+                        if name == 'downloader-security':
+                            self.assertEqual(command[command.index('--core') + 1], task / 'artifacts/sing-box-host')
+                            self.assertEqual(command[command.index('--ucode') + 1], ucode)
                         with patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess(
                                 command, 1 if name == failure else 0)):
                             real_run(command, cwd, logdir, name, **kwargs)

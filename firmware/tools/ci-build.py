@@ -120,7 +120,7 @@ def prepare(task, spec, device, version):
     return environment, tree, logs, context
 
 
-def runtime_release_gate(tree, logs):
+def runtime_release_gate(tree, logs, host_core=None):
     """Require isolated manager/forwarding behavior before packaging a release."""
     ucode = tree / 'staging_dir/hostpkg/bin/ucode'
     if not ucode.is_file():
@@ -130,7 +130,10 @@ def runtime_release_gate(tree, logs):
             ('manager-tests', ['tests/manager/run-tests.py', ucode, '-']),
             ('manager-watchdog', ['tests/manager/test-timeout.py', FIRMWARE / 'openwrt/alwayroute-manager/files/usr/libexec/alwayroute-timeout']),
             ('forwarding-tests', ['tests/integration/forwarding-test.py']),
-            ('downloader-security', ['tests/firmware/run_uclient_security_tests.py', '--openwrt-tree', tree])):
+            ('downloader-security', ['tests/firmware/run_uclient_security_tests.py', '--openwrt-tree', tree,
+                                     '--core', host_core, '--ucode', ucode])):
+        if name == 'downloader-security' and host_core is None:
+            raise ValueError('Release authentication checks require the built native core')
         run([sys.executable, *arguments], ROOT, logs, name, timeout=120)
 
 
@@ -176,7 +179,7 @@ def build(task, version):
     run(['make', '-j' + str(settings['build']['jobs']), 'download'], tree, logs, 'openwrt-download', env=buildenv)
     run([sys.executable, FIRMWARE / 'tools/run-native-build.py', '--env', environment,
          '--device', device['id']], ROOT, logs, 'firmware-build', env=buildenv, timeout=15000)
-    runtime_release_gate(tree, logs)
+    runtime_release_gate(tree, logs, host)
     inspection = task / 'image-inspection.json'
     image = tree / device['image']['path']
     run([sys.executable, FIRMWARE / 'tools/inspect-image.py', '--env', environment,

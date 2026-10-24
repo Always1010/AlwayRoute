@@ -55,7 +55,13 @@ def run(command, cwd=None, env=None, data=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--openwrt-tree', type=Path, required=True)
+    parser.add_argument('--core', type=Path, help='Also verify authentication against an existing native core')
+    parser.add_argument('--ucode', type=Path, help='Native ucode for production runtime generation')
     args = parser.parse_args()
+    if bool(args.core) != bool(args.ucode):
+        parser.error('--core and --ucode must be supplied together')
+    core = args.core.resolve(strict=True) if args.core else None
+    ucode = args.ucode.resolve(strict=True) if args.ucode else None
     tree = args.openwrt_tree.resolve(strict=True)
     client = unique((tree/'build_dir').glob('target-*/uclient-2026.06.07~daad21fa'), 'pinned uclient')
     ssl = unique((tree/'build_dir').glob('target-*/ustream-ssl-*/ustream-ssl-*/CMakeLists.txt'), 'ustream').parent
@@ -91,6 +97,11 @@ def main():
         result = run([sys.executable, ROOT/'tests/integration/uclient-security-test.py',
                       '--uclient', work/'client-build/uclient-fetch'], env=env)
         sys.stdout.buffer.write(result.stdout)
+        if core:
+            result = run([sys.executable, ROOT/'tests/integration/core-auth-test.py',
+                          '--uclient', work/'client-build/uclient-fetch',
+                          '--core', core, '--ucode', ucode], env=env)
+            sys.stdout.buffer.write(result.stdout)
 
 
 if __name__ == '__main__':
