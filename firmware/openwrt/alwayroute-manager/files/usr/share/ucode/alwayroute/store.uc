@@ -534,7 +534,16 @@ export function due() {
 };
 export function started() {
  init();invalidateStatus();let lock=fs.open(TMP+'/manager.lock','ae',0600);
- if(!lock || !lock.lock('xn')){lock?.close();return;}
+ if(!lock)return false;
+ // This detached confirmer is the only boot activation attempt. A queued
+ // subscription or the largest bounded node check may already own the lock.
+ let owned=false;
+ for(let i=0;i<600;i++){if(lock.lock('xn')){owned=true;break;}if(i<599)system('/bin/sleep 1');}
+ if(!owned) {
+  lock.close();
+  try {let runtime=read(TMP+'/state.json',{});if(runtime.restoringRevision!=null){runtime.lastError='启动恢复等待配置事务超时，故障阻断保持；请重试启动';write(TMP+'/state.json',runtime);}}catch(e){}
+  return false;
+ }
  try {
   let runtime=read(TMP+'/state.json',{});
   if(runtime.restoringRevision!=null) {
