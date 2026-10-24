@@ -29,6 +29,8 @@
 | `manager/test-timeout.py` | shell watchdog 退出码、截止超时和中断清理 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/check-contract.py` | UI／RPC 方法、ACL 和菜单绑定的静态一致性 | 已有 Python，可在电脑运行 |
 | `integration/forwarding-test.py` | 用替身命令检查转发所有权、失败清理等行为 | POSIX shell 与 Python，适合 构建主机 |
+| `manager/run-external-tests.py` | 外部配置/对端观察与独立事务、关闭、中断恢复；完整 manager 入口另覆盖真实适配器的命令边界 | 已有 ucode；合成输入和内存 I/O，不运行服务 |
+| `integration/external-forwarding-test.py` | 单终端外部转发、DNS、防循环、阻断、资源冲突与残留重试 | 已有 POSIX shell、ucode/fs 与 Python；命令替身，不修改内核网络 |
 | `integration/management-defaults-test.py` | 临时目录中检查首启 marker、失败重试与权限 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/runtime-api.uc` | 真实 fs／digest、文件锁、私有权限及错误编码兼容性 | 固定 OpenWrt host ucode，适合 构建主机 |
 

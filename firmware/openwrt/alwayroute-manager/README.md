@@ -1,5 +1,7 @@
 # AlwayRoute 配置管理后端
 
+外接分支新增独立配置、应用事务、状态与关闭入口，见[外部后端说明](../../../docs/external-proxy.md)及[协作契约](../../../contracts/external-v1.md)。以下主要描述保留的本机核心后端；外部模式不调用这些核心检查和节点管理流程。外部源码已加入隔离检查，设备与最终镜像尚未验收。
+
 OpenWrt rpcd ucode 插件，使用镜像已有的 ucode/fs/digest、uclient-fetch 与 procd。
 没有额外 Go、Python 或 Node 常驻进程。所有配置写入按需短期 worker 执行，
 LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重启。

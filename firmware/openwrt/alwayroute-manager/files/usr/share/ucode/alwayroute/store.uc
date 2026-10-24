@@ -6,6 +6,7 @@ import { parse } from 'alwayroute.subscription';
 import { selectionPlan } from 'alwayroute.selection';
 import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
 import { statusSnapshot, invalidateStatus } from 'alwayroute.status';
+import { externalSelected, executeExternal } from 'alwayroute.external';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute', CORE_HEADER=TMP+'/core-api.headers', CORE_LOCK=TMP+'/core.lock', CORE_HEADER_PREFIX='Authorization: Bearer ';
 let verifiedModelBytes=null,verifiedModel=null;
@@ -408,6 +409,14 @@ function checkNodes(args,m) {
  return response;
 }
 function execute(method,args) {
+ if(index(['external_get','external_status','external_save','external_apply','external_disable','external_reconcile'],method)>=0)return executeExternal(method,args);
+ if(externalSelected()) {
+  if(method=='capabilities')return {ok:true,schema:1,backend:'external',protocols:[],subscriptionFormats:[],forwarding:'unverified',nodeCheck:false,subscriptionCheck:false,batchCheck:false,allNodesCheck:false,retryFailedCheck:false,logs:true,policyPresets:[],externalProxy:{schema:1,family:'ipv4',maxClients:1,faultPolicy:'block',peerObservation:'operator',endToEnd:'unverified'}};
+  if(method=='service' && args.action=='stop')return executeExternal('external_disable',{});
+  if(method=='status')return executeExternal('external_status',{});
+  if(method=='traffic')return {ok:true,available:false,upload:null,download:null,reason:'external-backend'};
+  if(index(['capabilities','get','export','logs','job_status'],method)<0)fail('EXTERNAL_BACKEND','外接分支已选择外部代理，请使用外部配置与应用入口');
+ }
  if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:modelLimits(),forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,batchCheck:true,allNodesCheck:true,retryFailedCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
@@ -504,7 +513,7 @@ export function call(method,args,inline) {
  if(method=='cancel_check') {
   try{return cancelCheck(args ?? {});}catch(e){return {ok:false,error:{code:'INVALID_JOB',message:'无法取消：检测任务已结束、已变化或取消标志写入失败'}};}
  }
- if(index(['capabilities','get','status','traffic','logs','export'],method)>=0) {
+ if(index(['capabilities','get','status','traffic','logs','export','external_get','external_status'],method)>=0) {
   if(method=='get') {
    let current;
    try{current=model();}catch(e){return failedRead(e,true);}
@@ -516,7 +525,7 @@ export function call(method,args,inline) {
  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有配置事务进行中，请稍后重试'}};}
  let response;
  try {
-  let long=index(['refresh','apply','rollback','check','service','configure'],method)>=0 || (method=='import' && args?.activate===true);
+  let long=index(['refresh','apply','rollback','check','service','configure','external_apply','external_disable','external_reconcile'],method)>=0 || (method=='import' && args?.activate===true);
   let pending=read(TMP+'/job.json',null);
   if(!inline && pending?.status=='running' && index(['capabilities','get','status','traffic','logs','export'],method)<0)fail('BUSY','后台事务尚未完成');
   if(!inline && long) {
@@ -554,7 +563,7 @@ export function work() {
  let request=null,job=null,claimed=false;
  try {
   request=read(TMP+'/job.request.json',null);job=read(TMP+'/job.json',null);
-  if(request && job && request.id==job.id && index(['refresh','apply','rollback','check','service','configure','import'],request.method)>=0) {
+  if(request && job && request.id==job.id && index(['refresh','apply','rollback','check','service','configure','import','external_apply','external_disable','external_reconcile'],request.method)>=0) {
    if(job.status!='running')fs.unlink(TMP+'/job.request.json');
    else {job.pid=int(split(fs.readfile('/proc/self/stat') ?? '0',' ')[0]);write(TMP+'/job.json',job);claimed=true;}
   }
@@ -573,6 +582,9 @@ export function work() {
  if(request.method=='check')fs.unlink(TMP+'/check-cancel-'+job.id);
 };
 export function boot() {
+ // External init uses call(external_reconcile) under manager.lock. Never run
+ // its network recovery through this legacy, unlocked core preparation path.
+ if(externalSelected())return false;
  init();invalidateTraffic();invalidateStatus();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();
  let pending=read(DATA+'/applying.json',null);
  if(pending) {
@@ -595,6 +607,7 @@ export function due() {
  return responses;
 };
 export function started() {
+ if(externalSelected())return false;
  init();invalidateStatus();let restoring=read(TMP+'/state.json',{}),epoch=read(TMP+'/status-epoch.json',null)?.id;
  if(restoring.restoringRevision==null)return true;
  let lock=fs.open(TMP+'/manager.lock','ae',0600);
@@ -629,6 +642,7 @@ export function started() {
 // Called by the procd command wrapper immediately before every process spawn,
 // including automatic respawns. Only the internal runtime secret changes.
 export function prepareCoreStart() {
+ if(externalSelected())fail('EXTERNAL_BACKEND','外部代理模式禁止拉起本机核心');
  init();return withCoreLock(function() {
   let config=read(TMP+'/runtime.json',null);
   if(type(config)!='object' || config?.experimental?.clash_api?.external_controller!='127.0.0.1:9090')fail('CORE_CREDENTIAL_FAILED','核心运行配置不可用');

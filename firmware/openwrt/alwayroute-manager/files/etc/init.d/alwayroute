@@ -6,6 +6,10 @@ USE_PROCD=1
 start_service() {
  umask 077
  mkdir -p /tmp/alwayroute
+ if [ -e /etc/alwayroute/external-mode.json ] || [ -e /etc/alwayroute/external-intent.json ] || [ -e /etc/alwayroute/external-journal.json ]; then
+  /usr/libexec/alwayroute-external reconcile
+  return $?
+ fi
  [ -s /tmp/alwayroute/runtime.json ] || /usr/libexec/alwayroute-boot || return 0
  procd_open_instance
  procd_set_param command /usr/libexec/alwayroute-core-run
@@ -17,6 +21,10 @@ start_service() {
 }
 
 stop_service() {
+ if [ -e /etc/alwayroute/external-mode.json ] || [ -e /etc/alwayroute/external-intent.json ] || [ -e /etc/alwayroute/external-journal.json ]; then
+  /usr/libexec/alwayroute-external disable >/dev/null || exit 1
+  return 0
+ fi
  # rc.common continues into procd_kill after a mere return 1. Abort this process
  # when the forwarding transition fails so the live core remains available.
  [ -x /usr/libexec/alwayroute-forwarding ] || exit 1
@@ -27,8 +35,28 @@ stop_service() {
  fi
 }
 
+restart() {
+ if [ -e /etc/alwayroute/external-mode.json ] || [ -e /etc/alwayroute/external-intent.json ] || [ -e /etc/alwayroute/external-journal.json ]; then
+  /usr/libexec/alwayroute-external reconcile
+ else
+  stop && start
+ fi
+}
+
 service_started() {
+ [ ! -e /etc/alwayroute/external-mode.json ] || return 0
  # rc.common invokes this before the child is necessarily ready. The one-shot
  # confirmer only activates a boot recovery after the core API confirms it.
  /usr/libexec/alwayroute-post-start >/dev/null 2>&1 &
+}
+
+reload_service() {
+ if [ -e /etc/alwayroute/external-mode.json ]; then
+  /usr/libexec/alwayroute-external reconcile
+ fi
+}
+
+service_triggers() {
+ procd_add_reload_trigger firewall network
+ procd_add_interface_trigger "interface.*" "*" /etc/init.d/alwayroute reload
 }

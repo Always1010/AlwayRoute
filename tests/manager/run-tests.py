@@ -34,7 +34,7 @@ model_tests = '\n'.join(line for line in model_tests.splitlines() if not line.st
 suites = [
     "import * as fs from 'fs';\nimport { sha256 } from 'digest';\n" + bundle(['policies.uc', 'model.uc', 'subscription.uc']) + '\n' + model_tests,
     (ROOT / 'tests/manager/transactions.uc').read_text(encoding='utf-8').replace(
-        '// MANAGER_SOURCE', catalog_stub + bundle(['model.uc', 'subscription.uc', 'selection.uc', 'traffic.uc', 'status.uc', 'store.uc'])),
+        '// MANAGER_SOURCE', catalog_stub + bundle(['model.uc', 'subscription.uc', 'selection.uc', 'traffic.uc', 'status.uc', 'external-model.uc', 'external-controller.uc', 'external.uc', 'store.uc'])),
     (ROOT / 'tests/manager/fetch.uc').read_text(encoding='utf-8').replace(
         '// FETCH_SOURCE', '\n'.join(line for line in
             (ROOT / 'firmware/openwrt/alwayroute-manager/files/usr/libexec/alwayroute-fetch')
@@ -45,6 +45,9 @@ suites = [
         if not line.startswith('import ')),
     (ROOT / 'tests/manager/traffic.uc').read_text(encoding='utf-8').replace('// TRAFFIC_SOURCE', bundle(['traffic.uc'])),
     (ROOT / 'tests/manager/status.uc').read_text(encoding='utf-8').replace('// STATUS_SOURCE', bundle(['status.uc'])),
+    bundle(['external-model.uc']) + '\n' + '\n'.join(line for line in (ROOT / 'tests/manager/external-model.uc').read_text(encoding='utf-8').splitlines() if not line.startswith('import ')),
+    (ROOT / 'tests/manager/external-controller.uc').read_text(encoding='utf-8').replace('// EXTERNAL_SOURCE', bundle(['external-model.uc', 'external-controller.uc'])),
+    (ROOT / 'tests/manager/external-runtime.uc').read_text(encoding='utf-8').replace('// EXTERNAL_RUNTIME_SOURCE', bundle(['external-model.uc', 'external-controller.uc', 'external.uc'])),
 ]
 for suite in suites:
     result = subprocess.run(command, input=suite.encode('utf-8'), check=False,

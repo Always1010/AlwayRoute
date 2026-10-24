@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=13
+PKG_RELEASE:=14
 PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
 PKG_BUILD_DEPENDS:=luci-base/host
@@ -17,7 +17,7 @@ define Package/alwayroute-manager
   SECTION:=net
   CATEGORY:=Network
   TITLE:=AlwayRoute transactional configuration manager
-  DEPENDS:=+alwayroute-core +alwayroute-forwarding +rpcd-mod-ucode +ucode +ucode-mod-fs +ucode-mod-digest +uclient-fetch +ca-bundle
+  DEPENDS:=+alwayroute-core +alwayroute-forwarding +rpcd-mod-ucode +ucode +ucode-mod-fs +ucode-mod-digest +uclient-fetch +ca-bundle +dnsmasq
   EXTRA_DEPENDS:=uclient-fetch (>=2026.06.07~daad21fa-r4), libuclient (>=2026.06.07~daad21fa-r4)
 endef
 
@@ -45,6 +45,7 @@ define Package/alwayroute-manager/install
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/compact-files/usr/share/rpcd/acl.d/alwayroute.json $(1)/usr/share/rpcd/acl.d/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/compact-files/usr/libexec/alwayroute-* $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/compact-files/etc/init.d/alwayroute $(1)/etc/init.d/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/compact-files/etc/init.d/alwayroute-external-dns $(1)/etc/init.d/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/compact-files/etc/uci-defaults/95-alwayroute-schedule $(1)/etc/uci-defaults/
 endef
 

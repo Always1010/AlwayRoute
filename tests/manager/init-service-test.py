@@ -64,4 +64,34 @@ with tempfile.TemporaryDirectory(prefix="alwayroute-init-") as directory:
         "command /usr/libexec/alwayroute-core-run",
     ], "each start must only register the spawn wrapper"
 
-print("PASS init start: repeated registration leaves runtime credential unchanged")
+    # The external mode must precede even a stale legacy runtime.json. All
+    # absolute service/config paths are redirected to isolated command doubles.
+    config_dir = root / 'config'
+    config_dir.mkdir()
+    (config_dir / 'external-mode.json').write_text('{"backend":"external"}')
+    events = root / 'events.log'
+    helper = root / 'external-helper'
+    helper.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$EVENTS_LOG"\n')
+    helper.chmod(0o755)
+    forwarding = root / 'forwarding-helper'
+    forwarding.write_text('#!/bin/sh\nprintf "forwarding %s\\n" "$*" >> "$EVENTS_LOG"\n')
+    forwarding.chmod(0o755)
+    external_body = body.replace('/etc/alwayroute', config_dir.as_posix()).replace(
+        '/usr/libexec/alwayroute-external', helper.as_posix()).replace(
+        '/usr/libexec/alwayroute-forwarding', forwarding.as_posix())
+    log.write_text('')
+    script.write_text(
+        'set -eu\n' + external_body + '\n'
+        + 'procd_open_instance() { :; }\n'
+        + 'procd_set_param() { printf "%s\\n" "$*" >> "$PROCD_LOG"; }\n'
+        + 'procd_close_instance() { :; }\n'
+        + 'start_service\nstop_service\nrestart\nreload_service\n', encoding='utf-8')
+    result = subprocess.run([shell, script.as_posix()],
+                            env={**os.environ, 'PROCD_LOG': log.as_posix(), 'EVENTS_LOG': events.as_posix()},
+                            capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr.decode(errors='replace')
+    assert not log.read_text(), 'external mode must never register the old core'
+    assert events.read_text().splitlines() == ['reconcile', 'disable', 'reconcile', 'reconcile'], (
+        'external stop must close independently and restart/reload preserve intent')
+
+print("PASS init: legacy credential registration and independent external lifecycle")

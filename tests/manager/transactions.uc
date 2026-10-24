@@ -454,4 +454,19 @@ for(let damage in ['json','current','good']) {
  call('rollback',{expectedRevision:journalRevision});work();onRestart=null;r=call('get',{});
  check(call('job_status',{}).job.status=='succeeded' && replacementJournal && r.ok && r.model.revision==journalRevision+1 && r.model.nodes[0].name==wanted.nodes[0].name && r.state.appliedRevision==r.model.revision && active && !files['/etc/alwayroute/applying.json'],'rollback replaces journal '+damage+' damage with a complete atomic recovery transaction and restores the advertised model');
 }
+// The external marker must short-circuit legacy recovery and credential paths,
+// including when the legacy model is damaged. No external network action is
+// executed here; its controller/runtime suites cover those adapters separately.
+extInit();extWrite('mode',{schema:1,backend:'external'});
+let beforeExternalRestart=restartCalls;
+files['/etc/alwayroute/current.json']='broken legacy model';
+let externalCapabilities=call('capabilities',{});
+check(externalCapabilities.ok && externalCapabilities.backend=='external' && externalCapabilities.nodeCheck===false,'external capabilities do not advertise local node checks');
+let externalStart=call('service',{action:'start'},true);
+check(!externalStart.ok && externalStart.error.code=='EXTERNAL_BACKEND' && restartCalls==beforeExternalRestart,'legacy service start is rejected before parsing damaged old nodes');
+check(boot()===false && started()===false,'legacy boot and post-start cannot launch a core in external mode');
+let externalSpawnError=null;try{prepareCoreStart();}catch(e){externalSpawnError=e.message;}
+check(externalSpawnError!=null && index(externalSpawnError,'ALWAYROUTE:EXTERNAL_BACKEND:')==0,'procd respawn wrapper refuses legacy core credential preparation');
+let externalSave=call('external_save',{expectedRevision:0,config:emptyExternal()},true);
+check(externalSave.ok && externalSave.config.revision==1 && !externalSave.state.desiredEnabled,'authenticated external save works independently of damaged legacy nodes');
 printf('PASS %d manager transaction checks\n',checks);

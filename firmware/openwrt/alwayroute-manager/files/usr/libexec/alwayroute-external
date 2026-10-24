@@ -1,0 +1,7 @@
+#!/usr/bin/ucode
+'use strict';
+import { call } from 'alwayroute.store';
+let method={reconcile:'external_reconcile',disable:'external_disable',status:'external_status'}[ARGV[0]];
+if(!method){warn('Usage: alwayroute-external {reconcile|disable|status}\n');exit(2);}
+let result=call(method,{},true);
+print(sprintf('%J\n',result));exit(result.ok?0:1);
