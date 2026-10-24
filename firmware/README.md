@@ -11,6 +11,7 @@ GitHub托管Runner按版本tag构建4A发布包的准备、触发和下载流程
 上游来源、提交、归档和树哈希在[sources.lock.json](sources.lock.json)：OpenWrt25.12.6、固定LuCI／packages与sing-box1.13.21；使用已有Go1.27.3、CGO关闭构建；CPU架构由设备配方选择，当前4A为MIPSLE softfloat。电脑阅读入口见[上游获取](../docs/upstream-sources.md)。当前唯一实机验证目标为第一版千兆4A，其参数和专用补丁必须保留；其他设备另建适配，不覆盖4A配置。支持范围见[设备列表](../docs/devices/README.md)，分层和移植流程见[多设备适配](../docs/device-porting.md)。
 
 `tools/build-core.py`保留完整上游CLI／注册表及固定tags。默认构建不启用密码overlay；最后部署核心则明确选择`--crypto-inline`、匹配PGO和`--experimental-crypto mipsle-asm-r2`。选项、PGO哈希、补丁、模块及来源校验见[完整功能加密优化](../docs/reports/2026-10-23-crypto-optimization.md)。缺失当时PGO输入时不能承诺逐字节复现，不应以默认构建产物冒充已部署核心。
+核心构建前逐文件核对固定归档，并拒绝源码树中的额外文件与符号链接；校验覆盖Go、汇编、系统对象及嵌入数据。实验改动通过显式overlay传入，不把额外构建输入留在受校验的上游源码树中。
 
 `003`汇编补丁、对应overlay和差分测试参与该显式后端来源核验；`004`旧32位Poly1305候选是独立、默认关闭实验，不能叠加。详见[汇编测试](tests/crypto-assembly/README.md)和[独立实验](tests/poly1305-32bit/README.md)。后续I/O等稳定性失败候选已撤回，详见[实验清理](../docs/reports/2026-10-23-200m-feasibility.md)。不要重新编号旧补丁，也不能为清理实验目录误删生产所需输入。
 
