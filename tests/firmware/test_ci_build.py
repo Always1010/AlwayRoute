@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,74 @@ spec.loader.exec_module(ci)
 
 
 class CiBuildTests(unittest.TestCase):
+    def test_runtime_gates_run_before_packaging_and_each_failure_blocks_release(self):
+        gate_scripts = {'manager-imports': 'tests/manager/check-imports.py',
+                        'manager-tests': 'tests/manager/run-tests.py',
+                        'manager-watchdog': 'tests/manager/test-timeout.py',
+                        'forwarding-tests': 'tests/integration/forwarding-test.py'}
+        real_run = ci.run
+        for failure in (None, *gate_scripts):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                task = Path(temporary)
+                tree = task / 'source'
+                logs = task / 'logs'
+                ucode = tree / 'staging_dir/hostpkg/bin/ucode'
+                for path in (task / 'artifacts', logs, ucode.parent):
+                    path.mkdir(parents=True)
+                ucode.write_bytes(b'isolated host ucode substitute')
+                (tree / 'LICENSE').write_text('test')
+                context = {'jobs': 2, 'go': task / 'go/bin/go', 'go_root': task / 'go',
+                           'cache_root': task / 'cache', 'sing_box_source': tree}
+                seen = []
+
+                def simulate(command, cwd, logdir, name, **kwargs):
+                    seen.append(name)
+                    if name in gate_scripts:
+                        self.assertEqual(str(command[1]), gate_scripts[name])
+                        if name in ('manager-imports', 'manager-tests'):
+                            self.assertEqual(command[2], ucode)
+                        with patch.object(ci.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                                command, 1 if name == failure else 0)):
+                            real_run(command, cwd, logdir, name, **kwargs)
+                    elif name == 'router-core':
+                        core = task / 'artifacts/sing-box-mipsle'
+                        core.write_bytes(b'isolated core')
+                        core.with_suffix('.build-info.json').write_text('{}')
+                    elif name == 'routing':
+                        routing = task / 'artifacts/routing'
+                        routing.mkdir()
+                        for filename in ('domestic-domain.srs', 'domestic-ip.srs', 'manifest.json', 'LICENSE'):
+                            (routing / filename).write_text('isolated rule')
+                    elif name == 'image-inspection':
+                        (task / 'image-inspection.json').write_text(json.dumps({'checks': {'isolated': True}}))
+
+                with patch.object(ci, 'prepare', return_value=(task / 'environment.json', tree, logs,
+                                 {'build': {'jobs': 2}})), patch('build_context.build_context', return_value=context), patch.object(
+                        ci.subprocess, 'check_output', return_value='1'), patch.object(ci, 'run', side_effect=simulate), patch.object(
+                        ci, 'package_release', side_effect=lambda *args: seen.append('package-release')) as package, contextlib.redirect_stdout(
+                        io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    if failure:
+                        with self.assertRaisesRegex(RuntimeError, failure + ' failed'):
+                            ci.build(task, 'v0.1.0')
+                        package.assert_not_called()
+                        self.assertEqual(seen[-1], failure)
+                        self.assertNotIn('image-inspection', seen)
+                    else:
+                        ci.build(task, 'v0.1.0')
+                        package.assert_called_once()
+                        index = seen.index('firmware-build')
+                        self.assertEqual(seen[index + 1:], [*gate_scripts, 'image-inspection', 'package-release'])
+                expected = list(gate_scripts)
+                if failure:
+                    expected = expected[:expected.index(failure) + 1]
+                self.assertEqual([name for name in seen if name in gate_scripts], expected)
+
+    def test_runtime_gate_refuses_missing_host_ucode(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'built host ucode'):
+                ci.runtime_release_gate(Path(temporary), Path(temporary))
+            run.assert_not_called()
+
     def test_default_plan_performs_no_writes_or_downloads(self):
         with tempfile.TemporaryDirectory() as temp:
             task = Path(temp) / 'not-created'

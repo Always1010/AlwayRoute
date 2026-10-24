@@ -7,6 +7,7 @@ from target_profile import load_device, relative_path
 
 FIRMWARE = Path(__file__).resolve().parents[1]
 RELEASE = FIRMWARE / 'release.json'
+CI_HOST_PATCHES = ('openwrt/patches/012-ucode-host-digest-for-ci.patch',)
 
 
 def sha256(path):
@@ -33,7 +34,7 @@ def input_identity(device):
     if device['id'] != spec['device']:
         raise ValueError('Release only supports the reviewed 4A recipe')
     paths = ['release.json', 'sources.lock.json', 'devices/' + device['id'] + '.json',
-             *device['seed_files'], *device['patches'], spec['pgo']['path'],
+             *device['seed_files'], *device['patches'], *CI_HOST_PATCHES, spec['pgo']['path'],
              'openwrt/patches/003-xcrypto-mipsle-assembly-experimental.patch']
     return {**{name: sha256(FIRMWARE / name) for name in paths},
             '../config/routing/sources.lock.json': sha256(FIRMWARE.parent / 'config/routing/sources.lock.json')}

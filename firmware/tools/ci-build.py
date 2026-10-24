@@ -16,7 +16,7 @@ import sys
 import tarfile
 import urllib.request
 
-from release_inputs import FIRMWARE, input_identity, load_release, sha256
+from release_inputs import CI_HOST_PATCHES, FIRMWARE, input_identity, load_release, sha256
 from target_profile import load_device, seed_text
 from release_bundle import package_release
 
@@ -103,7 +103,7 @@ def prepare(task, spec, device, version):
     (tree / 'feeds.conf').write_text(''.join(
         'src-link ' + name + ' ' + str(task / 'snapshots' / name) + '\n'
         for name in ('packages', 'luci')))
-    for patch in device['patches']:
+    for patch in (*device['patches'], *CI_HOST_PATCHES):
         run(['git', 'apply', '--check', FIRMWARE / patch], tree, logs, 'check-' + Path(patch).stem)
         run(['git', 'apply', FIRMWARE / patch], tree, logs, 'apply-' + Path(patch).stem)
     for name in PACKAGES:
@@ -118,6 +118,19 @@ def prepare(task, spec, device, version):
     from target_profile import require_build_target
     require_build_target(tree, device)
     return environment, tree, logs, context
+
+
+def runtime_release_gate(tree, logs):
+    """Require isolated manager/forwarding behavior before packaging a release."""
+    ucode = tree / 'staging_dir/hostpkg/bin/ucode'
+    if not ucode.is_file():
+        raise ValueError('Release runtime checks require the built host ucode with fs/digest')
+    for name, arguments in (
+            ('manager-imports', ['tests/manager/check-imports.py', ucode]),
+            ('manager-tests', ['tests/manager/run-tests.py', ucode, '-']),
+            ('manager-watchdog', ['tests/manager/test-timeout.py', FIRMWARE / 'openwrt/alwayroute-manager/files/usr/libexec/alwayroute-timeout']),
+            ('forwarding-tests', ['tests/integration/forwarding-test.py'])):
+        run([sys.executable, *arguments], ROOT, logs, name, timeout=120)
 
 
 def build(task, version):
@@ -162,6 +175,7 @@ def build(task, version):
     run(['make', '-j' + str(settings['build']['jobs']), 'download'], tree, logs, 'openwrt-download', env=buildenv)
     run([sys.executable, FIRMWARE / 'tools/run-native-build.py', '--env', environment,
          '--device', device['id']], ROOT, logs, 'firmware-build', env=buildenv, timeout=15000)
+    runtime_release_gate(tree, logs)
     inspection = task / 'image-inspection.json'
     image = tree / device['image']['path']
     run([sys.executable, FIRMWARE / 'tools/inspect-image.py', '--env', environment,
@@ -185,7 +199,8 @@ def main(argv=None):
         print(json.dumps({'version': args.version, 'device': spec['device'], 'apply': False,
                           'task_root': str(args.task_root), 'inputs': input_identity(load_device(spec['device'])),
                           'steps': ['verify sources', 'build host and MIPSLE core', 'compile rules',
-                                    'build OpenWrt', 'inspect image', 'package release']}, indent=2))
+                                    'build OpenWrt', 'require manager and forwarding runtime checks',
+                                    'inspect image', 'package release']}, indent=2))
         return
     build(args.task_root.resolve(), args.version)
 

@@ -1,0 +1,36 @@
+diff --git a/package/libs/libmd/Makefile b/package/libs/libmd/Makefile
+--- a/package/libs/libmd/Makefile
++++ b/package/libs/libmd/Makefile
+@@ -16,5 +16,8 @@ PKG_BUILD_PARALLEL:=1
+ 
+ include $(INCLUDE_DIR)/package.mk
++include $(INCLUDE_DIR)/host-build.mk
++
++HOST_CONFIGURE_ARGS += --disable-shared --with-pic
+ 
+ TARGET_CFLAGS += $(FPIC)
+ 
+@@ -47,3 +50,4 @@ endef
+ endef
+ 
+ $(eval $(call BuildPackage,libmd))
++$(eval $(call HostBuild))
+diff --git a/package/utils/ucode/Makefile b/package/utils/ucode/Makefile
+--- a/package/utils/ucode/Makefile
++++ b/package/utils/ucode/Makefile
+@@ -20,5 +20,5 @@ PKG_ABI_VERSION:=20230711
+ PKG_BUILD_DEPENDS:=libmd
+-HOST_BUILD_DEPENDS:=libjson-c/host
++HOST_BUILD_DEPENDS:=libjson-c/host libmd/host
+ 
+ include $(INCLUDE_DIR)/package.mk
+ include $(INCLUDE_DIR)/host-build.mk
+@@ -59,7 +59,7 @@ CMAKE_HOST_OPTIONS += \
+ 	-DDEBUG_SUPPORT=ON \
+ 	-DLOG_SUPPORT=OFF \
+ 	-DZLIB_SUPPORT=ON \
+-	-DDIGEST_SUPPORT=OFF
++	-DDIGEST_SUPPORT=ON
+ 
+ 
+ define Package/ucode/default
