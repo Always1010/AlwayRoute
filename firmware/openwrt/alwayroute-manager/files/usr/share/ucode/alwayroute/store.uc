@@ -334,7 +334,7 @@ function refresh(args,m) {
   if(!command('/usr/libexec/alwayroute-fetch'))fail('FETCH_FAILED','HTTPS 订阅获取失败，原节点保持不变');
   content=fs.readfile(TMP+'/subscription.body',131073);
  }
- let incoming=parse(content,s.id,sha256), next=clone(m);
+ let incoming=parse(content,s.id,sha256,m.nodes), next=clone(m);
  next.nodes=filter(next.nodes,n=>n.source!=s.id);for(let n in incoming)push(next.nodes,n);next.revision++;
  for(let item in next.subscriptions)if(item.id==s.id){item.lastUpdate=time();delete item.lastError;}
  // validate rejects removal of selected or rule-referenced node. No silent fallback.

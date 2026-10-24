@@ -410,4 +410,12 @@ files['/etc/alwayroute/previous.json']=sprintf('%J',crashCandidate);files['/etc/
 check(boot() && files['/etc/alwayroute/previous.json']==historyRaw && call('get',{}).model.nodes[0].name=='History B' && json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.default_mode==generate(historyB).experimental.clash_api.default_mode,'new journal restores its own confirmed snapshot and original rollback history after a torn commit');
 started();call('rollback',{expectedRevision:historyB.revision});work();r=call('get',{});
 check(call('job_status',{}).job.status=='succeeded' && r.model.nodes[0].name==historyA.nodes[0].name && json(files['/etc/alwayroute/previous.json']).nodes[0].name=='History B','rollback still reaches A after repeated starts, failed candidates and interrupted commit, then retains B for a reverse rollback');
+let legacyModel=clone(r.model),legacySubscription=filter(legacyModel.nodes,n=>n.source=='demo')[0],legacyId=legacySubscription.id;
+legacySubscription.id='s_demo_legacycompat';legacySubscription.sourceKey='legacycompat';
+for(let g in legacyModel.groups)if(g.selected==legacyId)g.selected=legacySubscription.id;
+for(let rule in legacyModel.rules)if(rule.outbound==legacyId)rule.outbound=legacySubscription.id;
+delete legacyModel.overrides[legacyId];legacyModel.overrides[legacySubscription.id]={name:'Preserved legacy override'};legacyModel.groups[0].selected=legacySubscription.id;
+call('configure',{expectedRevision:legacyModel.revision,model:legacyModel});work();r=call('get',{});
+call('refresh',{expectedRevision:r.model.revision,subscriptionId:'demo',content:uri,activate:true});work();r=call('get',{});
+check(call('job_status',{}).job.status=='succeeded' && r.model.groups[0].selected=='s_demo_legacycompat' && effective(r.model)[length(effective(r.model))-1].name=='Preserved legacy override' && filter(r.model.nodes,n=>n.source=='demo')[0].sourceKey=='legacycompat','store refresh supplies saved connection identities so an upgraded subscription retains selected legacy IDs and overrides');
 printf('PASS %d manager transaction checks\n',checks);
