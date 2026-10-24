@@ -16,6 +16,8 @@ id_ecdsa*
 id_dsa*
 authorized_keys
 known_hosts
+# All current environments, lab scripts/docs, experiments, raw reports,
+# migration rules and locally approved tools stay in this one ignored area.
 /.local/
 /secrets/
 /private/
