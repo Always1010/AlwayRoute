@@ -57,7 +57,7 @@ AlwayRoute/
 | `.local/sources/`、`.local/source-cache/` | 锁定上游源码及归档；有用修改整理为正式补丁 |
 | `.local/incoming/`、`.local/ui-preview/` | 远端回传待审查、离线界面预览 |
 | `artifacts/` | 固件、包和原始检查产物；只提交脱敏结论、版本与哈希 |
-| `session-log.md` | 本地会话笔记；可复用结论整理到正式文档 |
+| `.local/reports/session-log.md` | 本地会话笔记；可复用结论提炼到正式文档 |
 
 这些路径由Git忽略；忽略规则不能识别任意业务源码中的秘密，也不能移除旧提交中的内容。构建主机上的独立源码副本与OpenWrt构建树、缓存、工具链、输出是不同目录，具体值由[环境配置](operations/environments.md)描述。
 
