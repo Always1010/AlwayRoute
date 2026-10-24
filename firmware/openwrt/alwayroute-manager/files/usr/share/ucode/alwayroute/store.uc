@@ -107,7 +107,11 @@ function restoreMetadata(pending,good,service) {
  write(DATA+'/service.json',service);system('/bin/sync');
  if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','恢复提交标志无法清除');system('/bin/sync');
 }
-function state(m) {m=m ?? model();let runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null,lastFailure:runtime.lastFailure ?? null};}
+function state(m) {
+ m=m ?? model();let runtime=read(TMP+'/state.json',{}),timeout=read(TMP+'/restore-timeout.json',null),error=runtime.lastError;
+ if(!error && runtime.restoringRevision!=null && timeout?.revision===runtime.restoringRevision && timeout.epoch===read(TMP+'/status-epoch.json',null)?.id)error=timeout.message;
+ return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:error ?? null,lastFailure:runtime.lastFailure ?? null};
+}
 function jobStatus() {
  let job=read(TMP+'/job.json',null);
  if(job?.status=='running' && (job.pid?!fs.access('/proc/'+job.pid):time()-job.started>10)) {
@@ -533,15 +537,23 @@ export function due() {
  return responses;
 };
 export function started() {
- init();invalidateStatus();let lock=fs.open(TMP+'/manager.lock','ae',0600);
+ init();invalidateStatus();let restoring=read(TMP+'/state.json',{}),epoch=read(TMP+'/status-epoch.json',null)?.id;
+ if(restoring.restoringRevision==null)return true;
+ let lock=fs.open(TMP+'/manager.lock','ae',0600);
  if(!lock)return false;
  // This detached confirmer is the only boot activation attempt. A queued
  // subscription or the largest bounded node check may already own the lock.
  let owned=false;
- for(let i=0;i<600;i++){if(lock.lock('xn')){owned=true;break;}if(i<599)system('/bin/sleep 1');}
+ for(let i=0;i<600;i++){
+  if(lock.lock('xn')){owned=true;break;}
+  if(read(TMP+'/state.json',{})?.restoringRevision==null || read(TMP+'/status-epoch.json',null)?.id!==epoch){lock.close();return false;}
+  if(i<599)system('/bin/sleep 1');
+ }
  if(!owned) {
   lock.close();
-  try {let runtime=read(TMP+'/state.json',{});if(runtime.restoringRevision!=null){runtime.lastError='启动恢复等待配置事务超时，故障阻断保持；请重试启动';write(TMP+'/state.json',runtime);}}catch(e){}
+  // Never overwrite state.json without its owner lock. Readers accept this
+  // separate error only while the same boot recovery and epoch remain pending.
+  try {if(epoch!=null)write(TMP+'/restore-timeout.json',{epoch,revision:restoring.restoringRevision,message:'启动恢复等待配置事务超时，故障阻断保持；请重试启动'});}catch(e){}
   return false;
  }
  try {
