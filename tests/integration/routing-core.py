@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import socketserver
 import struct
@@ -75,14 +76,14 @@ def receive(stream, size):
     return data
 
 
-def query(port_number, name):
+def query(port_number, name, reject=False):
     labels = b''.join(bytes([len(x)]) + x.encode() for x in name.split('.')) + b'\0'
     packet = struct.pack('!HHHHHH', 321, 0x100, 1, 0, 0, 0) + labels + struct.pack('!HH', 1, 1)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as stream:
         stream.settimeout(4)
         stream.sendto(packet, ('127.0.0.1', port_number))
         response = stream.recv(4096)
-    assert response[:2] == packet[:2] and response[3] & 15 == 0
+    assert response[:2] == packet[:2] and response[3] & 15 == (5 if reject else 0), 'Unexpected DNS response code'
 
 
 def connect(proxy_port, target, target_port, reject=False):
@@ -137,11 +138,14 @@ m.nodes=[{id:'synthetic-node',name:'Synthetic',type:'vmess',enabled:true,server:
 for(let g in m.groups){if(g.id=='Other')g.selected='Proxy';if(g.id=='Proxy')g.selected='synthetic-node';}
 m.rules=[{id:'forced',enabled:true,type:'domain',value:'forced.synthetic.invalid',outbound:'Proxy'},
  {id:'blocked_address',enabled:true,type:'cidr',value:'127.0.0.3/32',outbound:'block'}];
-printf('%J',generate(m));"""
+let original=generate(m);
+for(let g in m.groups)if(g.id=='Other')g.selected='block';
+m.rules[0].outbound='Other';m.rules[1].outbound='Other';m.rules[1].value='127.0.0.1/32';
+printf('%J',[original,generate(m)]);"""
             result = subprocess.run([str(args.ucode), '-L', str(MODULES), '-'], input=program.encode(),
                 capture_output=True, check=True, timeout=15,
                 env={**os.environ, 'ALWAYROUTE_POLICY_DIR': str(POLICIES)})
-            config = json.loads(result.stdout)
+            config, blocked_config = json.loads(result.stdout)
             # Exercise production selector/DNS generation without an external VMess server.
             config['outbounds'] = [{'type': 'direct', 'tag': o['tag']} if o['tag'] == 'synthetic-node' else o
                                    for o in config['outbounds']]
@@ -199,7 +203,40 @@ printf('%J',generate(m));"""
                         stream.close()
                 for target in ['blocked.synthetic.invalid', '127.0.0.3']:
                     assert connect(mixed_port, target, echo.server_address[1], reject=True) is None, 'User IP block bypassed'
-            print('PASS 7 isolated core routing cases: domain/DNS override, resolved IP, pure IP, Other and IP blocks')
+                # Reload the same isolated core with another production-generated
+                # model, retaining only the synthetic services and compiled sets.
+                blocked_config['outbounds'] = [{'type': 'direct', 'tag': o['tag']} if o['tag'] == 'synthetic-node' else o
+                                               for o in blocked_config['outbounds']]
+                blocked_config['route']['rule_set'] = config['route']['rule_set']
+                blocked_config['dns']['servers'] = config['dns']['servers']
+                blocked_config['inbounds'] = config['inbounds']
+                blocked_config['route']['rules'].insert(0, config['route']['rules'][0])
+                blocked_config['experimental']['clash_api'] = config['experimental']['clash_api']
+                path.write_text(json.dumps(blocked_config))
+                process.send_signal(signal.SIGHUP)
+                deadline = time.monotonic() + 8
+                while True:
+                    try:
+                        with opener.open(f'http://127.0.0.1:{api_port}/proxies/Other', timeout=1) as response:
+                            if json.load(response)['now'] == 'direct':
+                                break
+                    except OSError:
+                        pass
+                    assert process.poll() is None and time.monotonic() < deadline, 'Isolated Other block reload failed'
+                    time.sleep(.1)
+                before = len(QUERIES)
+                query(dns_port, 'known.synthetic.invalid')
+                assert ('bootstrap', 'known.synthetic.invalid') in QUERIES[before:], 'Other block lost the preceding Domestic DNS rule'
+                stream = connect(mixed_port, 'known.synthetic.invalid', echo.server_address[1])
+                assert stream is not None, 'Other block interrupted the preceding Domestic route'
+                stream.close()
+                before = len(QUERIES)
+                for target in ['forced.synthetic.invalid', '127.0.0.1']:
+                    assert connect(mixed_port, target, echo.server_address[1], reject=True) is None, 'Manual Other block bypassed through direct selector'
+                for target in ['forced.synthetic.invalid', 'unmatched-block.synthetic.invalid']:
+                    query(dns_port, target, reject=True)
+                assert not QUERIES[before:], 'Other block leaked rejected domain/DNS requests to an upstream'
+            print('PASS 12 isolated core routing cases: domain/DNS override, resolved IP, pure IP, Other blocks and DNS refusal without upstream leakage')
         finally:
             if process is not None:
                 process.terminate()
