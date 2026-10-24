@@ -4,6 +4,7 @@ Requires an existing host uclient-fetch. No public URLs, device access or instal
 """
 import argparse
 import contextlib
+import os
 import socket
 import ssl
 import subprocess
@@ -155,6 +156,54 @@ def main():
             result = fetch(f'https://127.0.0.1:{port}/')
             assert result.returncode == 0 and result.stdout == b'ok' and len(seen) == 2, result.stderr
         print('PASS real TLS: trusted chain, invalid certificate, initial HTTP and downgrade rejection before transmission')
+    with tempfile.TemporaryDirectory(prefix='alwayroute-private-header-') as directory:
+        root = Path(directory)
+        path = root/'auth'
+        token = 'synthetic-loopback-token-never-in-argv'
+        path.write_text('Authorization: Bearer '+token+'\n')
+        path.chmod(0o600)
+        ready, release = threading.Event(), threading.Event()
+        def authenticate(request, _port):
+            assert ('Authorization: Bearer '+token).encode() in request
+            ready.set()
+            assert release.wait(3), 'test did not release the authenticated request'
+            yield prefix + suffix
+        options = [str(binary), '--no-proxy', '--header-limits', '--no-redirect', '--header-file', str(path),
+                   '-q', '-T', '2', '-O', '-']
+        with server(authenticate) as (port, _seen):
+            process = subprocess.Popen(options+[f'http://127.0.0.1:{port}/'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                assert ready.wait(3), 'authenticated request did not reach the local controller'
+                assert token.encode() not in Path(f'/proc/{process.pid}/cmdline').read_bytes(), 'token exposed in argv'
+            finally:
+                release.set()
+                try:
+                    output, error = process.communicate(timeout=6)
+                except BaseException:
+                    process.kill(); process.communicate()
+                    raise
+            assert process.returncode == 0 and output == b'ok' and token.encode() not in error
+        cases = [('public', 'Authorization: Bearer '+token, 0o644),
+                 ('injection', 'Authorization: Bearer '+token+'\nX-Injected: yes', 0o600),
+                 ('empty', '', 0o600), ('large', 'X: '+('x'*1024), 0o600)]
+        link = root/'symlink'; link.symlink_to(path)
+        hard = root/'hardlink'; os.link(path, hard)
+        fifo = root/'fifo'; os.mkfifo(fifo, 0o600)
+        invalid = [link, hard, fifo]
+        for name, content, mode in cases:
+            item = root/name; item.write_text(content); item.chmod(mode); invalid.append(item)
+        for item in invalid:
+            with server(lambda *_: [prefix + suffix]) as (port, seen):
+                command = [*options]; command[command.index('--header-file')+1] = str(item)
+                result = subprocess.run(command+[f'http://127.0.0.1:{port}/'], capture_output=True, timeout=4)
+                assert result.returncode != 0 and not seen and token.encode() not in result.stderr, item.name
+        hard.unlink()  # The original file must have one link for the next valid request.
+        with server(lambda *_: [prefix + suffix]) as (target, received):
+            with server(lambda *_: [b'HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:'
+                                     + str(target).encode() + b'/\r\nContent-Length: 0\r\n\r\n']) as (port, _seen):
+                result = subprocess.run(options+[f'http://127.0.0.1:{port}/'], capture_output=True, timeout=4)
+                assert result.returncode != 0 and not received, 'private controller request followed a redirect'
+        print('PASS private controller headers: authenticated request, argv privacy, file safety and redirect rejection')
 
 
 if __name__ == '__main__':

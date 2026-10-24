@@ -402,6 +402,7 @@ def main(argv=None):
         check('subscription_downloader_header_option', b'header-limits' in readfile('bin/uclient-fetch'))
         check('subscription_downloader_header_parser', b'uclient_http_set_header_limits' in readfile('usr/lib/libuclient.so'))
         check('subscription_downloader_https_policy', b'https-only' in readfile('bin/uclient-fetch') and b'uclient_http_set_https_only' in readfile('usr/lib/libuclient.so'))
+        check('core_downloader_private_header', b'header-file' in readfile('bin/uclient-fetch') and b'no-redirect' in readfile('bin/uclient-fetch'))
         check('manager_init_requires_runtime', b'[ -s /tmp/alwayroute/runtime.json ] || /usr/libexec/alwayroute-boot || return 0' in init)
         check('manager_boot_service_enabled', any(
             line.startswith('l') and line.endswith('squashfs-root/etc/rc.d/S95alwayroute -> ../init.d/alwayroute')

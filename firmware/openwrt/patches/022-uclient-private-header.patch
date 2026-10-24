@@ -1,0 +1,132 @@
+--- a/package/libs/uclient/Makefile
++++ b/package/libs/uclient/Makefile
+@@ -1,7 +1,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=uclient
+-PKG_RELEASE=3
++PKG_RELEASE=4
+ 
+ PKG_SOURCE_PROTO:=git
+ PKG_SOURCE_URL=$(PROJECT_GIT)/project/uclient.git
+--- /dev/null
++++ b/package/libs/uclient/patches/902-private-header.patch
+@@ -0,0 +1,118 @@
++--- a/uclient-fetch.c
+++++ b/uclient-fetch.c
++@@ -61,6 +61,9 @@
++ static bool no_output;
++ static bool bounded_headers;
++ static bool https_only;
+++static bool no_redirect;
+++static bool private_header_used;
+++static char private_header[1025];
++ static const char *opt_output_file;
++ static int output_fd = -1;
++ static int error_ret;
++@@ -195,7 +198,7 @@
++ 	struct blob_attr *tb[__H_MAX];
++ 	uint64_t resume_offset = 0, resume_end, resume_size;
++ 
++-	if (redirects < 10) {
+++	if (!no_redirect && redirects < 10) {
++ 		int ret = uclient_http_redirect(cl);
++ 		if (ret < 0) {
++ 			if (!quiet)
++@@ -561,6 +564,8 @@
++ 	fprintf(stderr,
++ 		"Usage: %s [options] <URL>\n"
++ 		"Options:\n"
+++		"\t--header-file=FILE\t\tRead one private header (0600, <=1024 bytes)\n"
+++		"\t--no-redirect\t\t\tReject redirect responses without following\n"
++ 		"\t--header-limits\t\t\tBound response headers to 16KiB / 64 lines / 4KiB per line\n"
++ 		"	-4				Use IPv4 only\n"
++ 		"	-6				Use IPv6 only\n"
++@@ -635,6 +640,45 @@
++ 	return true;
++ };
++ 
+++/* Read one private header without ever exposing its contents in argv. */
+++static char *read_private_header(const char *path)
+++{
+++	struct stat st;
+++	ssize_t n;
+++	size_t used = 0;
+++	char extra;
+++	int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+++
+++	if (fd < 0)
+++		return NULL;
+++	if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
+++	    (st.st_mode & 077) || st.st_nlink != 1 || st.st_size <= 0 || st.st_size > 1024)
+++		goto fail;
+++	while (used < sizeof(private_header) - 1) {
+++		n = read(fd, private_header + used, sizeof(private_header) - 1 - used);
+++		if (n < 0 && errno == EINTR)
+++			continue;
+++		if (n < 0)
+++			goto fail;
+++		if (!n)
+++			break;
+++		used += n;
+++	}
+++	do { n = read(fd, &extra, 1); } while (n < 0 && errno == EINTR);
+++	if (n != 0 || !used || memchr(private_header, 0, used))
+++		goto fail;
+++	close(fd);
+++	if (private_header[used - 1] == '\n')
+++		used--;
+++	if (!used || memchr(private_header, '\r', used) || memchr(private_header, '\n', used))
+++		return NULL;
+++	private_header[used] = 0;
+++	return private_header;
+++fail:
+++	close(fd);
+++	return NULL;
+++}
+++
++ enum {
++ 	L_NO_CHECK_CERTIFICATE,
++ 	L_CA_CERTIFICATE,
++@@ -657,6 +701,8 @@
++ 	L_HEADER,
++ 	L_HEADER_LIMITS,
++ 	L_HTTPS_ONLY,
+++	L_HEADER_FILE,
+++	L_NO_REDIRECT,
++ };
++ 
++ static const struct option longopts[] = {
++@@ -681,6 +727,8 @@
++ 	[L_HEADER] = { "header", required_argument, NULL, 0 },
++ 	[L_HEADER_LIMITS] = { "header-limits", no_argument, NULL, 0 },
++ 	[L_HTTPS_ONLY] = { "https-only", no_argument, NULL, 0 },
+++	[L_HEADER_FILE] = { "header-file", required_argument, NULL, 0 },
+++	[L_NO_REDIRECT] = { "no-redirect", no_argument, NULL, 0 },
++ 	{}
++ };
++ 
++@@ -709,6 +757,9 @@
++ 		switch(ch) {
++ 		case 0:
++ 			switch (longopt_idx) {
+++			case L_NO_REDIRECT:
+++				no_redirect = true;
+++				break;
++ 			case L_HTTPS_ONLY:
++ 				https_only = true;
++ 				break;
++@@ -806,6 +857,13 @@
++ 			case L_VERBOSE:
++ 				debug_level++;
++ 				break;
+++			case L_HEADER_FILE:
+++				if (private_header_used || !(optarg = read_private_header(optarg))) {
+++					error_ret = 1;
+++					goto out;
+++				}
+++				private_header_used = true;
+++				/* fall through */
++ 			case L_HEADER:
++ 				tmp = strchr(optarg, ':');
++ 				if (!tmp) {

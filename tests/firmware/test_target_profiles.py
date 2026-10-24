@@ -74,7 +74,8 @@ class TargetTests(unittest.TestCase):
                          {'GOOS': 'linux', 'GOARCH': 'mipsle', 'GOMIPS': 'softfloat', 'CGO_ENABLED': '0'})
         self.assertEqual(self.device['patches'], ['openwrt/patches/001-4a-evaluation-image-limit.patch',
                                                 'openwrt/patches/020-uclient-header-limits.patch',
-                                                'openwrt/patches/021-uclient-https-only.patch'])
+                                                'openwrt/patches/021-uclient-https-only.patch',
+                                                'openwrt/patches/022-uclient-private-header.patch'])
 
     def test_recipe_paths_and_unknown_formats_do_not_bypass_checks(self):
         for name in ('../xiaomi-4a-gigabit', 'C:/profile', '--device'):
