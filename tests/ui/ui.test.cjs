@@ -113,6 +113,61 @@ test('API rejects failed or malformed responses and preserves revision errors', 
   result = { ok: true, state: {} }; assert.equal((await api.call('get')).ok, true);
 });
 
+test('corrupt configuration loads an isolated recovery shell and waits for recovery jobs', async () => {
+  const loadError = new Error('持久配置损坏，可以停止或恢复');
+  loadError.code = 'READ_FAILED'; loadError.details = { canStop: true, recoveryRevision: 7 };
+  const calls = [];
+  const { view, window } = harness(async method => {
+    calls.push([method]);
+    if (method === 'job_status') return { busy: false, job: null };
+    if (method === 'get') throw loadError;
+    if (method === 'capabilities') return { limits: {} };
+    throw new Error('unexpected load method');
+  });
+  const data = await view.load();
+  assert.equal(data[0].model, undefined); assert.equal(data[0].recovery.recoveryRevision, 7);
+  const page = view.render(data);
+  assert.equal(view.draft, null); assert.match(text(page), /当前持久配置损坏/);
+  assert.equal(find(page, n => n.attrs && n.attrs['aria-label'] === '停止服务').disabled, false);
+  assert.equal(find(page, n => n.attrs && n.attrs['aria-label'] === '恢复上一份有效配置').disabled, false);
+  assert.equal(find(page, n => n.attrs && n.attrs['aria-label'] === '重新读取').disabled, false);
+  assert.equal(find(page, n => n.attrs && n.attrs['aria-label'] === 'AlwayRoute 页面'), null);
+
+  let reloads = 0, failedRollback = false;
+  window.location = { reload() { reloads++; } };
+  window.setTimeout = fn => { fn(); return 1; };
+  view.request = async (method, args) => {
+    calls.push([method, args]);
+    if (method === 'service') return { job: { id: 'stop-job', method, status: 'running' } };
+    if (method === 'rollback') return { job: { id: 'rollback-job', method, status: 'running' } };
+    if (method === 'job_status' && !failedRollback) return { job: { id: 'stop-job', status: 'succeeded' } };
+    if (method === 'job_status') return { job: { id: 'rollback-job', status: 'failed', error: { code: 'RECOVERY_FAILED', message: '恢复失败' } } };
+    throw new Error('unexpected recovery method');
+  };
+  await view.runRecovery('service', ['stop']);
+  assert.equal(reloads, 1);
+  failedRollback = true;
+  await view.runRecovery('rollback', [7]);
+  assert.equal(reloads, 1); assert.match(view.recoveryMessage.text, /恢复失败.*RECOVERY_FAILED/);
+  assert.equal(view.draft, null); assert.match(text(view.root), /当前持久配置损坏/);
+  assert.ok(calls.some(([method, args]) => method === 'service' && args[0] === 'stop'));
+  assert.ok(calls.some(([method, args]) => method === 'rollback' && args[0] === 7));
+
+  view.renderRecovery({ message: '损坏', recoveryRevision: null }, {});
+  assert.equal(find(view.root, n => n.attrs && n.attrs['aria-label'] === '恢复上一份有效配置'), null);
+  assert.ok(find(view.root, n => n.attrs && n.attrs['aria-label'] === '停止服务'));
+  assert.ok(find(view.root, n => n.attrs && n.attrs['aria-label'] === '重新读取'));
+});
+
+test('ordinary get failures never enter recovery mode without an explicit recovery contract', async () => {
+  const { view } = harness(async method => {
+    if (method === 'job_status') return { busy: false, job: null };
+    if (method === 'get') { const error = new Error('读取失败'); error.code = 'READ_FAILED'; throw error; }
+    return { limits: {} };
+  });
+  await assert.rejects(view.load(), /读取失败/);
+});
+
 test('production dependency directives resolve through the LuCI class factory contract', () => {
   const registry = { baseclass: BaseClass, view: BaseClass, ui: {}, poll: {}, rpc: { declare: () => () => Promise.resolve({ ok: true }) } };
   function requireModule(name) {

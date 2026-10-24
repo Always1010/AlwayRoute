@@ -20,11 +20,18 @@ return view.extend({
 			var checking = progress.busy && progress.job && progress.job.method === 'check';
 			var saved = checking ? self.request('get').then(function(result) { result.checkJob = progress.job; return result; }) :
 				progress.busy && progress.job && progress.job.status === 'running' ? self.waitJob(progress.job) : self.request('get');
-			return Promise.all([saved, self.request('capabilities')]);
+			return Promise.all([saved.catch(function(error) { return self.recoveryResult(error); }), self.request('capabilities')]);
 		});
+	},
+	recoveryResult: function(error) {
+		var details = error && error.details;
+		if (!details || details.canStop !== true) throw error;
+		var revision = details.recoveryRevision;
+		return { recovery: { message: error.message || '持久配置损坏，无法读取', recoveryRevision: Number.isInteger(revision) ? revision : null } };
 	},
 
 	render: function(data) {
+		if (data[0].recovery) return this.renderRecovery(data[0].recovery, data[1]);
 		this.draft = model.clone(data[0].model);
 		this.state = data[0].state || {};
 		this.capabilities = data[1];
@@ -68,6 +75,71 @@ return view.extend({
 			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(true); }
 		}, 0);
 		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') + '?v=' + encodeURIComponent(L.env.resource_version) }), this.root]);
+	},
+	renderRecovery: function(recovery, capabilities) {
+		this.recovery = recovery;
+		this.capabilities = capabilities;
+		this.draft = null;
+		this.state = {};
+		this.readonly = !L.hasViewPermission();
+		this.busy = false;
+		this.recoveryMessage = null;
+		this.root = E('div', { 'class': 'cbi-map ar-app' });
+		this.paintRecovery();
+		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') + '?v=' + encodeURIComponent(L.env.resource_version) }), this.root]);
+	},
+	paintRecovery: function() {
+		if (!this.root || !this.recovery) return;
+		var self = this, revision = this.recovery.recoveryRevision;
+		var canRollback = Number.isInteger(revision) && revision >= 0 && revision <= 2147483645;
+		var actions = [this.button('停止服务', '', function() { return self.runRecovery('service', ['stop']); }, { text: true, primary: true, recovery: true })];
+		if (canRollback) actions.push(this.button('恢复上一份有效配置', '', function() {
+			if (window.confirm('恢复上一份有效配置？损坏的当前配置将被替换。')) return self.runRecovery('rollback', [revision]);
+		}, { text: true, recovery: true }));
+		actions.push(this.button('重新读取', '', function() { return self.retryRecovery(); }, { text: true, readonly: true, recovery: true }));
+		var content = [E('div', { 'class': 'ar-heading' }, [E('h2', {}, ['AlwayRoute'])]),
+			E('div', { 'class': 'alert-message error', role: 'alert' }, ['当前持久配置损坏，常规配置页面已停用。本页未加载或构造配置模型。']),
+			E('p', { 'class': 'ar-alert ar-error' }, [this.recovery.message]),
+			E('p', { 'class': 'cbi-section-descr' }, [canRollback ? '可先停止服务，或恢复管理服务已验证的上一份配置。' : '未找到可验证的历史配置；仍可停止服务或修复文件后重新读取。']),
+			E('div', { 'class': 'ar-actions' }, actions)];
+		if (this.recoveryMessage) content.push(E('div', { 'class': 'ar-alert ar-' + this.recoveryMessage.type, role: 'status' }, [this.recoveryMessage.text]));
+		domReplace(this.root, content);
+	},
+	waitRecoveryJob: async function(job) {
+		var started = Date.now(), interval = 200;
+		for (;;) {
+			await new Promise(function(resolve) { window.setTimeout(resolve, interval); });
+			interval = 1000;
+			if (Date.now() - started >= 120000) { var timeout = new Error('等待超时，操作结果尚未确认，请重新读取'); timeout.code = 'OPERATION_TIMEOUT'; throw timeout; }
+			var result = await this.request('job_status'), current = result.job;
+			if (!current || current.id !== job.id) { var changed = new Error('后台任务记录已变化，请重新读取实际状态'); changed.code = 'STATE_UNCONFIRMED'; throw changed; }
+			if (current.status === 'running') continue;
+			if (current.status !== 'succeeded') {
+				var detail = current.error || {}, error = new Error(detail.message || '后台任务失败');
+				error.code = detail.code || 'JOB_FAILED'; throw error;
+			}
+			return current;
+		}
+	},
+	runRecovery: function(method, args) {
+		var self = this;
+		if (this.readonly || this.busy) return Promise.resolve();
+		this.busy = true; this.recoveryMessage = null; this.paintRecovery();
+		return this.request(method, args).then(function(result) {
+			return result.job && result.job.status === 'running' ? self.waitRecoveryJob(result.job) : result;
+		}).then(function() { window.location.reload(); }).catch(function(error) {
+			self.recoveryMessage = { type: 'error', text: (error.message || '恢复操作失败') + (error.code ? ' [' + error.code + ']' : '') };
+		}).finally(function() { self.busy = false; self.paintRecovery(); });
+	},
+	retryRecovery: function() {
+		var self = this;
+		if (this.busy) return Promise.resolve();
+		this.busy = true; this.recoveryMessage = null; this.paintRecovery();
+		return this.request('get').then(function() { window.location.reload(); }).catch(function(error) {
+			try { var result = self.recoveryResult(error); self.recovery = result.recovery; }
+			catch (_error) {}
+			self.recoveryMessage = { type: 'error', text: (error.message || '重新读取失败') + (error.code ? ' [' + error.code + ']' : '') };
+		}).finally(function() { self.busy = false; self.paintRecovery(); });
 	},
 
 	button: function(label, icon, action, options) {
