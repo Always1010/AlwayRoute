@@ -16,11 +16,19 @@ return view.extend({
 		if (!L.hasViewPermission()) return Promise.all([this.request('status').then(function(runtime) {
 			return { model: { revision: runtime.state.savedRevision, nodes: [], groups: [], subscriptions: [], overrides: {}, rules: [] }, state: runtime.state, runtime: runtime };
 		}), this.request('capabilities')]);
-		return this.request('job_status').then(function(progress) {
+		var saved = this.request('job_status').then(function(progress) {
 			var checking = progress.busy && progress.job && progress.job.method === 'check';
-			var saved = checking ? self.request('get').then(function(result) { result.checkJob = progress.job; return result; }) :
+			return checking ? self.request('get').then(function(result) { result.checkJob = progress.job; return result; }) :
 				progress.busy && progress.job && progress.job.status === 'running' ? self.waitJob(progress.job) : self.request('get');
-			return Promise.all([saved.catch(function(error) { return self.recoveryResult(error); }), self.request('capabilities')]);
+		}).catch(function(error) { return self.recoveryResult(error); });
+		// Start the sampler while configuration and capabilities are loading. A
+		// concurrent configuration job may make this snapshot obsolete before render.
+		return Promise.all([saved, this.request('capabilities'), this.request('status').catch(function() { return null; })]).then(function(data) {
+			var result = data[0], runtime = data[2];
+			if (!result.recovery && runtime && runtime.state && result.state &&
+				runtime.state.savedRevision === result.model.revision && runtime.state.appliedRevision === result.state.appliedRevision)
+				result.runtime = runtime;
+			return [result, data[1]];
 		});
 	},
 	recoveryResult: function(error) {
@@ -41,10 +49,13 @@ return view.extend({
 		this.busy = false;
 		this.tab = 'overview';
 		this.runtime = data[0].runtime || null;
-		this.lastStatusAttempt = null;
+		this.statusLoading = this.runtimeSnapshotPending(this.runtime, true);
+		this.lastStatusAttempt = this.statusLoading ? null : Date.now();
+		this.runtimeError = null;
 		this.traffic = null;
 		this.logs = [];
 		this.checks = {};
+		this.keepChecks(this.runtime && this.runtime.checks);
 		this.root = E('div', { 'class': 'cbi-map ar-app' });
 		this.paint();
 		var self = this;
@@ -55,26 +66,36 @@ return view.extend({
 		this.pollFn = function() {
 			if (self.root.isConnected) self.wasConnected = true;
 			else if (self.wasConnected) {
-				poll.remove(self.pollFn);
-				window.removeEventListener('beforeunload', self.beforeUnload);
+				self.stopRuntimePolling();
 				return Promise.resolve();
 			}
 			return self.refreshRuntime();
 		};
 		poll.add(this.pollFn, 5);
+		this.visibilityChange = function() {
+			if (document.hidden) { self.visibilityGeneration = (self.visibilityGeneration || 0) + 1; return; }
+			self.refreshRuntime(self.runtimeSnapshotPending(self.runtime, true) || self.statusNeedsRefresh());
+		};
+		document.addEventListener('visibilitychange', this.visibilityChange);
+		window.addEventListener('pageshow', this.visibilityChange);
 		this.root.addEventListener('DOMNodeRemoved', function(event) {
 			if (event.target === self.root) {
-				poll.remove(self.pollFn);
-				window.removeEventListener('beforeunload', self.beforeUnload);
+				self.stopRuntimePolling();
 			}
 		});
 		// LuCI mounts the returned Node after render resolves. Start after mounting,
 		// so the first visit has data immediately and detach cleanup can observe it.
 		window.setTimeout(function() {
 			if (data[0].checkJob) { self.observeCheck(data[0].checkJob); return; }
-			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(true); }
+			if (self.root.isConnected) { self.wasConnected = true; self.refreshRuntime(); }
 		}, 0);
 		return E('div', {}, [E('link', { rel: 'stylesheet', href: L.resource('alwayroute/style.css') + '?v=' + encodeURIComponent(L.env.resource_version) }), this.root]);
+	},
+	stopRuntimePolling: function() {
+		poll.remove(this.pollFn);
+		window.removeEventListener('beforeunload', this.beforeUnload);
+		document.removeEventListener('visibilitychange', this.visibilityChange);
+		window.removeEventListener('pageshow', this.visibilityChange);
 	},
 	renderRecovery: function(recovery, capabilities) {
 		this.recovery = recovery;
@@ -264,10 +285,13 @@ return view.extend({
 		if (typeof running !== 'boolean' || service && service.status === 'unknown') return true;
 		return !!(requireCore && running && runtime.core && runtime.core.status === 'unknown');
 	},
-	readRuntimeStatus: async function(requireCore) {
+	readRuntimeStatus: async function(requireCore, valid, receive) {
 		var runtime;
 		for (var attempt = 0; attempt < 10; attempt++) {
+			if (valid && !valid()) return runtime;
 			runtime = await this.request('status');
+			if (valid && !valid()) return runtime;
+			if (receive) receive(runtime);
 			if (!this.runtimeSnapshotPending(runtime, requireCore)) return runtime;
 			if (attempt < 9) await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
 		}
@@ -365,46 +389,67 @@ return view.extend({
 
 	changed: function() { this.dirty = true; this.message = null; this.paint(); },
 
+	statusNeedsRefresh: function() {
+		var snapshot = this.runtime && this.runtime.snapshot, now = Date.now();
+		// Local elapsed time also bounds freshness when router/client clocks differ.
+		return this.lastStatusAttempt == null || now < this.lastStatusAttempt || now - this.lastStatusAttempt >= 15000 ||
+			!!(snapshot && snapshot.status === 'current' && typeof snapshot.expiresAt === 'number' && now >= snapshot.expiresAt * 1000);
+	},
 	refreshRuntime: function(forceStatus) {
 		var self = this;
 		if (this.busy || document.hidden || !this.root.isConnected) return Promise.resolve();
 		if (this.tab !== 'overview' && this.tab !== 'logs') return Promise.resolve();
 		this.pendingPolls = this.pendingPolls || {};
-		if (this.pendingPolls[this.tab]) return forceStatus ? this.pendingPolls[this.tab].then(function() { return self.refreshRuntime(true); }) : Promise.resolve();
-		this.polling = true;
-		var generation = this.operationGeneration || 0, tab = this.tab;
-		var requestStatus = tab === 'overview' && (forceStatus || this.lastStatusAttempt == null || Date.now() - this.lastStatusAttempt >= 15000);
-		if (requestStatus) this.lastStatusAttempt = Date.now(); // Throttle attempts after both successful and failed status requests.
-		function valid() { return self.root.isConnected && !self.busy && self.tab === tab && generation === (self.operationGeneration || 0); }
+		var generation = this.operationGeneration || 0, visibility = this.visibilityGeneration || 0, tab = this.tab;
+		var requestStatus = tab === 'overview' && (forceStatus || this.statusNeedsRefresh());
+		function valid() { return self.root.isConnected && !document.hidden && !self.busy && self.tab === tab && generation === (self.operationGeneration || 0) && visibility === (self.visibilityGeneration || 0); }
+		function receive(method, value) {
+			if (!valid()) return;
+			if (method === 'logs') { self.logs = (value.entries || []).slice(-20); self.logsError = null; }
+			else if (method === 'traffic') self.traffic = value;
+			else {
+				self.runtime = value;
+				var remote = self.runtime.state || {};
+				if (self.readonly) self.revision = remote.savedRevision;
+				else if (remote.savedRevision !== self.revision) self.conflict = true;
+				self.updateState(remote);
+				self.keepChecks(self.runtime.checks);
+				self.runtimeError = null;
+			}
+			self.updateLive();
+		}
 		function settle(method, args) {
-			return self.request(method, args).then(function(value) {
-				if (!valid()) return;
-				if (method === 'logs') { self.logs = (value.entries || []).slice(-20); self.logsError = null; }
-				else if (method === 'traffic') self.traffic = value;
-				else {
-					self.runtime = value;
-					var remote = self.runtime.state || {};
-					if (self.readonly) self.revision = remote.savedRevision;
-					else if (remote.savedRevision !== self.revision) self.conflict = true;
-					self.updateState(remote);
-					self.keepChecks(self.runtime.checks);
-					self.runtimeError = null;
-				}
-				self.updateLive();
+			var pending = self.pendingPolls[method];
+			if (pending) {
+				if (method !== 'status' || !forceStatus) return Promise.resolve();
+				return pending.promise.then(function() {
+					if (pending.generation !== (self.operationGeneration || 0) || pending.visibility !== (self.visibilityGeneration || 0)) return self.refreshRuntime(true);
+				});
+			}
+			self.polling = true;
+			if (method === 'status') {
+				self.lastStatusAttempt = Date.now(); // Throttle attempts after both success and failure.
+				self.statusLoading = true; self.runtimeError = null; self.updateLive();
+			}
+			var request = method === 'status' ? self.readRuntimeStatus(true, valid, function(value) { receive(method, value); }) : self.request(method, args);
+			var operation = request.then(function(value) {
+				if (method !== 'status') receive(method, value);
+				else if (valid() && self.runtimeSnapshotPending(value, true)) self.runtimeError = '读取运行状态超时，请重新检查';
 			}, function(error) {
 				if (!valid()) return;
 				if (method === 'logs') { self.logs = []; self.logsError = error.message; }
 				else if (method === 'status') { self.runtime = null; self.runtimeError = error.message; }
 				else self.traffic = { available: false, reason: error.message };
 				self.updateLive();
+			}).finally(function() {
+				delete self.pendingPolls[method]; self.polling = Object.keys(self.pendingPolls).length > 0;
+				if (method === 'status') { self.statusLoading = false; if (valid()) self.updateLive(); }
 			});
+			self.pendingPolls[method] = { promise: operation, generation: generation, visibility: visibility };
+			return operation;
 		}
 		var requests = tab === 'logs' ? [settle('logs', [20])] : requestStatus ? [settle('status'), settle('traffic')] : [settle('traffic')];
-		var operation = Promise.allSettled(requests).finally(function() {
-			delete self.pendingPolls[tab]; self.polling = Object.keys(self.pendingPolls).length > 0;
-		});
-		this.pendingPolls[tab] = operation;
-		return operation;
+		return Promise.allSettled(requests);
 	},
 
 	configurationLabel: function() {
@@ -429,7 +474,7 @@ return view.extend({
 		if (this.serviceRunning() === false) return '';
 		if (group.id === 'Other' && group.selected === 'block') return '未匹配流量将阻断';
 		var actual = this.actualChoice(group.id);
-		if (!actual) return '实际出口未获取';
+		if (!actual) return this.statusLoading ? '正在读取实际出口…' : this.runtimeError ? '实际出口读取失败，请重新检查' : '实际出口未获取';
 		if (actual !== group.selected) return '核心当前选择：' + model.label(this.draft, actual);
 		return '';
 	},

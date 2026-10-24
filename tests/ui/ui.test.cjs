@@ -43,8 +43,12 @@ function harness(call, writable = true) {
     get firstChild() { return this.children[0]; }
   }
   const E = (tag, attrs, children) => new Element(tag, attrs || {}, Array.isArray(children) ? children : children ? [children] : []);
-  const document = { hidden: false, body: E('body') };
-  const window = { confirm: () => true, addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout };
+  const document = { hidden: false, body: E('body'), events: {},
+    addEventListener(name, fn) { this.events[name] = fn; },
+    removeEventListener(name, fn) { if (this.events[name] === fn) delete this.events[name]; } };
+  const window = { confirm: () => true, events: {},
+    addEventListener(name, fn) { this.events[name] = fn; },
+    removeEventListener(name, fn) { if (this.events[name] === fn) delete this.events[name]; }, setTimeout, clearTimeout };
   const poll = { add() {}, remove() {} };
   const ui = { showModal(title, children) { ui.modal = { title, children }; }, hideModal() { ui.modal = null; } };
   const view = loadModule(read('view/alwayroute/app.js'), ['view', 'ui', 'poll', 'api', 'model', 'E', 'L', 'window', 'document'],
@@ -466,6 +470,140 @@ test('runtime acknowledgement renders before a slow traffic response', async () 
   assert.equal(view.traffic.download, 7);
 });
 
+test('initial status runs beside configuration loading and only matching revisions reach the first render', async () => {
+  let releaseJob, revision = 0;
+  const calls = [], runtime = { snapshot: { status: 'current', expiresAt: Date.now() / 1000 + 30 },
+    state: { savedRevision: 0, appliedRevision: 0 }, service: { running: true },
+    core: { available: true, groups: { Proxy: { now: 'direct' } } },
+    checks: { n1: { checkedRevision: 0, healthy: 'passed', delay: 42 } } };
+  const { view, window } = harness(async method => {
+    calls.push(method);
+    if (method === 'job_status') return new Promise(resolve => { releaseJob = resolve; });
+    if (method === 'get') { const saved = empty(); saved.revision = revision; return { model: saved, state: { savedRevision: revision, appliedRevision: revision } }; }
+    if (method === 'status') return runtime;
+    return {};
+  });
+  window.setTimeout = (fn, ms) => ms === 0 ? 0 : setTimeout(fn, ms);
+  const loading = view.load();
+  assert.deepEqual(calls, ['job_status', 'capabilities', 'status']);
+  releaseJob({ busy: false });
+  const data = await loading;
+  assert.equal(data[0].runtime, runtime);
+  view.render(data);
+  assert.equal(view.serviceRunning(), true); assert.equal(view.actualChoice('Proxy'), 'direct');
+  assert.equal(view.checks.n1.delay, 42);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口').disabled, false);
+  await view.refreshRuntime();
+  assert.equal(calls.filter(method => method === 'status').length, 1, 'warm first render reuses the prefetched status');
+  revision = 1;
+  const racing = view.load(); releaseJob({ busy: false });
+  assert.equal((await racing)[0].runtime, undefined, 'pre-job status cannot represent the newer configuration');
+});
+
+test('failed initial status still loads configuration and presents a loading state for the next read', async () => {
+  const { view, window } = harness(async method => {
+    if (method === 'status') throw new Error('status unavailable');
+    if (method === 'job_status') return { busy: false };
+    if (method === 'get') return { model: empty(), state: { savedRevision: 0, appliedRevision: 0 } };
+    return {};
+  });
+  window.setTimeout = (fn, ms) => ms === 0 ? 0 : setTimeout(fn, ms);
+  view.render(await view.load());
+  assert.equal(view.runtime, null);
+  assert.equal(view.groupStatus(view.draft.groups[0]), '正在读取实际出口…');
+  assert.equal(view.lastStatusAttempt, null);
+});
+
+test('cold or unknown-core snapshots retry promptly and expose confirmed state without replacing controls', async () => {
+  for (const unknownCoreOnly of [false, true]) {
+    let count = 0;
+    const { view, window } = harness(async method => {
+      if (method !== 'status') return { available: false };
+      count++;
+      return count === 1 ? { snapshot: { status: unknownCoreOnly ? 'current' : 'unknown' },
+        state: { savedRevision: 0, appliedRevision: 0 }, service: { running: unknownCoreOnly ? true : null },
+        core: { status: 'unknown', available: null, groups: {} } } :
+        { snapshot: { status: 'current' }, state: { savedRevision: 0, appliedRevision: 0 }, service: { running: true },
+          core: { status: 'current', available: true, groups: { Proxy: { now: 'direct' } } } };
+    });
+    const waits = [];
+    window.setTimeout = (fn, ms) => ms === 1000 ? (waits.push(ms), queueMicrotask(fn)) : setTimeout(fn, ms);
+    view.paint();
+    const control = find(view.root, n => n.attrs['aria-label'] === '代理的出口');
+    const refreshing = view.refreshRuntime();
+    assert.equal(view.groupStatus(view.draft.groups[0]), '正在读取实际出口…');
+    await refreshing;
+    assert.equal(count, 2); assert.deepEqual(waits, [1000]);
+    assert.equal(view.actualChoice('Proxy'), 'direct'); assert.equal(view.runtimeError, null);
+    assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口'), control);
+    assert.equal(control.disabled, false); assert.equal(view.groupStatus(view.draft.groups[0]), '');
+  }
+});
+
+test('cold status retries stop at the limit, report failure and return to throttled polling', async () => {
+  let count = 0, failing = false;
+  const { view, window } = harness(async method => {
+    if (method !== 'status') return { available: false };
+    count++;
+    if (failing) throw new Error('backend unavailable');
+    return { snapshot: { status: 'unknown' }, state: { savedRevision: 0, appliedRevision: 0 }, service: { running: null } };
+  });
+  window.setTimeout = (fn, ms) => ms === 1000 ? queueMicrotask(fn) : setTimeout(fn, ms);
+  await view.refreshRuntime();
+  assert.equal(count, 10); assert.equal(view.statusLoading, false);
+  assert.match(view.runtimeError, /超时/); assert.match(view.groupStatus(view.draft.groups[0]), /读取失败/);
+  await view.refreshRuntime(); assert.equal(count, 10);
+  failing = true; await view.refreshRuntime(true);
+  assert.equal(count, 11); assert.equal(view.runtimeError, 'backend unavailable'); assert.equal(view.statusLoading, false);
+});
+
+test('visibility resume uses snapshot freshness and detach removes lifecycle listeners', async () => {
+  let statusCount = 0;
+  const runtime = { snapshot: { status: 'current', expiresAt: Date.now() / 1000 + 30 },
+    state: { savedRevision: 0, appliedRevision: 0 }, service: { running: true }, core: { groups: { Proxy: { now: 'direct' } } } };
+  const { view, window, document } = harness(async method => { if (method === 'status') { statusCount++; return runtime; } return {}; });
+  window.setTimeout = (fn, ms) => ms === 0 ? 0 : setTimeout(fn, ms);
+  view.render([{ model: empty(), state: runtime.state, runtime }, {}]);
+  document.hidden = true; document.events.visibilitychange();
+  document.hidden = false; document.events.visibilitychange();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(statusCount, 0, 'a fresh snapshot survives a brief background visit');
+  runtime.snapshot.expiresAt = Date.now() / 1000 - 1;
+  document.events.visibilitychange();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(statusCount, 1, 'expired snapshots refresh immediately on return');
+  runtime.snapshot.expiresAt = Date.now() / 1000 + 30;
+  view.lastStatusAttempt = Date.now() - 16000;
+  window.events.pageshow(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(statusCount, 2, 'local elapsed time bounds freshness too');
+  view.root.isConnected = false; view.root.events.DOMNodeRemoved({ target: view.root });
+  assert.equal(document.events.visibilitychange, undefined); assert.equal(window.events.pageshow, undefined);
+  assert.equal(window.events.beforeunload, undefined);
+});
+
+test('resume rejects pre-background responses and fresh status does not wait for old traffic', async () => {
+  let releaseOld, releaseTraffic, count = 0;
+  const current = { snapshot: { status: 'current' }, state: { savedRevision: 0, appliedRevision: 0 },
+    service: { running: true }, core: { groups: { Proxy: { now: 'direct' } } } };
+  const { view, window, document } = harness(async method => {
+    if (method === 'traffic') return new Promise(resolve => { releaseTraffic = resolve; });
+    if (method === 'status' && ++count === 1) return new Promise(resolve => { releaseOld = resolve; });
+    return current;
+  });
+  window.setTimeout = (fn, ms) => ms === 0 ? 0 : setTimeout(fn, ms);
+  view.render([{ model: empty(), state: current.state }, {}]);
+  const old = view.refreshRuntime();
+  document.hidden = true; document.events.visibilitychange();
+  document.hidden = false; document.events.visibilitychange();
+  releaseOld({ state: { savedRevision: 99 }, service: { running: false } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(count, 2); assert.equal(!!view.conflict, false);
+  assert.equal(view.serviceRunning(), true); assert.equal(view.actualChoice('Proxy'), 'direct');
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '代理的出口').disabled, false);
+  assert.equal(view.polling, true, 'only old traffic is still pending');
+  releaseTraffic({ available: false }); await old;
+});
+
 test('new node editor omits empty optional TLS and websocket fields', () => {
   const { view } = harness(async () => ({}));
   let fields, commit;
@@ -657,7 +795,7 @@ test('loading a running check renders immediately with a resumable job', async (
   });
   const loaded = await view.load();
   assert.equal(loaded[0].checkJob, job);
-  assert.deepEqual(calls, ['job_status', 'get', 'capabilities']);
+  assert.deepEqual(calls, ['job_status', 'capabilities', 'status', 'get']);
 });
 
 test('node selection follows visible eligible rows and preserves hidden choices with explicit batch scopes', async () => {
@@ -732,6 +870,7 @@ test('status restores only node checks belonging to the currently applied revisi
   let applied = 2;
   const { view } = harness(async method => method === 'status' ? {
     ok: true, state: { savedRevision: 3, appliedRevision: applied, healthy: 'unverified' },
+    service: { running: true }, core: { available: true, groups: {} },
     checks: { n1: { nodeId: 'n1', delay: 42, healthy: 'passed', checkedRevision: 2 }, old: { healthy: 'passed', checkedRevision: 1 }, unknown: { healthy: 'passed' } }
   } : method === 'logs' ? { ok: true, entries: [] } : { ok: true, available: false });
   view.revision = 3; view.draft.nodes.push(node());
