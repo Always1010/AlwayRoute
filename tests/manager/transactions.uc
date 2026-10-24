@@ -384,4 +384,30 @@ check(call('job_status',{}).job.status=='succeeded' && r.model.revision==corrupt
 let invalidCurrent=clone(r.model);invalidCurrent.nodes[0].port=0;files['/etc/alwayroute/current.json']=sprintf('%J',invalidCurrent);
 call('rollback',{expectedRevision:r.model.revision});work();r=call('get',{});
 check(call('job_status',{}).job.status=='succeeded' && r.model.nodes[0].port!=0 && r.state.appliedRevision==r.model.revision,'rollback can also recover syntactically valid current that fails model validation');
+// Rollback history is distinct from the journal snapshot used while applying.
+let historyA=clone(r.model),historyB=clone(historyA);historyB.nodes[0].name='History B';
+call('configure',{expectedRevision:historyA.revision,model:historyB});work();historyB=clone(call('get',{}).model);
+let historyRaw=files['/etc/alwayroute/previous.json'];
+check(json(historyRaw).nodes[0].name==historyA.nodes[0].name,'a changed successful application records the preceding model as rollback history');
+for(let method in ['service','apply','configure']) {
+ let args=method=='service'?{action:'start'}:method=='apply'?{expectedRevision:historyB.revision}:{expectedRevision:historyB.revision,model:historyB};
+ call(method,args);work();historyB=clone(call('get',{}).model);
+ check(call('job_status',{}).job.status=='succeeded' && files['/etc/alwayroute/previous.json']==historyRaw,'same-content '+method+' preserves the earlier distinct rollback model');
+}
+for(let failure in ['journal','check','lastgood','history','marker']) {
+ let candidate=clone(historyB);candidate.nodes[0].name='Rejected history candidate';
+ if(failure=='journal')failWrite='/etc/alwayroute/applying.json.new';
+ if(failure=='check')checkFails=true;
+ if(failure=='lastgood')failWrite='/etc/alwayroute/lastgood.json.new';
+ if(failure=='history')failWrite='/etc/alwayroute/previous.json.new';
+ if(failure=='marker')failUnlink='/etc/alwayroute/applying.json';
+ call('configure',{expectedRevision:historyB.revision,model:candidate});work();
+ check(call('job_status',{}).job.status=='failed' && files['/etc/alwayroute/previous.json']==historyRaw && call('get',{}).model.nodes[0].name=='History B','failed '+failure+' application restores current and the pre-existing rollback history');
+}
+let crashCandidate=clone(historyB);crashCandidate.revision++;crashCandidate.nodes[0].name='Uncommitted history candidate';
+files['/etc/alwayroute/applying.json']=sprintf('%J',{previousRevision:historyB.revision,previousGood:historyB,previousHistory:historyRaw,previousCurrent:historyB,previousService:{enabled:true}});
+files['/etc/alwayroute/previous.json']=sprintf('%J',crashCandidate);files['/etc/alwayroute/current.json']=sprintf('%J',crashCandidate);files['/etc/alwayroute/lastgood.json']=sprintf('%J',crashCandidate);
+check(boot() && files['/etc/alwayroute/previous.json']==historyRaw && call('get',{}).model.nodes[0].name=='History B' && json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.default_mode==generate(historyB).experimental.clash_api.default_mode,'new journal restores its own confirmed snapshot and original rollback history after a torn commit');
+started();call('rollback',{expectedRevision:historyB.revision});work();r=call('get',{});
+check(call('job_status',{}).job.status=='succeeded' && r.model.nodes[0].name==historyA.nodes[0].name && json(files['/etc/alwayroute/previous.json']).nodes[0].name=='History B','rollback still reaches A after repeated starts, failed candidates and interrupted commit, then retains B for a reverse rollback');
 printf('PASS %d manager transaction checks\n',checks);

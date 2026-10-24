@@ -18,8 +18,8 @@ function init() {
  if(!privatePath(TMP,'directory',0700))fail('STORAGE_ERROR','临时配置目录不是root私有真实目录');
 }
 function read(path, fallback) {let s=fs.readfile(path);if(s==null)return fallback;try{return json(s);}catch(e){fail('STORAGE_CORRUPT','持久配置损坏，拒绝覆盖；请使用恢复功能');}}
-function write(path,value) {
- let data=sprintf('%J',value), f=fs.open(path+'.new','w',0600);
+function write(path,value,raw) {
+ let data=raw===true?value:sprintf('%J',value), f=fs.open(path+'.new','w',0600);
  if(!f)fail('STORAGE_ERROR','无法创建配置候选');
  fs.chmod(path+'.new',0600);
  let n=f.write(data),flushed=f.flush(),closed=f.close();
@@ -97,14 +97,24 @@ function model() {
 function lastGood() {
  let pending=read(DATA+'/applying.json',null);
  if(!pending)return normalized(read(DATA+'/lastgood.json',null));
- let good=pending.previousRevision==null?null:normalized(read(DATA+'/previous.json',null));
+ return pendingGood(pending);
+}
+function pendingGood(pending) {
+ // Old deployed markers stored their transaction snapshot in previous.json.
+ // New markers own that snapshot, leaving previous.json as rollback history.
+ let good=pending.previousRevision==null?null:normalized(pending.previousGood ?? read(DATA+'/previous.json',null));
  return good?.revision==pending.previousRevision?good:null;
 }
 function restoreMetadata(pending,good,service) {
  if(pending.previousCurrent)write(DATA+'/current.json',normalized(pending.previousCurrent));
  if(good)write(DATA+'/lastgood.json',good);
  else if(fs.readfile(DATA+'/lastgood.json')!=null && !fs.unlink(DATA+'/lastgood.json'))fail('STORAGE_ERROR','候选应用副本无法撤销');
- write(DATA+'/service.json',service);system('/bin/sync');
+ write(DATA+'/service.json',service);
+ if('previousHistory' in pending) {
+  if(pending.previousHistory!=null)write(DATA+'/previous.json',pending.previousHistory,true);
+  else if(fs.readfile(DATA+'/previous.json')!=null && !fs.unlink(DATA+'/previous.json'))fail('STORAGE_ERROR','历史配置副本无法撤销');
+ }
+ system('/bin/sync');
  if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','恢复提交标志无法清除');system('/bin/sync');
 }
 function state(m) {
@@ -272,24 +282,29 @@ function recover(good,wasRunning) {
  }
  return {restored:false,guarded:forwarding('guard'),errorCode:recoveryCode ?? 'RECOVERY_UNCONFIRMED'};
 };
+function sameContent(a,b) {
+ if(!a || !b)return false;
+ a=clone(a);b=clone(b);delete a.revision;delete b.revision;
+ return sprintf('%J',a)==sprintf('%J',b);
+}
 function applyModel(m,commitCurrent,plan,previousCurrent) {
  let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?(previousCurrent ?? model()):null;
- let pending={previousRevision:good?.revision ?? null,previousService:service,previousRunning:wasRunning};
+ let pending={previousRevision:good?.revision ?? null,previousGood:good,previousHistory:fs.readfile(DATA+'/previous.json'),previousService:service,previousRunning:wasRunning};
  if(commitCurrent)pending.previousCurrent=before;
  // The candidate is only in tmp; current and lastgood remain valid across power loss.
  try {
-  if(good)write(DATA+'/previous.json',good);
   write(DATA+'/applying.json',pending);system('/bin/sync');
   if(plan)switchSelections(m,plan);else restart(m);
   write(DATA+'/lastgood.json',m);write(DATA+'/service.json',{enabled:true});
   write(TMP+'/state.json',{appliedRevision:m.revision,healthy:'unverified'});
   if(commitCurrent)write(DATA+'/current.json',m);
+  if(good && !sameContent(good,m))write(DATA+'/previous.json',good);
   system('/bin/sync');
   if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','应用提交标志无法清除');system('/bin/sync');
  }catch(e) {
   let recovery=recover(good,wasRunning);
   // Recovery runs even if flash is full or read-only. An uncleared marker makes
-  // the next boot rebuild previous.json instead of a half-committed candidate.
+  // the next boot uses its own snapshot instead of a half-committed candidate.
   try {restoreMetadata(pending,good,service);}catch(storageError){}
   let message=recovery.restored?'应用失败，已恢复上一份可用配置':recovery.stopped?'应用失败，服务已恢复停止状态':recovery.guarded?'应用及恢复失败，已进入故障阻断':'应用及恢复失败，故障阻断未确认；保留核心并需人工处理';
   let lastFailure={code:failureCode(e),recoveryCode:recovery.errorCode ?? null};
@@ -528,8 +543,7 @@ export function boot() {
  let pending=read(DATA+'/applying.json',null);
  if(pending) {
   config=pending.previousService ?? config;
-  good=pending.previousRevision==null?null:normalized(read(DATA+'/previous.json',null));
-  if(good?.revision!=pending.previousRevision)good=null;
+  good=pendingGood(pending);
  }
  if(!config.enabled || !good) {if(pending)restoreMetadata(pending,good,config);return false;}
  installCoreModel(good);write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
@@ -569,7 +583,7 @@ export function started() {
  try {
   let runtime=read(TMP+'/state.json',{});
   if(runtime.restoringRevision!=null) {
-   let pending=read(DATA+'/applying.json',null),good=normalized(read(DATA+(pending?'/previous.json':'/lastgood.json'),null));
+   let pending=read(DATA+'/applying.json',null),good=pending?pendingGood(pending):normalized(read(DATA+'/lastgood.json',null));
    if(good?.revision==runtime.restoringRevision) {
     if(waitCore(good,null) && forwarding('activate'))write(TMP+'/state.json',{appliedRevision:good.revision,healthy:'unverified'});
     else {forwarding('guard');write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified',lastError:'启动恢复未通过核心/转发检查，已请求故障阻断'});}
