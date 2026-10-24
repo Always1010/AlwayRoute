@@ -216,7 +216,7 @@ function switchSelections(m,plan) {
  for(let change in plan.changes)putSelection(change.id,change.after);
  // Keep a service respawn on the same confirmed choice; persistent boot recovery
  // remains governed by lastgood and the durable applying marker.
- write(TMP+'/runtime.json',plan.config);
+ writePrivate(TMP+'/runtime.json',sprintf('%J',plan.config));
  if(!waitCore(m,null,3))fail('CORE_SELECT_FAILED','核心实际选择未确认，正在恢复上一份配置');
 }
 function restart(m) {
