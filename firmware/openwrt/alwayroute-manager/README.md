@@ -68,7 +68,10 @@ coreAPI只监听127.0.0.1:9090，混合代理只监听127.0.0.1:7890。
 
 生成器固定针对 sing-box 1.13.21，支持 VMess TCP/WS、TLS、Rule/Global/Direct、
 按序IPv4/IP-CIDR/域名/后缀及正则规则、reject、Proxy及业务selector单层跟随；手工规则最多512条，每条128值，模型仍限128KiB。
-DoH走Proxy，bootstrap用路由器系统DNS；直连域名使用bootstrap。缓存512，DNS IPv4-only。
+DoH走Proxy，bootstrap用路由器系统DNS；直连域名使用bootstrap。DNS IPv4-only，
+共享DNS缓存显式配置1024项，与固定sing-box 1.13.21的`max(options.CacheCapacity, 1024)`下限一致；
+此前写512也会实际分配至少1024项，此次仅纠正配置与预算表述，不能算作缓存扩容或内存节省。
+1024是条目容量预算，单条DNS消息长度及缓存管理开销可变，不能据此宣称固定KiB内存上限。
 IPv6 LAN绕行阻断及IPv4 TCP/UDP TProxy由转发包实施，管理访问豁免亦由其保证。
 
 订阅解析范围故意有限：VMess URI、整体base64 URI列表、仅含proxies数组的Clash JSON、

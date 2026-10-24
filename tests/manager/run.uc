@@ -28,6 +28,7 @@ insecure.subscriptions[0].allowHttp='true';rejected(()=>validate(insecure),'HTTP
 insecure.subscriptions[0].url='https://example.invalid/sub';insecure.subscriptions[0].allowHttp=false;check(validate(insecure).schema==1,'HTTPS remains valid with exception disabled');
 m.groups[0].selected=nodes[0].id;validate(m);
 let config=generate(m);check(config.outbounds[1].server_port==443,'typed VMess config');
+check(config.dns.cache_capacity==1024,'DNS budget matches the pinned core minimum of 1024 entries');
 check(config.experimental.clash_api.external_controller=='127.0.0.1:9090','API loopback only');
 check(config.route.final=='Other' && outbound(config,'Other').default=='direct','Other is the rule-mode fallback and defaults direct');
 check(config.route.rules[0].action=='hijack-dns' && config.route.rules[0].port==53 && config.route.rules[1].action=='sniff' && join(',',config.route.rules[1].sniffer)=='http,tls,quic','DNS hijack precedes only the hostname sniffers needed for routing');
