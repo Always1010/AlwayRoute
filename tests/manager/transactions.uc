@@ -351,4 +351,16 @@ check(entropyFailed && files['/tmp/alwayroute/runtime.json']==null && files['/tm
 files['/tmp/alwayroute/runtime.json']=savedRuntime;modes['/tmp/alwayroute/runtime.json']=0600;pathTypes['/tmp/alwayroute/runtime.json']='file';owners['/tmp/alwayroute/runtime.json']=0;
 lockCount=coreLockAcquisitions;prepareCoreStart();
 check(coreLockAcquisitions==lockCount+1 && files['/tmp/alwayroute/core-api.headers']!=null,'an entropy failure releases core.lock for a later valid spawn');
+// Simulate a fresh boot: nft state is gone and recovery must not require flash
+// writes to succeed before protecting LAN forwarding.
+let bootGood=clone(call('get',{}).model);
+for(let failure in ['current','lastgood','service','marker']) {
+ files['/etc/alwayroute/previous.json']=sprintf('%J',bootGood);
+ files['/etc/alwayroute/applying.json']=sprintf('%J',{previousCurrent:bootGood,previousRevision:bootGood.revision,previousService:{enabled:true}});
+ active=false;forwardingMode='stopped';
+ if(failure=='marker')failUnlink='/etc/alwayroute/applying.json';else failWrite='/etc/alwayroute/'+failure+'.json.new';
+ let refused=false;try{boot();}catch(e){refused=index(e.message,'STORAGE_ERROR')>=0;}
+ check(refused && !active && forwardingMode=='guarded' && files['/etc/alwayroute/applying.json']!=null && files['/tmp/alwayroute/runtime.json']!=null,'boot '+failure+' recovery write failure retains a prepared runtime and fail-closed guard');
+}
+check(boot() && !files['/etc/alwayroute/applying.json'] && forwardingMode=='guarded','a later writable boot finishes durable recovery while retaining the guard until confirmation');
 printf('PASS %d manager transaction checks\n',checks);

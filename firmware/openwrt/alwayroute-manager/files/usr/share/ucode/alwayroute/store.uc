@@ -516,11 +516,14 @@ export function boot() {
   config=pending.previousService ?? config;
   good=pending.previousRevision==null?null:normalized(read(DATA+'/previous.json',null));
   if(good?.revision!=pending.previousRevision)good=null;
-  restoreMetadata(pending,good,config);
  }
- if(!config.enabled || !good)return false;
+ if(!config.enabled || !good) {if(pending)restoreMetadata(pending,good,config);return false;}
  installCoreModel(good);write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
- if(!forwarding('guard')){clearCoreRuntime();fail('FORWARDING_GUARD_FAILED','启动时无法建立故障阻断');}return true;
+ if(!forwarding('guard')){clearCoreRuntime();fail('FORWARDING_GUARD_FAILED','启动时无法建立故障阻断');}
+ // Persistent recovery may fail on a full or read-only overlay. Establish the
+ // guard first, so refusing this start cannot expose unprotected base routing.
+ if(pending)restoreMetadata(pending,good,config);
+ return true;
 };
 export function due() {
  let m=model(),now=time(),responses=[];
