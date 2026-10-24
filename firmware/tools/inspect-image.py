@@ -358,6 +358,10 @@ def main(argv=None):
     else:
         # Compare all owned payloads with reviewed package inputs. LuCI deliberately
         # minifies web assets, so replay its existing host tools before comparing.
+        compact_spec = importlib.util.spec_from_file_location('manager_install_compactor',
+            source / 'package/alwayroute-manager/tools/compact-payload.py')
+        compact_module = importlib.util.module_from_spec(compact_spec)
+        compact_spec.loader.exec_module(compact_module)
         config = (source / '.config').read_text().splitlines()
         for package, directory, prefix in [
             ('alwayroute-forwarding', 'files', 'usr/libexec'),
@@ -372,7 +376,9 @@ def main(argv=None):
                 target = '/'.join(part for part in (prefix, path.relative_to(root).as_posix()) if part)
                 expected = path.read_bytes()
                 input_sha = hashlib.sha256(expected).hexdigest()
-                if directory == 'htdocs' and path.suffix == '.js' and 'CONFIG_LUCI_JSMIN=y' in config:
+                if package == 'alwayroute-manager':
+                    expected = compact_module.compact_payload(target, expected, source / 'staging_dir/hostpkg/bin/jsmin')
+                elif directory == 'htdocs' and path.suffix == '.js' and 'CONFIG_LUCI_JSMIN=y' in config:
                     result = subprocess.run([str(source / 'staging_dir/hostpkg/bin/jsmin')], input=expected, capture_output=True, timeout=120, check=True)
                     expected = result.stdout
                 elif directory == 'htdocs' and path.suffix == '.css' and 'CONFIG_LUCI_CSSTIDY=y' in config:
@@ -396,7 +402,7 @@ def main(argv=None):
         ))
         # The service is allowed to autostart only after a user enabled it and a
         # successful revision exists. A fresh image contains neither state file.
-        store = readfile('usr/share/ucode/alwayroute/store.uc')
+        store = (source / 'package/alwayroute-manager/files/usr/share/ucode/alwayroute/store.uc').read_bytes()
         boot = re.search(rb'export function boot\(\) \{(.*?)\n\};', store, re.S)
         boot = boot.group(1) if boot else b''
         check('manager_boot_requires_enabled_lastgood', b"read(DATA+'/service.json',{enabled:false})" in boot

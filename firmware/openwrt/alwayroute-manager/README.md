@@ -13,6 +13,10 @@ LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重�
 每个服务独立 JSON 保存域名后缀与精确域名。该目录不列入 conffiles，随包升级替换；
 规则维护、匹配语义与来源锁统一见仓库 [config/routing/](../../../config/routing/README.md)，不维护第二份预设说明。
 包目录由 OpenWrt `package.mk` 递归追踪，修改服务数据参与增量重建。
+构建时用既有 `luci-base/host` 的 jsmin 紧凑安装的 ucode，保留可执行入口的 shebang；
+JSON 只紧凑空白，三个指定 shell 只去除整行注释并校验词法内容一致，遇到 heredoc 拒绝转换。
+仓库保留可读源码，生成文件仅放包构建目录；镜像检查重新执行同一转换并逐文件比对安装字节。
+这不改变核心、SquashFS 参数或分区容量限制。`check-imports.py` 在 jsmin 可用时另以紧凑模块真实导入运行模型契约。
 国内组另引用 `/usr/share/alwayroute/rules/` 中的通用域名和目的 IP 二进制集合，
 路由与 DNS 共享域名数据；未匹配域名解析后先重查手工地址覆盖，再进行国内 IP 补漏。
 这些构建主机生成的外部输入由 `PKG_FILE_DEPENDS` 跟踪，不进入用户模型和 capabilities 大数组，
