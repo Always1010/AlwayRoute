@@ -7,15 +7,19 @@ let files={},locked=false,active=false,checkFails=false,allChecksFail=false,fail
 let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0,onDelay=null;
 let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null,putAcceptedError=false;
 let liveConfig=null,corePid=700,retiringPids={},onRestart=null,onSleep=null,managedRunning=true,activateAlwaysFails=false,apiReadFailures=0,identityReadFailures=0,putReadFailure=false;
+let randomCounter=0,randomAvailable=true,apiExit=0,coreCommands=[],modes={},pathTypes={},owners={},spawnSecrets=[],badPrivateMode=false;
 function processStat(pid) {let fields=['S'];for(let i=1;i<20;i++)push(fields,i==19?sprintf('%d',pid):'0');return sprintf('%d (sing-box) %s',pid,join(' ',fields));}
 let fs={
- mkdir:()=>true,chmod:()=>true,
- readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/proc/'+corePid+'/stat' && active)return processStat(corePid);for(let pid,stat in retiringPids)if(path=='/proc/'+pid+'/stat')return stat;if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
+ mkdir:function(path,mode){modes[path]=mode;pathTypes[path]='directory';owners[path]=0;return true;},chmod:function(path,mode){modes[path]=mode;return true;},
+ lstat:function(path){return pathTypes[path]?{type:pathTypes[path],uid:owners[path] ?? 0,mode:modes[path]}:null;},
+ readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return randomAvailable?sprintf('00000000-0000-4000-8000-%012d',++randomCounter):null;if(path=='/proc/'+corePid+'/stat' && active)return processStat(corePid);for(let pid,stat in retiringPids)if(path=='/proc/'+pid+'/stat')return stat;if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
  access:function(path){return path=='/proc/123' || (path=='/usr/libexec/alwayroute-forwarding' && helperAvailable);},
- rename:function(from,to){if(to==failRename){failRename=null;return false;}files[to]=files[from];delete files[from];return true;},
- unlink:function(path){if(path==failUnlink){failUnlink=null;return false;}delete files[path];return true;},
- open:function(path,mode){
+ rename:function(from,to){if(to==failRename){failRename=null;return false;}files[to]=files[from];modes[to]=badPrivateMode && (to=='/tmp/alwayroute/core-api.headers' || to=='/tmp/alwayroute/runtime.json')?0644:modes[from];pathTypes[to]=pathTypes[from];owners[to]=owners[from];delete files[from];delete modes[from];delete pathTypes[from];delete owners[from];return true;},
+ unlink:function(path){if(path==failUnlink){failUnlink=null;return false;}delete files[path];delete modes[path];delete pathTypes[path];delete owners[path];return true;},
+ open:function(path,mode,perm){
   if(path==failWrite){failWrite=null;return null;}
+  if(perm!=null)modes[path]=perm;
+  if(mode?.[0]=='w' || mode?.[0]=='a'){if(files[path]==null)files[path]='';pathTypes[path]='file';owners[path]=0;}
   let owns=false;
   return {
    write:function(value){files[path]=value;return length(value);},flush:()=>true,
@@ -25,23 +29,24 @@ let fs={
  },
  popen:function(command){
   let body='{}';
+  if(index(command,'127.0.0.1:9090')>=0){push(coreCommands,command);assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'every core read uses the private header file and disables redirects');let secret=json(files['/tmp/alwayroute/runtime.json'] ?? '{}')?.experimental?.clash_api?.secret;assert(!secret || index(command,secret)<0,'the core secret never enters a process argument');}
   if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';if(onDelay)body=onDelay(command) ?? body;}
   else if(index(command,'ubus call service list')>=0){body=sprintf('%J',{alwayroute:{instances:{instance1:{running:active && managedRunning,pid:corePid,command:['/usr/bin/sing-box','run']}}}});if(identityReadFailures>0){identityReadFailures--;body='{}';}}
   else if(index(command,'alwayroute-forwarding status')>=0)body=sprintf('%J',{available:true,running:forwardingMode=='active',guarded:forwardingMode=='guarded'});
   else if(index(command,'/proxies')>=0){let cfg=liveConfig ?? {outbounds:[]},proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:liveChoices[o.tag],all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);if(apiReadFailures>0){apiReadFailures--;body='{}';}}
-  return {read:function(limit){if(index(command,'/proxies')>=0)lastProxyReadLimit=limit;return substr(body,0,limit);},close:()=>0};
+  return {read:function(limit){if(index(command,'/proxies')>=0)lastProxyReadLimit=limit;return substr(body,0,limit);},close:()=>index(command,'127.0.0.1:9090')>=0?apiExit:0};
  }
 };
 function system(command){
  if(index(command,'/bin/sleep 1')>=0 && onSleep)onSleep();
- if(index(command,'--method PUT')>=0){putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(putReadFailure){putReadFailure=false;apiReadFailures=1;}if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
+ if(index(command,'--method PUT')>=0){push(coreCommands,command);assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'selector writes use the private header file and disable redirects');let secret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;assert(index(command,secret)<0,'the core secret never enters selector arguments');putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(putReadFailure){putReadFailure=false;apiReadFailures=1;}if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
  if(index(command,'alwayroute-forwarding guard')>=0){guardCalls++;forwardingMode='guarded';}
  if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;forwardingMode='stopped';}
  if(index(command,'alwayroute-forwarding activate')>=0){if(activateAlwaysFails)return 1;if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
  if(index(command,'sing-box check')>=0 && allChecksFail)return 1;
  if(index(command,'sing-box check')>=0 && checkFails){checkFails=false;return 1;}
  if(index(command,'alwayroute running')>=0)return active && managedRunning?0:1;
- if(index(command,'alwayroute restart')>=0){restartCalls++;active=true;corePid++;liveChoices={};liveConfig=json(files['/tmp/alwayroute/runtime.json']);for(let o in liveConfig.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;if(onRestart)onRestart();}
+ if(index(command,'alwayroute restart')>=0){restartCalls++;prepareCoreStart();active=true;corePid++;liveChoices={};liveConfig=json(files['/tmp/alwayroute/runtime.json']);push(spawnSecrets,liveConfig.experimental.clash_api.secret);for(let o in liveConfig.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;if(onRestart)onRestart();}
  if(index(command,'alwayroute stop')>=0)active=false;
  return 0;
 }
@@ -50,6 +55,7 @@ function system(command){
 
 let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
+function publicRuntime(raw){let config=json(raw);delete config.experimental.clash_api.secret;return sprintf('%J',config);}
 let savedJob=files['/tmp/alwayroute/job.json'];
 files['/tmp/alwayroute/job.json']=sprintf('%J',{id:'old-live-job',status:'running',started:time()-121,pid:123});
 let observedJob=call('job_status',{});
@@ -90,15 +96,20 @@ r=call('apply',{expectedRevision:1});check(r.ok && r.job.status=='running' && !a
 check(call('save',{expectedRevision:1,model:r.model}).error.code=='BUSY','queued mutation excluded');
 work();r=call('job_status',{});check(!r.busy && r.job.status=='succeeded' && active,'worker completes and releases transaction lock');
 check(call('get',{}).state.appliedRevision==1,'applied distinct from saved');
+let initialSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;
+check(files['/tmp/alwayroute/core-api.headers']=='Authorization: Bearer '+initialSecret && modes['/tmp/alwayroute']==0700 && modes['/tmp/alwayroute/core-api.headers']==0600 && modes['/tmp/alwayroute/runtime.json']==0600,'core runtime and matching authorization header are private');
+check(length(spawnSecrets)==1 && initialSecret==spawnSecrets[0] && index(sprintf('%J',call('get',{})),initialSecret)<0 && index(sprintf('%J',call('status',{})),initialSecret)<0,'spawn credential is absent from user model and RPC results');
 let normalRuntime=files['/tmp/alwayroute/runtime.json'],normalLiveConfig=clone(liveConfig),normalLiveChoices=clone(liveChoices),largeRuntime={outbounds:[]},largeChoices=[];
 for(let i=0;i<128;i++){let tag=sprintf('n%03d_',i);while(length(tag)<64)tag+='x';push(largeChoices,tag);push(largeRuntime.outbounds,{type:'vmess',tag});}
 for(let i=0;i<16;i++)push(largeRuntime.outbounds,{type:'selector',tag:'group_'+i,outbounds:largeChoices,default:largeChoices[i]});
-files['/tmp/alwayroute/runtime.json']=sprintf('%J',largeRuntime);liveConfig=largeRuntime;liveChoices={};for(let o in largeRuntime.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;currentReads=0;let largeStatus=call('status',{});
+files['/tmp/alwayroute/runtime.json']=sprintf('%J',largeRuntime);liveConfig=largeRuntime;liveChoices={};for(let o in largeRuntime.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;invalidateStatus();sampleStatus();currentReads=0;let largeStatus=call('status',{});
 check(currentReads==1 && lastProxyBodyLength>65536 && lastProxyReadLimit==262145 && largeStatus.core.available && length(keys(largeStatus.core.groups))==16,'maximum node and group status loads the model once and reads the bounded response beyond the old 64KiB cutoff');
 check(largeStatus.core.groups.group_15.now==largeChoices[15] && length(keys(largeStatus.core.groups.group_15))==1 && largeStatus.core.groups[largeChoices[0]]==null,'core status retains only selector choices needed for runtime confirmation');
 files['/tmp/alwayroute/runtime.json']=normalRuntime;liveConfig=normalLiveConfig;liveChoices=normalLiveChoices;
 call('check',{nodeId:'n1'});work();let checked=call('job_status',{}).job;
 check(checked.status=='succeeded' && checked.result.checkedRevision==1 && checked.result.delay==9,'node check uses matching applied revision');
+apiExit=1;call('check',{nodeId:'n1'});work();checked=call('job_status',{}).job;apiExit=0;
+check(checked.status=='succeeded' && checked.result.available===false,'an old client or failed authenticated request cannot trust a valid-looking response body');
 let originalModel=files['/etc/alwayroute/current.json'],batchModel=clone(call('get',{}).model);
 batchModel.subscriptions=[{id:'demo',name:'Demo',url:'https://example.invalid/sub',enabled:true,intervalHours:0}];
 batchModel.nodes=[];
@@ -245,7 +256,7 @@ let beforeRestarts=restartCalls,beforePuts=putCalls;
 putAcceptedError=true;
 call('configure',{expectedRevision:12,model:hotNext});work();r=call('get',{});
 check(call('job_status',{}).job.status=='succeeded' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls==beforeRestarts && putCalls==beforePuts+1,'lost PUT acknowledgement commits only after actual choice confirmation without restarting the live core');
-check(sprintf('%J',generate(r.model))==files['/tmp/alwayroute/runtime.json'] && json(files['/etc/alwayroute/lastgood.json']).revision==13 && !files['/etc/alwayroute/applying.json'],'hot switch commits runtime defaults and persistent recovery metadata together');
+check(sprintf('%J',generate(r.model))==publicRuntime(files['/tmp/alwayroute/runtime.json']) && json(files['/etc/alwayroute/lastgood.json']).revision==13 && !files['/etc/alwayroute/applying.json'],'hot switch commits runtime defaults and persistent recovery metadata together');
 hotBase=clone(r.model);
 for(let failure in ['put','readback','runtime','lastgood','current','marker','partial']) {
  hotNext=clone(hotBase);hotNext.groups[0].selected='n1';
@@ -258,7 +269,7 @@ for(let failure in ['put','readback','runtime','lastgood','current','marker','pa
  if(failure=='partial'){hotNext.groups[1].selected='n1';putFailAt=putCalls+2;}
  beforeRestarts=restartCalls;
  call('configure',{expectedRevision:13,model:hotNext});work();r=call('get',{});putMismatch=false;putFailAt=null;
- check(call('job_status',{}).job.status=='failed' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls>beforeRestarts && sprintf('%J',generate(hotBase))==files['/tmp/alwayroute/runtime.json'] && !files['/etc/alwayroute/applying.json'],'hot '+failure+' failure fully restores old core, metadata and revision');
+ check(call('job_status',{}).job.status=='failed' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls>beforeRestarts && sprintf('%J',generate(hotBase))==publicRuntime(files['/tmp/alwayroute/runtime.json']) && !files['/etc/alwayroute/applying.json'],'hot '+failure+' failure fully restores old core, metadata and revision');
 }
 hotNext=clone(hotBase);hotNext.groups[1].selected='direct';beforeRestarts=restartCalls;
 call('configure',{expectedRevision:13,model:hotNext});work();r=call('get',{});
@@ -311,4 +322,18 @@ let delayedNext=clone(call('get',{}).model);delayedNext.groups[0].selected='n1';
 beforeRestarts=restartCalls;putReadFailure=true;
 call('configure',{expectedRevision:delayedNext.revision,model:delayedNext});work();
 check(call('job_status',{}).job.status=='succeeded' && restartCalls==beforeRestarts && liveChoices.Proxy=='n1','successful PUT tolerates a transient final readback failure without restarting the core');
+let previousSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;prepareCoreStart();let respawnSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;
+check(previousSecret!=respawnSecret && files['/tmp/alwayroute/core-api.headers']=='Authorization: Bearer '+respawnSecret,'every process spawn rotates the runtime and header credential together');
+let savedRuntime=files['/tmp/alwayroute/runtime.json'];modes['/tmp/alwayroute']=0777;let unsafeDirectory=false;try{prepareCoreStart();}catch(e){unsafeDirectory=index(e.message,'STORAGE_ERROR')>=0;}
+check(unsafeDirectory && modes['/tmp/alwayroute']==0777,'a pre-created non-private runtime directory is rejected without changing its permissions');
+modes['/tmp/alwayroute']=0700;owners['/tmp/alwayroute']=1000;let foreignDirectory=false;try{prepareCoreStart();}catch(e){foreignDirectory=index(e.message,'STORAGE_ERROR')>=0;}
+check(foreignDirectory && owners['/tmp/alwayroute']==1000,'a non-root runtime directory is rejected without taking ownership');
+owners['/tmp/alwayroute']=0;pathTypes['/tmp/alwayroute']='link';let linkedDirectory=false;try{prepareCoreStart();}catch(e){linkedDirectory=index(e.message,'STORAGE_ERROR')>=0;}
+check(linkedDirectory && pathTypes['/tmp/alwayroute']=='link','a symbolic-link runtime directory is rejected without following it');
+pathTypes['/tmp/alwayroute']='directory';files['/tmp/alwayroute/runtime.json']=savedRuntime;modes['/tmp/alwayroute/runtime.json']=0600;pathTypes['/tmp/alwayroute/runtime.json']='file';owners['/tmp/alwayroute/runtime.json']=0;
+badPrivateMode=true;let unsafeFile=false;try{prepareCoreStart();}catch(e){unsafeFile=index(e.message,'STORAGE_ERROR')>=0;}badPrivateMode=false;
+check(unsafeFile && files['/tmp/alwayroute/runtime.json']==null && files['/tmp/alwayroute/core-api.headers']==null,'a non-private credential or runtime result is removed and rejected');
+files['/tmp/alwayroute/runtime.json']=savedRuntime;modes['/tmp/alwayroute/runtime.json']=0600;pathTypes['/tmp/alwayroute/runtime.json']='file';owners['/tmp/alwayroute/runtime.json']=0;
+randomAvailable=false;let entropyFailed=false;try{prepareCoreStart();}catch(e){entropyFailed=index(e.message,'CORE_CREDENTIAL_FAILED')>=0;}randomAvailable=true;
+check(entropyFailed && files['/tmp/alwayroute/runtime.json']==null && files['/tmp/alwayroute/core-api.headers']==null,'missing kernel randomness removes old credentials and fails closed');
 printf('PASS %d manager transaction checks\n',checks);

@@ -39,7 +39,7 @@ function sampleService() {
  let instances=entry?.instances;
  if(type(entry)!='object' || type(instances)!='object')return {service:unknownService(),coreEpoch:null,pid:null};
  let found=null;
- for(let name,instance in instances)if(instance.command?.[0]=='/usr/bin/sing-box') {
+  for(let name,instance in instances)if(index(['/usr/bin/sing-box','/usr/libexec/alwayroute-core-run'],instance.command?.[0])>=0) {
   if(found)return {service:unknownService(),coreEpoch:null,pid:null};
   found=instance;
  }
@@ -52,7 +52,7 @@ function sampleService() {
 function sampleCore(service) {
  if(service.service.status!='current')return unknownCore();
  if(!service.service.running)return {status:'current',available:false,groups:{}};
- let response=boundedJson("/bin/uclient-fetch -q -T 2 -O - 'http://127.0.0.1:9090/proxies'",262144)?.value,groups={};
+ let response=boundedJson("/bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - 'http://127.0.0.1:9090/proxies'",262144)?.value,groups={};
  if(!response?.proxies)return unknownCore();
  for(let tag,proxy in response.proxies)if(proxy?.type=='Selector' && type(proxy.now)=='string')groups[tag]={now:proxy.now};
  return {status:'current',available:true,groups};

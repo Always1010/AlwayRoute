@@ -2,7 +2,7 @@
 // Runtime status probes run only in the detached sampler, never in the RPC call.
 let files={},sampling=false,now=100,epochCounter=0,launches=0,serviceProbes=0,coreProbes=0,forwardingProbes=0;
 let coreStart='700',coreReply=true,onCoreProbe=null,uuidAvailable=true;
-let serviceReply={alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/bin/sing-box','run']}}}},serviceExit=0;
+let serviceReply={alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/libexec/alwayroute-core-run']}}}},serviceExit=0;
 function time(){return now;}
 function processStat() {let fields=['S'];for(let i=1;i<20;i++)push(fields,i==19?coreStart:'0');return '700 (sing-box) '+join(' ',fields);}
 function system(command){assert(index(command,'alwayroute-status </dev/null >/dev/null 2>&1 &')>=0,'status sampler detaches all RPC descriptors');launches++;return 0;}
@@ -19,7 +19,7 @@ let fs={
   assert(index(command,'alwayroute-timeout 3')>=0,'every status probe has an external deadline');
   let body;
   if(index(command,'ubus call service list')>=0){serviceProbes++;body=sprintf('%J',serviceReply);}
-  else if(index(command,'/proxies')>=0){coreProbes++;if(onCoreProbe)onCoreProbe();body=coreReply?'{"proxies":{"Proxy":{"type":"Selector","now":"n1"}}}':'{}';}
+  else if(index(command,'/proxies')>=0){coreProbes++;assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'core status uses the private API header without following redirects');if(onCoreProbe)onCoreProbe();body=coreReply?'{"proxies":{"Proxy":{"type":"Selector","now":"n1"}}}':'{}';}
   else {forwardingProbes++;body='{"available":true,"running":true,"scope":"test"}';}
   return {read:()=>body,close:()=>index(command,'ubus call service list')>=0?serviceExit:0};
  }
@@ -51,7 +51,7 @@ coreReply=true;serviceReply={};serviceExit=0;invalidateStatus();delete files[STA
 check(reply.service.status=='current' && reply.service.running===false && reply.core.available===false,'successful empty service list confirms that the core is stopped');
 serviceReply={alwayroute:{instances:{}}};invalidateStatus();delete files[STATUS_ROOT+'/status.json'];sampleStatus();reply=statusSnapshot();
 check(reply.service.status=='current' && reply.service.running===false,'successful service entry with no instances confirms that the core is stopped');
-serviceReply={alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/bin/sing-box','run']}}}};serviceExit=1;invalidateStatus();delete files[STATUS_ROOT+'/status.json'];sampleStatus();reply=statusSnapshot();
+serviceReply={alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/libexec/alwayroute-core-run']}}}};serviceExit=1;invalidateStatus();delete files[STATUS_ROOT+'/status.json'];sampleStatus();reply=statusSnapshot();
 check(reply.service.status=='unknown' && reply.service.running===null && reply.core.status=='unknown','nonzero service probe exit remains unknown even when stdout resembles a valid reply');
 serviceExit=0;
 sampling=true;let before=serviceProbes;sampleStatus();sampling=false;

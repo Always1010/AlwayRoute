@@ -1,6 +1,6 @@
 'use strict';
 import { sha256 } from 'digest';
-import { empty,validate,generate,clone,effective,normalize,policyCatalog } from 'alwayroute.model';
+import { empty,validate,generate,generateRuntimeValidated,clone,effective,normalize,policyCatalog } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
 
 let checks=0;
@@ -30,6 +30,9 @@ m.groups[0].selected=nodes[0].id;validate(m);
 let config=generate(m);check(config.outbounds[1].server_port==443,'typed VMess config');
 check(config.dns.cache_capacity==1024,'DNS budget matches the pinned core minimum of 1024 entries');
 check(config.experimental.clash_api.external_controller=='127.0.0.1:9090','API loopback only');
+check(join(',',config.experimental.clash_api.access_control_allow_origin)=='http://127.0.0.1' && config.experimental.clash_api.secret==null,'public generation restricts CORS to loopback and never contains the internal API secret');
+let runtimeConfig=generateRuntimeValidated(m,'00000000-0000-4000-8000-000000000099');
+check(runtimeConfig.experimental.clash_api.secret=='00000000-0000-4000-8000-000000000099' && config.experimental.clash_api.secret==null,'runtime generation adds a secret without mutating the pure generated config');
 check(config.route.final=='Other' && outbound(config,'Other').default=='direct','Other is the rule-mode fallback and defaults direct');
 check(config.route.rules[0].action=='hijack-dns' && config.route.rules[0].port==53 && config.route.rules[1].action=='sniff' && join(',',config.route.rules[1].sniffer)=='http,tls,quic','DNS hijack precedes only the hostname sniffers needed for routing');
 check(join(',',outbound(config,'Proxy').outbounds)=='direct,'+nodes[0].id && join(',',outbound(config,'OpenAI').outbounds)=='direct,'+nodes[0].id+',Proxy','every selector includes all effective nodes, even those not currently selected');

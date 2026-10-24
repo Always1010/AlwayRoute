@@ -239,7 +239,13 @@ export function generateValidated(m) {
  return {log:{disabled:true},inbounds:[{type:'mixed',tag:'local-mixed',listen:'127.0.0.1',listen_port:7890},
  {type:'tproxy',tag:'lan-tproxy',listen:'0.0.0.0',listen_port:7893}],outbounds,
  dns:{servers:[{type:'local',tag:'bootstrap'},{type:'https',tag:'proxy-dns',server:'1.1.1.1',tls:{enabled:true,server_name:'cloudflare-dns.com'},detour:'Proxy'}],rules:dnsRules,final:m.mode=='direct'?'bootstrap':'proxy-dns',reverse_mapping:true,strategy:'ipv4_only',cache_capacity:1024},
- route:{rules,rule_set:ruleSets,final,auto_detect_interface:true,default_domain_resolver:'bootstrap'},experimental:{clash_api:{external_controller:'127.0.0.1:9090',default_mode:m.mode=='direct'?'Direct':m.mode=='global'?'Global':'Rule'}}};
+ route:{rules,rule_set:ruleSets,final,auto_detect_interface:true,default_domain_resolver:'bootstrap'},experimental:{clash_api:{external_controller:'127.0.0.1:9090',access_control_allow_origin:['http://127.0.0.1'],default_mode:m.mode=='direct'?'Direct':m.mode=='global'?'Global':'Rule'}}};
+};
+// Runtime credentials are internal state. Public generate() remains a pure
+// model projection so a secret can never enter the user model or RPC result.
+export function generateRuntimeValidated(m,secret) {
+ if(type(secret)!='string' || !match(secret,/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/))fail('CORE_CREDENTIAL_FAILED','核心接口凭据不可用');
+ let config=generateValidated(m);config.experimental.clash_api.secret=secret;return config;
 };
 export function generate(m) {
  validate(m);

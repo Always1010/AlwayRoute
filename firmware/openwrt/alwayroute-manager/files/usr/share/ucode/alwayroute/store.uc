@@ -1,16 +1,22 @@
 'use strict';
 import * as fs from 'fs';
 import { sha256 } from 'digest';
-import { fail, clone, empty, normalize, validate, effective, generateValidated, policyCatalog, modelLimits } from 'alwayroute.model';
+import { fail, clone, empty, normalize, validate, effective, generateRuntimeValidated, policyCatalog, modelLimits } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
 import { selectionPlan } from 'alwayroute.selection';
 import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
 import { statusSnapshot, invalidateStatus } from 'alwayroute.status';
 
-const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
+const DATA='/etc/alwayroute', TMP='/tmp/alwayroute', CORE_HEADER=TMP+'/core-api.headers', CORE_HEADER_PREFIX='Authorization: Bearer ';
 let verifiedModelBytes=null,verifiedModel=null;
 let verifiedModels=[];
-function init() {if(!fs.access(DATA))fs.mkdir(DATA,0700);if(!fs.access(TMP))fs.mkdir(TMP,0700);}
+function privatePath(path,type,mode) {let info=fs.lstat(path);return info?.type==type && info.uid==0 && info.mode==mode;}
+function init() {
+ if(!fs.access(DATA))fs.mkdir(DATA,0700);
+ let info=fs.lstat(TMP);
+ if(!info && !fs.mkdir(TMP,0700))fail('STORAGE_ERROR','无法创建临时配置目录');
+ if(!privatePath(TMP,'directory',0700))fail('STORAGE_ERROR','临时配置目录不是root私有真实目录');
+}
 function read(path, fallback) {let s=fs.readfile(path);if(s==null)return fallback;try{return json(s);}catch(e){fail('STORAGE_CORRUPT','持久配置损坏，拒绝覆盖；请使用恢复功能');}}
 function write(path,value) {
  let data=sprintf('%J',value), f=fs.open(path+'.new','w',0600);
@@ -19,6 +25,39 @@ function write(path,value) {
  let n=f.write(data),flushed=f.flush(),closed=f.close();
  if(n!=length(data) || !flushed || !closed || !fs.rename(path+'.new',path))fail('STORAGE_ERROR','配置原子保存失败');
 };
+function writePrivate(path,data) {
+ if(fs.lstat(path+'.new'))fail('STORAGE_ERROR','私密运行候选路径已存在');
+ let f=fs.open(path+'.new','w',0600);
+ if(!f || !fs.chmod(path+'.new',0600) || !privatePath(path+'.new','file',0600)) {f?.close();fail('STORAGE_ERROR','无法创建私密运行文件');}
+ let n=f.write(data),flushed=f.flush(),closed=f.close();
+ if(n!=length(data) || !flushed || !closed || !fs.rename(path+'.new',path) || !privatePath(path,'file',0600))fail('STORAGE_ERROR','私密运行文件原子保存失败');
+}
+function clearCoreRuntime() {fs.unlink(CORE_HEADER);fs.unlink(CORE_HEADER+'.new');fs.unlink(TMP+'/runtime.json');fs.unlink(TMP+'/runtime.json.new');}
+function newCoreSecret() {
+ let secret=trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? '');
+ if(!match(secret,/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/))fail('CORE_CREDENTIAL_FAILED','内核随机源不可用，拒绝启动核心接口');
+ return secret;
+}
+function installCoreSecret(config,secret) {
+ clearCoreRuntime();
+ try {
+  secret=secret ?? newCoreSecret();
+  config=clone(config);config.experimental.clash_api.secret=secret;
+  writePrivate(CORE_HEADER,CORE_HEADER_PREFIX+secret);writePrivate(TMP+'/runtime.json',sprintf('%J',config));
+  return config;
+ }catch(e){clearCoreRuntime();die(e.message);}
+}
+function installCoreModel(m) {
+ clearCoreRuntime();
+ try {let secret=newCoreSecret();return installCoreSecret(generateRuntimeValidated(m,secret),secret);}
+ catch(e){clearCoreRuntime();die(e.message);}
+}
+function coreHeaderSecret() {
+ let header=fs.readfile(CORE_HEADER,1025);
+ if(type(header)!='string' || substr(header,0,length(CORE_HEADER_PREFIX))!=CORE_HEADER_PREFIX)return null;
+ let secret=substr(header,length(CORE_HEADER_PREFIX));
+ return length(header)<=1024 && match(secret,/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/)?secret:null;
+}
 function normalized(m) {
  if(m==null)return null;
  let bytes=sprintf('%J',m);
@@ -85,15 +124,15 @@ function command(cmd) {return system(cmd+' >/dev/null 2>&1')==0;}
 function running() {return command('/usr/libexec/alwayroute-timeout 3 /etc/init.d/alwayroute running');}
 function fetchJson(path, stream, limit) {
  limit=limit ?? 65536;
- let command='/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 -O - '+"'http://127.0.0.1:9090"+path+"' 2>/dev/null";
+ let command='/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - '+"'http://127.0.0.1:9090"+path+"' 2>/dev/null";
  if(stream)command+=' | /bin/busybox head -n 1';
  let p=fs.popen(command,'r');if(!p)return null;
- let s=p.read(limit+1);p.close();if(!s || length(s)>limit)return null;
+ let s=p.read(limit+1),status=p.close();if(status!=0 || !s || length(s)>limit)return null;
  try{return json(trim(s));}catch(e){return null;}
 };
 function forwarding(action) {
  if(!fs.access('/usr/libexec/alwayroute-forwarding','x'))return action=='status'?{available:false,scope:'unverified'}:false;
- if(action=='status') {let p=fs.popen('/usr/libexec/alwayroute-timeout 3 /usr/libexec/alwayroute-forwarding status 2>/dev/null','r');if(!p)return {available:false,scope:'unverified'};let s=p.read(8192);p.close();try{return json(s);}catch(e){return {available:false,scope:'unverified'};}}
+ if(action=='status') {let p=fs.popen('/usr/libexec/alwayroute-timeout 3 /usr/libexec/alwayroute-forwarding status 2>/dev/null','r');if(!p)return {available:false,scope:'unverified'};let s=p.read(8192),status=p.close();if(status!=0)return {available:false,scope:'unverified'};try{return json(s);}catch(e){return {available:false,scope:'unverified'};}}
  return command('/usr/libexec/alwayroute-forwarding '+action);
 };
 function coreStatus() {
@@ -103,8 +142,8 @@ function coreStatus() {
  return {available:true,groups};
 }
 function checkConfig(m) {
- write(TMP+'/runtime.json',generateValidated(m));
- if(!command('/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json'))fail('CORE_CHECK_FAILED','核心拒绝配置，原应用保持可恢复');
+ installCoreModel(m);
+ if(!command('/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json')){clearCoreRuntime();fail('CORE_CHECK_FAILED','核心拒绝配置，原应用保持可恢复');}
 }
 function selected(g) {return g.id=='Other' && g.selected=='block'?'direct':g.selected;}
 function choicesMatch(m,core) {
@@ -120,10 +159,10 @@ function processIdentity(pid) {
 }
 function coreProcess() {
  let p=fs.popen("/usr/libexec/alwayroute-timeout 3 ubus call service list '{\"name\":\"alwayroute\"}' 2>/dev/null",'r');if(!p)return null;
- let body=p.read(8193);p.close();if(!body || length(body)>8192)return null;
+ let body=p.read(8193),status=p.close();if(status!=0 || !body || length(body)>8192)return null;
  try {
   let service=json(body),found=null;
-  for(let name,instance in service.alwayroute?.instances ?? {})if(instance.running && instance.command?.[0]=='/usr/bin/sing-box') {
+  for(let name,instance in service.alwayroute?.instances ?? {})if(instance.running && index(['/usr/bin/sing-box','/usr/libexec/alwayroute-core-run'],instance.command?.[0])>=0) {
    let identity=processIdentity(instance.pid);if(!identity || found)return null;
    found={pid:instance.pid,identity};
   }
@@ -143,13 +182,13 @@ function waitCore(m,previous,attempts) {
 }
 function failureCode(error) {
  let text=error.message ?? '',marker=index(text,'ALWAYROUTE:'),code=marker>=0?split(substr(text,marker+11),':')[0]:null;
- return index(['UNCONFIGURED','CORE_CHECK_FAILED','CORE_START_FAILED','CORE_LOAD_FAILED','CORE_SELECT_FAILED','FORWARDING_CHECK_FAILED','FORWARDING_GUARD_FAILED','FORWARDING_APPLY_FAILED','STORAGE_ERROR'],code)>=0?code:'INTERNAL';
+ return index(['UNCONFIGURED','CORE_CREDENTIAL_FAILED','CORE_CHECK_FAILED','CORE_START_FAILED','CORE_LOAD_FAILED','CORE_SELECT_FAILED','FORWARDING_CHECK_FAILED','FORWARDING_GUARD_FAILED','FORWARDING_APPLY_FAILED','STORAGE_ERROR'],code)>=0?code:'INTERNAL';
 }
 function putSelection(id,target) {
  // IDs are model-validated, and JSON is passed in a private file, never shell input.
  target=target=='block'?'direct':target;
  write(TMP+'/selection.json',{name:target});
- let status=system('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id+' >/dev/null 2>&1');
+ let status=system('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id+' >/dev/null 2>&1');
  fs.unlink(TMP+'/selection.json');
  if(status!=0) {
   // A lost response does not prove that the PUT was rejected. Only this
@@ -165,7 +204,9 @@ function putSelection(id,target) {
 function liveSelectionPlan(next) {
  let previous=model(),current=state(previous),good=lastGood();
  if(current.appliedRevision!==previous.revision || good?.revision!==previous.revision || sprintf('%J',good)!=sprintf('%J',previous))return null;
- let plan=selectionPlan(previous,next,read(TMP+'/runtime.json',null),true);
+ let runtime=read(TMP+'/runtime.json',null),secret=coreHeaderSecret();
+ if(!secret || runtime?.experimental?.clash_api?.secret!==secret)return null;
+ let plan=selectionPlan(previous,next,runtime,true);
  if(!plan || !choicesMatch(previous,coreStatus()))return null;
  let f=forwarding('status');
  if(f.available!==true || f.guarded || f.running!==(previous.mode!='direct'))return null;
@@ -204,7 +245,7 @@ function recover(good,wasRunning) {
     write(TMP+'/restarting.json',{guarded:true});
     stopped=command('/etc/init.d/alwayroute stop') && !running();fs.unlink(TMP+'/restarting.json');
    }
-   if(stopped && forwarding('stop'))return {restored:false,stopped:true,guarded:false};
+   if(stopped && forwarding('stop')){clearCoreRuntime();return {restored:false,stopped:true,guarded:false};}
   }catch(e){}
  }
  return {restored:false,guarded:forwarding('guard'),errorCode:recoveryCode ?? 'RECOVERY_UNCONFIRMED'};
@@ -340,6 +381,7 @@ function execute(method,args) {
   if(args.action=='stop') {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
    if(!command('/etc/init.d/alwayroute stop') || running())fail('CORE_STOP_FAILED','核心停止失败，启动设置保持不变');
+   clearCoreRuntime();
    if(interrupted)restoreMetadata(interrupted,lastGood(),{enabled:false});
    invalidateTraffic();invalidateStatus();write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state(m)};
   }
@@ -459,7 +501,7 @@ export function boot() {
   restoreMetadata(pending,good,config);
  }
  if(!config.enabled || !good)return false;
- write(TMP+'/runtime.json',generateValidated(good));write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
+ installCoreModel(good);write(TMP+'/state.json',{appliedRevision:null,restoringRevision:good.revision,healthy:'unverified'});
  if(!forwarding('guard'))fail('FORWARDING_GUARD_FAILED','启动时无法建立故障阻断');return true;
 };
 export function due() {
@@ -483,4 +525,11 @@ export function started() {
   }
  }catch(e){forwarding('guard');}
  lock.lock('u');lock.close();
+};
+// Called by the procd command wrapper immediately before every process spawn,
+// including automatic respawns. Only the internal runtime secret changes.
+export function prepareCoreStart() {
+ init();let config=read(TMP+'/runtime.json',null);
+ if(type(config)!='object' || config?.experimental?.clash_api?.external_controller!='127.0.0.1:9090')fail('CORE_CREDENTIAL_FAILED','核心运行配置不可用');
+ installCoreSecret(config);return true;
 };

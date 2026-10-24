@@ -1,5 +1,5 @@
 'use strict';
-import { clone, validate, generateValidated } from 'alwayroute.model';
+import { clone, validate, generateRuntimeValidated } from 'alwayroute.model';
 
 // A selector PUT cannot update DNS rules, routes, members, or node parameters.
 // Compare both the model and generated config, failing closed to a full apply.
@@ -16,7 +16,9 @@ export function selectionPlan(previous, next, runtime, validated) {
   delete g.selected;delete after.groups[i].selected;
  }
  if(!length(changes) || sprintf('%J',before)!=sprintf('%J',after))return null;
- let original=generateValidated(previous),candidate=generateValidated(next);
+ let secret=runtime?.experimental?.clash_api?.secret;
+ if(type(secret)!='string' || !match(secret,/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/))return null;
+ let original=generateRuntimeValidated(previous,secret),candidate=generateRuntimeValidated(next,secret);
  if(sprintf('%J',runtime)!=sprintf('%J',original))return null;
  let comparable=clone(candidate);
  for(let o in original.outbounds)if(o.type=='selector')delete o.default;

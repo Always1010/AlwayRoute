@@ -9,7 +9,7 @@ package = root / 'firmware/openwrt/alwayroute-manager/files/usr/share'
 ucode = sys.argv[1] if len(sys.argv) == 2 else 'ucode'
 result = subprocess.run(
     [ucode, '-L', str(package / 'ucode'), '-e',
-     "import { call } from 'alwayroute.store'; "
+     "import { call, prepareCoreStart } from 'alwayroute.store'; "
      "import { sampleTraffic } from 'alwayroute.traffic'; "
      "import { sampleStatus } from 'alwayroute.status'; "
      "import { selectionPlan } from 'alwayroute.selection'; "

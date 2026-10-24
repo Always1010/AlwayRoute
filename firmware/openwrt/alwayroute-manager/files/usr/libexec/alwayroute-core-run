@@ -1,0 +1,5 @@
+#!/bin/sh
+umask 077
+/usr/libexec/alwayroute-core-prepare || exit 1
+/usr/bin/sing-box check -c /tmp/alwayroute/runtime.json >/dev/null 2>&1 || exit 1
+exec /usr/bin/sing-box run -c /tmp/alwayroute/runtime.json
