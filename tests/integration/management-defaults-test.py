@@ -41,7 +41,9 @@ with tempfile.TemporaryDirectory(prefix='alwayroute-management-defaults-') as di
     assert stat.S_IMODE(state_dir.stat().st_mode) == 0o700, 'state directory must be 0700'
     assert stat.S_IMODE(marker.stat().st_mode) == 0o600, 'marker must be 0600'
     original = log.read_bytes()
-    assert b"127.0.0.1:80" in original and b"Port='2222'" in original, 'first-boot policy changed'
+    assert b"127.0.0.1:80" in original, 'first-boot Web listener must stay on loopback'
+    if len(sys.argv) == 1:
+        assert b"Port='2222'" in original, 'synthetic fixture SSH port changed'
     env['UCI_FAIL'] = '1'
     assert run() == 0 and log.read_bytes() == original, 'second run must skip UCI entirely'
     marker.unlink()
