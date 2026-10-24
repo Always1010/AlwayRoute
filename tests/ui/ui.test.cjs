@@ -184,6 +184,35 @@ test('failed configure preserves previous model and failed runtime confirmation 
   assert.equal(view.uncertain, false); assert.equal(view.draft.groups[0].selected, 'n2');
 });
 
+test('failed runtime mutations refresh confirmed state and block writes when status stays unknown', async () => {
+  for (const failedMethod of ['configure', 'service', 'import', 'refresh', 'rollback', 'apply']) {
+    const calls = [];
+    const { view } = harness(async method => {
+      calls.push(method);
+      if (method === failedMethod) { const error = new Error('事务失败'); error.code = 'JOB_FAILED'; throw error; }
+      if (method === 'status') return { snapshot: { status: 'current' }, state: { savedRevision: 2, appliedRevision: null, lastError: '已进入故障阻断' },
+        service: { status: 'current', running: false }, core: { status: 'current', available: false, groups: {} } };
+      throw new Error('unexpected method ' + method);
+    });
+    view.runtime = { service: { running: true } };
+    await assert.rejects(view.mutate(failedMethod, []), /事务失败/);
+    assert.deepEqual(calls, [failedMethod, 'status']);
+    assert.equal(view.serviceRunning(), false); assert.equal(view.state.savedRevision, 2);
+    assert.equal(view.state.lastError, '已进入故障阻断'); assert.equal(!!view.uncertain, false);
+  }
+
+  const { view } = harness(async method => {
+    if (method === 'refresh') { const error = new Error('更新失败'); error.code = 'FETCH_FAILED'; throw error; }
+    return { snapshot: { status: 'unknown' }, state: { savedRevision: 0, appliedRevision: null },
+      service: { status: 'unknown', running: null }, core: { status: 'unknown', available: null, groups: {} } };
+  });
+  view.readRuntimeStatus = async () => ({ snapshot: { status: 'unknown' }, state: { savedRevision: 0, appliedRevision: null },
+    service: { status: 'unknown', running: null }, core: { status: 'unknown', available: null, groups: {} } });
+  await assert.rejects(view.mutate('refresh', []), /更新失败/);
+  assert.equal(view.uncertain, true);
+  await assert.rejects(view.mutate('configure', []), /重新检查/);
+});
+
 test('service toggle waits for actual response and uses one action button', async () => {
   let finish, running = true;
   const { view } = harness(async method => {

@@ -141,8 +141,12 @@ return view.extend({
 			return result;
 		}).catch(async function(error) {
 			if (error.code === 'OPERATION_TIMEOUT' || error.code === 'STATE_UNCONFIRMED') self.uncertain = true;
-			else if (method === 'configure' || method === 'service') {
-				try { self.runtime = await self.request('status'); self.updateState(self.runtime.state || self.state); }
+			else if (['configure', 'service', 'import', 'refresh', 'rollback', 'apply'].indexOf(method) >= 0) {
+				try {
+					self.runtime = await self.readRuntimeStatus(true);
+					self.updateState(self.runtime.state || self.state);
+					if (self.runtimeSnapshotPending(self.runtime, true)) self.uncertain = true;
+				}
 				catch (_error) { self.runtime = null; self.uncertain = true; }
 			}
 			self.error(error);
