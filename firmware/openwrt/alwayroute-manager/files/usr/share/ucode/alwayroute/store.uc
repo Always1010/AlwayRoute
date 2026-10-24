@@ -525,6 +525,12 @@ export function call(method,args,inline) {
  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有配置事务进行中，请稍后重试'}};}
  let response;
  try {
+  if(method=='external_apply') {
+   let observation=args?.peer ?? {};
+   if(type(observation)!='object' || length(sprintf('%J',observation))>2048)fail('INPUT_LIMIT','对端观察须为不超过2KiB的对象');
+   args={expectedRevision:args?.expectedRevision,peer:observation};
+  }else if(index(['external_disable','external_reconcile'],method)>=0)args={};
+  else if(method=='external_save' && (type(args?.config)!='object' || length(sprintf('%J',args.config))>8192))fail('INPUT_LIMIT','外部配置须为不超过8KiB的对象');
   let long=index(['refresh','apply','rollback','check','service','configure','external_apply','external_disable','external_reconcile'],method)>=0 || (method=='import' && args?.activate===true);
   let pending=read(TMP+'/job.json',null);
   if(!inline && pending?.status=='running' && index(['capabilities','get','status','traffic','logs','export'],method)<0)fail('BUSY','后台事务尚未完成');

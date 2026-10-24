@@ -469,4 +469,7 @@ let externalSpawnError=null;try{prepareCoreStart();}catch(e){externalSpawnError=
 check(externalSpawnError!=null && index(externalSpawnError,'ALWAYROUTE:EXTERNAL_BACKEND:')==0,'procd respawn wrapper refuses legacy core credential preparation');
 let externalSave=call('external_save',{expectedRevision:0,config:emptyExternal()},true);
 check(externalSave.ok && externalSave.config.revision==1 && !externalSave.state.desiredEnabled,'authenticated external save works independently of damaged legacy nodes');
+let previousRequest=files['/tmp/alwayroute/job.request.json'];
+let oversizedPeer=call('external_apply',{expectedRevision:1,peer:{generation:sprintf('%04096d',1)}});
+check(!oversizedPeer.ok && oversizedPeer.error.code=='INPUT_LIMIT' && files['/tmp/alwayroute/job.request.json']==previousRequest,'oversized external observations are rejected before background queue storage');
 printf('PASS %d manager transaction checks\n',checks);
