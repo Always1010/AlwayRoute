@@ -2,6 +2,18 @@
 'require baseclass';
 
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
+function normalizeSubscriptionUrl(value, allowHttp) {
+	var address = String(value == null ? '' : value).trim();
+	var authority = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^\/?#]+)/.exec(address), parsed;
+	if (!authority || /\s/.test(address)) throw new Error('订阅地址必须是包含主机名的 HTTP 或 HTTPS URL');
+	var scheme = authority[1].toLowerCase();
+	if (scheme !== 'https' && scheme !== 'http') throw new Error('订阅地址只支持 HTTPS；HTTP 须对此订阅显式允许');
+	if (scheme === 'http' && allowHttp !== true) throw new Error('默认要求 HTTPS；HTTP 须显式勾选此订阅的未加密 HTTP 许可');
+	try { parsed = new URL(address); }
+	catch (_error) { throw new Error('订阅地址必须是包含主机名的 HTTP 或 HTTPS URL'); }
+	if (!parsed.hostname || parsed.protocol.toLowerCase() !== scheme + ':') throw new Error('订阅地址必须是包含主机名的 HTTP 或 HTTPS URL');
+	return scheme + address.slice(authority[1].length);
+}
 function effectiveNode(model, node) {
 	var result = clone(node), override = (model.overrides || {})[node.id] || {};
 	if (override.name != null) result.name = override.name;
@@ -25,7 +37,7 @@ function label(model, id) {
 	return node ? effectiveNode(model, node).name : id || '未知';
 }
 return baseclass.extend({
-	clone: clone, effectiveNode: effectiveNode, references: references, label: label,
+	clone: clone, normalizeSubscriptionUrl: normalizeSubscriptionUrl, effectiveNode: effectiveNode, references: references, label: label,
 	id: function(prefix) { return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9); },
 	removeNode: function(model, id) {
 		var refs = references(model, id);

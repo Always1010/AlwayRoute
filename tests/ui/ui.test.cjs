@@ -437,6 +437,24 @@ test('HTTP subscription permission defaults off and is scoped to the explicitly 
   assert.equal(view.draft.subscriptions[1].allowHttp, false);
 });
 
+test('subscription URLs require an explicit host and normalize only the scheme', () => {
+  const { view } = harness(async () => ({}));
+  let fields, commit;
+  view.modal = (_title, f, c) => { fields = f; commit = c; };
+  const input = label => fieldInput(fields, label);
+  view.editSubscription(); input('名称').value = '严格地址';
+  for (const invalid of ['https:///missing-host', 'https://#fragment']) {
+    input('订阅地址（敏感）').value = invalid;
+    assert.throws(() => commit(view.draft), /包含主机名/);
+    assert.equal(view.draft.subscriptions.length, 0);
+  }
+  input('订阅地址（敏感）').value = 'HTTPS://user:pass@Example.Test/sub?sig=A%2Fb';
+  commit(view.draft);
+  assert.equal(view.draft.subscriptions[0].url, 'https://user:pass@Example.Test/sub?sig=A%2Fb');
+  assert.equal(model.normalizeSubscriptionUrl('http://example.test/sub', true), 'http://example.test/sub');
+  assert.throws(() => model.normalizeSubscriptionUrl('http://example.test/sub', false), /显式勾选/);
+});
+
 test('editing a subscription preserves explicit HTTP permission and allows revoking it after moving to HTTPS', () => {
   const { view } = harness(async () => ({}));
   const original = { id: 'http_source', name: 'HTTP', url: 'http://example.invalid/redacted', enabled: true, intervalHours: 0, allowHttp: true };

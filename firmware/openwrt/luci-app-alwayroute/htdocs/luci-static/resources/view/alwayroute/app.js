@@ -740,8 +740,8 @@ return view.extend({
 		this.modal(original ? '编辑订阅' : '添加订阅', [this.field('名称', name), this.field('订阅地址（敏感）', url), this.field('启用订阅', enabled),
 			this.field('更新间隔（小时）', interval, '0 表示仅手动更新；范围为 1–168 小时。'),
 			E('details', { 'class': 'ar-details' }, [E('summary', {}, ['更多选项']), this.field('允许此订阅使用未加密HTTP', allowHttp, '仅对此来源生效，HTTP 不加密传输。')])], function(next) {
-			var address = url.value.trim(), https = /^https:\/\/[^\s]+$/i.test(address), http = /^http:\/\/[^\s]+$/i.test(address);
-			if (!name.value.trim() || !(https || (http && allowHttp.checked))) throw new Error('名称必填；默认要求 HTTPS，现有 HTTP 来源须显式勾选此订阅的未加密 HTTP 许可');
+			if (!name.value.trim()) throw new Error('名称必填');
+			var address = model.normalizeSubscriptionUrl(url.value, allowHttp.checked);
 			if (!/^\d+$/.test(interval.value) || Number(interval.value) > 168) throw new Error('更新间隔须为 0–168 的整数');
 			var item = Object.assign({}, s, { id: s.id || model.id('s'), name: name.value.trim(), url: address, enabled: enabled.checked, intervalHours: Number(interval.value), allowHttp: allowHttp.checked });
 			if (original) next.subscriptions[next.subscriptions.findIndex(function(item) { return item.id === original.id; })] = item;
