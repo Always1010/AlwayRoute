@@ -94,16 +94,16 @@ function model() {
  verifiedModelBytes=raw;verifiedModel=clone(current);
  return current;
 }
-function lastGood() {
- let pending=read(DATA+'/applying.json',null);
- if(!pending)return normalized(read(DATA+'/lastgood.json',null));
- return pendingGood(pending);
-}
 function pendingGood(pending) {
  // Old deployed markers stored their transaction snapshot in previous.json.
  // New markers own that snapshot, leaving previous.json as rollback history.
  let good=pending.previousRevision==null?null:normalized(pending.previousGood ?? read(DATA+'/previous.json',null));
  return good?.revision==pending.previousRevision?good:null;
+}
+function lastGood() {
+ let pending=read(DATA+'/applying.json',null);
+ if(!pending)return normalized(read(DATA+'/lastgood.json',null));
+ return pendingGood(pending);
 }
 function recoveryCopy() {
  let good=null;
