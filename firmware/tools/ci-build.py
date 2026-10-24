@@ -153,7 +153,7 @@ def build(task, version):
     core = task / 'artifacts/sing-box-mipsle'
     run([sys.executable, FIRMWARE / 'tools/build-core.py', '--env', environment,
          '--device', device['id'], '--crypto-inline', '--pgo', FIRMWARE / spec['pgo']['path'],
-         '--experimental-crypto', spec['crypto_backend'], '--output', core], ROOT, logs, 'router-core')
+         '--output', core], ROOT, logs, 'router-core')
     inputs = tree / 'alwayroute-input'
     inputs.mkdir()
     shutil.copyfile(core, inputs / 'sing-box')
@@ -180,7 +180,7 @@ def build(task, version):
     image = tree / device['image']['path']
     run([sys.executable, FIRMWARE / 'tools/inspect-image.py', '--env', environment,
          '--device', device['id'], '--profile', 'release', '--release-manifest', task / 'release-inputs.json',
-         '--experimental-crypto', spec['crypto_backend'], '--output', inspection, image], ROOT, logs, 'image-inspection')
+         '--output', inspection, image], ROOT, logs, 'image-inspection')
     report = json.loads(inspection.read_text())
     if not report['checks'] or not all(report['checks'].values()):
         raise ValueError('Image inspection did not pass')

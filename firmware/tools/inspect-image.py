@@ -265,8 +265,8 @@ def main(argv=None):
     if args.profile == 'manager' and args.baseline_image is None:
         parser.error('--profile manager requires --baseline-image')
     if args.profile == 'release' and (args.release_manifest is None or args.management_defaults is not None
-                                     or args.experimental_crypto != 'mipsle-asm-r2'):
-        parser.error('release requires --release-manifest, mipsle-asm-r2 and standard OpenWrt management defaults')
+                                     or args.experimental_crypto is not None):
+        parser.error('release requires --release-manifest, standard Go crypto and standard OpenWrt management defaults')
     if args.experimental_crypto and args.profile not in ('manager', 'release'):
         parser.error('--experimental-crypto requires --profile manager or release')
     image = args.image.resolve()

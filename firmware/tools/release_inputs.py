@@ -17,7 +17,7 @@ def sha256(path):
 def load_release():
     spec = json.loads(RELEASE.read_text(encoding='utf-8'))
     if (spec.get('schema_version') != 1 or spec.get('device') != 'xiaomi-4a-gigabit'
-            or spec.get('crypto_backend') != 'mipsle-asm-r2'
+            or spec.get('crypto_backend') != 'standard-go'
             or spec.get('compiler_profile') != 'crypto-inline'
             or spec.get('go', {}).get('version') != '1.27.3'):
         raise ValueError('Unsupported release recipe')
@@ -35,7 +35,7 @@ def input_identity(device):
         raise ValueError('Release only supports the reviewed 4A recipe')
     paths = ['release.json', 'sources.lock.json', 'devices/' + device['id'] + '.json',
              *device['seed_files'], *device['patches'], *CI_HOST_PATCHES, spec['pgo']['path'],
-             'openwrt/patches/003-xcrypto-mipsle-assembly-experimental.patch']
+             'openwrt/patches/011-sing-box-tproxy-close-failed-socket.patch']
     return {**{name: sha256(FIRMWARE / name) for name in paths},
             '../config/routing/sources.lock.json': sha256(FIRMWARE.parent / 'config/routing/sources.lock.json')}
 
@@ -60,4 +60,6 @@ def validate_release_core(info, inputs, manifest, context, device, check):
     flags = ['all=-l'] + [p + '=' for p in builder.HOT_PACKAGES]
     check('release_compiler_profile', info.get('gcflags') == flags
           and [x for x in command if x.startswith('-gcflags=')] == ['-gcflags=' + x for x in flags])
-    check('release_crypto_backend', info.get('crypto_candidate', {}).get('backend') == spec['crypto_backend'])
+    check('release_required_resource_fixes', isinstance(info.get('resource_fixes'), dict))
+    check('release_crypto_backend', info.get('crypto_candidate') is None
+          and not any(str(flag).startswith(('-modfile', '-asmflags')) for flag in command))

@@ -55,6 +55,7 @@ class CiBuildTests(unittest.TestCase):
                                 command, 1 if name == failure else 0)):
                             real_run(command, cwd, logdir, name, **kwargs)
                     elif name == 'router-core':
+                        self.assertNotIn('--experimental-crypto', command)
                         core = task / 'artifacts/sing-box-mipsle'
                         core.write_bytes(b'isolated core')
                         core.with_suffix('.build-info.json').write_text('{}')
@@ -64,6 +65,7 @@ class CiBuildTests(unittest.TestCase):
                         for filename in ('domestic-domain.srs', 'domestic-ip.srs', 'manifest.json', 'LICENSE'):
                             (routing / filename).write_text('isolated rule')
                     elif name == 'image-inspection':
+                        self.assertNotIn('--experimental-crypto', command)
                         (task / 'image-inspection.json').write_text(json.dumps({'checks': {'isolated': True}}))
 
                 with patch.object(ci, 'prepare', return_value=(task / 'environment.json', tree, logs,

@@ -29,7 +29,7 @@ ZIP内部校验列表覆盖解压内容；ZIP和单独BIN的校验值显示在Re
 
 1. 检出触发提交，校验 [sources.lock.json](../firmware/sources.lock.json) 中的上游源码树和固定 feeds；只使用该配方需要的 packages／LuCI 两个 feed。
 2. 根据 [release.json](../firmware/release.json) 下载校验固定 Go 1.27.3，准备受 `go.sum` 校验的模块。主机 CLI 与 MIPSLE 路由器核心分别构建，完整上游 CLI／注册表／功能标签保留。
-3. 4A核心显式使用 `crypto-inline`、[公开PGO](../firmware/pgo/README.md)和 `mipsle-asm-r2`；实际核心编译关闭网络，缺少输入直接失败，不自动退回其他优化配置。
+3. 4A核心显式使用 `crypto-inline`、[公开PGO](../firmware/pgo/README.md)和标准 Go 密码实现（`standard-go`），同时包含必需的资源正确性补丁；公开发布不自动开启 `--experimental-crypto`，发布来源检查拒绝实验候选与密码汇编参数。手工实验仍可通过核心构建器的显式选项执行，并按 manager profile 单独检查。实际核心编译关闭网络，缺少输入直接失败。
 4. 用主机 CLI 编译锁定来源的国内规则，集成四个自有包、组合4A seed及容量补丁，构建 OpenWrt。发布镜像不安装个人 `files/` overlay、公钥或实验首启策略，沿用标准 OpenWrt 初始化。
 5. OpenWrt 构建生成 host ucode 后，必过真实 manager 模块导入、模型／订阅／事务／下载／selection／traffic、watchdog 和 forwarding 隔离测试；任一失败都中止发布打包。CI 专用 host 补丁给锁定的 libmd 增加 HostBuild，并启用 ucode host digest，使用当前任务的 hostpkg，保留目标端构建配置。
 6. 发布检查核对设备、容量、CRC、核心来源／优化参数、正式规则、自有文件和权限；检查本次输入清单，不依赖私人历史基线镜像。通过运行时测试和镜像检查后才生成下载包和校验列表。
