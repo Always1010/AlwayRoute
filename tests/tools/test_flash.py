@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -111,6 +112,68 @@ class FlashTests(unittest.TestCase):
                 backup.assert_not_called()
                 self.assertFalse((root/'private').exists())
 
+    def test_windows_acl_command_uses_current_sid_then_verifies(self):
+        sid = 'S-1-5-21-100-200-300-400'
+        for directory, suffix in ((False, ':F'), (True, ':(OI)(CI)F')):
+            with self.subTest(directory=directory), \
+                 patch.object(flash.subprocess, 'run', side_effect=[
+                     subprocess.CompletedProcess([], 0, ('"host\\user","%s"' % sid).encode()),
+                     subprocess.CompletedProcess([], 0, b'')]) as run, \
+                 patch.object(flash, '_verify_windows_acl') as verify:
+                path = Path('private-item')
+                flash._apply_windows_acl(path, directory)
+                self.assertEqual(run.call_args_list[1].args[0], [
+                    'icacls', str(path), '/inheritance:r', '/grant:r', '*' + sid + suffix])
+                verify.assert_called_once_with(path, sid, directory)
+
+    def test_private_file_permission_failure_writes_no_secret_bytes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'secret.bin'
+            with patch.object(flash, 'private_permissions',
+                              side_effect=ValueError('permission verification failed')):
+                with self.assertRaisesRegex(ValueError, 'permission verification failed'):
+                    flash.private_file(path, b'secret-device-backup')
+            self.assertEqual(path.read_bytes(), b'')
+
+    def test_backup_permission_failure_precedes_remote_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / 'private'
+            with patch.object(flash, 'private_permissions',
+                              side_effect=ValueError('permission verification failed')), \
+                 patch.object(flash, 'remote') as remote:
+                with self.assertRaisesRegex(ValueError, 'permission verification failed'):
+                    flash.backup([], {'mode': 'openwrt'}, target)
+                remote.assert_not_called()
+
+    def test_private_directory_rejects_reparse_parent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            unsafe = Path(temp) / 'junction'
+            unsafe.mkdir()
+            target = unsafe / 'private'
+            with patch.object(flash, '_is_reparse_point',
+                              side_effect=lambda path: path == unsafe):
+                with self.assertRaisesRegex(ValueError, 'links or reparse points'):
+                    flash.private_directory(target)
+            self.assertFalse(target.exists())
+
+    def test_python311_file_attributes_detect_reparse_points(self):
+        class ReparsePath:
+            def lstat(self):
+                return type('Metadata', (), {'st_file_attributes': 0x400})()
+
+            def is_symlink(self):
+                return False
+
+        self.assertTrue(flash._is_reparse_point(ReparsePath()))
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows DACL integration check')
+    def test_windows_private_acl_round_trip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = flash.private_directory(Path(temp) / 'private')
+            path = directory / 'secret.bin'
+            flash.private_file(path, b'secret')
+            self.assertEqual(path.read_bytes(), b'secret')
+
     def apply_case(self, mode='openwrt', fail_test=False, changed=False):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); img=self.bundle(root/'release')
@@ -126,6 +189,7 @@ class FlashTests(unittest.TestCase):
                 return b''
             def backup(ssh,state,directory):directory.mkdir()
             with patch.object(flash,'remote',side_effect=remote), patch.object(flash,'backup',side_effect=backup), \
+                 patch.object(flash, '_apply_windows_acl'), \
                  patch.object(flash.subprocess,'run',return_value=subprocess.CompletedProcess([],255,b'Rebooting')) as write:
                 with contextlib.redirect_stdout(io.StringIO()):
                     if fail_test or changed:

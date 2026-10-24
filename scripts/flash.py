@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
 import struct
 import subprocess
 import sys
@@ -155,14 +156,148 @@ def remote(ssh, command, data=None, timeout=60):
     return result.stdout
 
 
+def _is_reparse_point(path):
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    attributes = getattr(metadata, 'st_file_attributes', 0)
+    is_junction = getattr(path, 'is_junction', lambda: False)()
+    return path.is_symlink() or is_junction or bool(
+        attributes & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400))
+
+
+def _reject_reparse_chain(path):
+    path = Path(path).absolute()
+    for candidate in (path, *path.parents):
+        if _is_reparse_point(candidate):
+            raise ValueError('Private backup paths must not contain links or reparse points')
+
+
+def _verify_windows_acl(path, sid, directory):
+    """Read the DACL through Win32 and require one protected full-control ACE."""
+    import ctypes
+    from ctypes import wintypes
+
+    class AclSizeInformation(ctypes.Structure):
+        _fields_ = [('ace_count', wintypes.DWORD),
+                    ('acl_bytes_in_use', wintypes.DWORD),
+                    ('acl_bytes_free', wintypes.DWORD)]
+
+    advapi32 = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.GetSecurityDescriptorControl.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)]
+    advapi32.GetSecurityDescriptorControl.restype = wintypes.BOOL
+    advapi32.GetAclInformation.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD]
+    advapi32.GetAclInformation.restype = wintypes.BOOL
+    advapi32.GetAce.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+    advapi32.GetAce.restype = wintypes.BOOL
+    advapi32.ConvertSidToStringSidW.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    dacl = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    result = advapi32.GetNamedSecurityInfoW(
+        str(path), 1, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor))
+    if result:
+        raise OSError(result, 'GetNamedSecurityInfoW failed')
+    try:
+        control = wintypes.WORD()
+        revision = wintypes.DWORD()
+        if not advapi32.GetSecurityDescriptorControl(
+                descriptor, ctypes.byref(control), ctypes.byref(revision)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if not dacl.value or not control.value & 0x1000:  # SE_DACL_PROTECTED
+            raise ValueError('backup DACL still permits inheritance')
+        details = AclSizeInformation()
+        if not advapi32.GetAclInformation(
+                dacl, ctypes.byref(details), ctypes.sizeof(details), 2):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if details.ace_count != 1:
+            raise ValueError('backup DACL has unexpected access entries')
+        ace = ctypes.c_void_p()
+        if not advapi32.GetAce(dacl, 0, ctypes.byref(ace)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        header = (ctypes.c_ubyte * 4).from_address(ace.value)
+        mask = ctypes.c_uint32.from_address(ace.value + 4).value
+        flags = header[1]
+        if (header[0] != 0 or flags & 0x10 or mask & 0x1f01ff != 0x1f01ff
+                or (directory and flags & 0x03 != 0x03)
+                or (not directory and flags & 0x03)):
+            raise ValueError('backup DACL is not private full control')
+        actual_sid = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(
+                ctypes.c_void_p(ace.value + 8), ctypes.byref(actual_sid)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if actual_sid.value != sid:
+                raise ValueError('backup DACL grants an unexpected identity')
+        finally:
+            kernel32.LocalFree(ctypes.cast(actual_sid, ctypes.c_void_p))
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def _apply_windows_acl(path, directory):
+    try:
+        identity = subprocess.run(
+            ['whoami', '/user', '/fo', 'csv', '/nh'], capture_output=True,
+            timeout=10, check=True).stdout
+        match = re.search(rb'S-1-\d+(?:-\d+)+', identity)
+        if not match:
+            raise ValueError('current Windows SID is unavailable')
+        sid = match.group().decode('ascii')
+        grant = '*' + sid + (':(OI)(CI)F' if directory else ':F')
+        subprocess.run(
+            ['icacls', str(path), '/inheritance:r', '/grant:r', grant],
+            capture_output=True, timeout=15, check=True)
+        _verify_windows_acl(path, sid, directory)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        raise ValueError('Cannot enforce and verify private local backup permissions') from None
+
+
+def private_permissions(path, directory):
+    _reject_reparse_chain(path)
+    metadata = path.lstat()
+    if directory and not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError('Private backup destination is not a directory')
+    if not directory and not stat.S_ISREG(metadata.st_mode):
+        raise ValueError('Private backup destination is not a regular file')
+    os.chmod(path, 0o700 if directory else 0o600)
+    if os.name == 'nt':
+        _apply_windows_acl(path, directory)
+    elif stat.S_IMODE(path.lstat().st_mode) != (0o700 if directory else 0o600):
+        raise ValueError('Cannot enforce and verify private local backup permissions')
+    _reject_reparse_chain(path)
+
+
+def private_directory(path):
+    path = Path(path).absolute()
+    _reject_reparse_chain(path)
+    path.mkdir(mode=0o700, parents=True, exist_ok=False)
+    private_permissions(path, directory=True)
+    return path
+
+
 def private_file(path, data):
+    _reject_reparse_chain(path.parent)
     with path.open('xb') as out:
-        os.chmod(path, 0o600)
+        private_permissions(path, directory=False)
         out.write(data)
 
 
 def backup(ssh, state, directory):
-    directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+    directory = private_directory(directory)
     records = {}
     if state['mode'] == 'stock':
         # Reads only. ALL is an external backup, never a flash destination.
@@ -208,8 +343,8 @@ def execute(args):
         return 0
     if args.backup_dir is None:
         raise ValueError('--apply requires a fresh --backup-dir outside the downloaded release folder')
-    directory = args.backup_dir.resolve()
-    if directory.is_relative_to(args.image.resolve().parent):
+    directory = args.backup_dir.absolute()
+    if directory.resolve(strict=False).is_relative_to(args.image.resolve().parent):
         raise ValueError('Keep private backups outside the release folder')
     backup(ssh, state, directory)
     target = '/tmp/alwayroute-flash-' + secrets.token_hex(8) + '.bin'

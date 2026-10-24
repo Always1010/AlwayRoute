@@ -20,6 +20,8 @@ python flash.py --mode stock --host root@192.168.31.1 --port 22 --image alwayrou
 
 预检通过后，在同一条命令末尾加 `--apply --backup-dir ../private-backups/4a-first-flash`。备份目录必须不存在且位于发布文件目录之外。脚本先把完整 Flash 和分区备份保存到电脑并校验，再上传固件到内存目录、校验传输，最后只向 `OS1` 提交一次写入并重启。不会写 Bootloader、Factory 或 ALL；首刷不会继承原厂网络、密码和 Wi-Fi 配置。
 
+脚本会在读取设备备份前建立私有目录，并在写入每个敏感文件前限制和核验权限。Windows 会移除继承的 DACL、只授予当前用户 SID 完全控制并回读确认；文件系统不支持该权限、权限核验失败，或目标路径含符号链接、目录联接等重解析点时，脚本会在写入敏感字节前终止。请把备份放在支持 Windows ACL 的本地文件系统中。
+
 ## 已装 OpenWrt 后升级
 
 使用当前管理地址、SSH 端口和对应新固件运行预检：
