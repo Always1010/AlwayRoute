@@ -131,11 +131,15 @@ def runtime_release_gate(tree, logs, host_core=None):
             ('manager-init', ['tests/manager/init-service-test.py']),
             ('manager-watchdog', ['tests/manager/test-timeout.py', FIRMWARE / 'openwrt/alwayroute-manager/files/usr/libexec/alwayroute-timeout']),
             ('forwarding-tests', ['tests/integration/forwarding-test.py']),
+            ('external-forwarding-tests', ['tests/integration/external-forwarding-test.py']),
             ('downloader-security', ['tests/firmware/run_uclient_security_tests.py', '--openwrt-tree', tree,
                                      '--core', host_core, '--ucode', ucode])):
         if name == 'downloader-security' and host_core is None:
             raise ValueError('Release authentication checks require the built native core')
-        run([sys.executable, *arguments], ROOT, logs, name, timeout=120)
+        options = {'timeout': 120}
+        if name == 'external-forwarding-tests':
+            options['env'] = {**os.environ, 'ALWAYROUTE_TEST_UCODE': str(ucode)}
+        run([sys.executable, *arguments], ROOT, logs, name, **options)
 
 
 def build(task, version):

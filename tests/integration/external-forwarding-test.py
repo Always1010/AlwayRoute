@@ -96,7 +96,10 @@ sys.exit(rc)
 '''
 
 
-@unittest.skipUnless(shutil.which("sh") and shutil.which("ucode"), "existing sh and ucode/fs required")
+UCODE = os.environ.get("ALWAYROUTE_TEST_UCODE") or shutil.which("ucode")
+
+
+@unittest.skipUnless(shutil.which("sh") and UCODE, "existing sh and ucode/fs required")
 class ExternalForwardingTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="alwayroute-external-")
@@ -115,7 +118,9 @@ class ExternalForwardingTest(unittest.TestCase):
             command.chmod(0o755)
         self.script = self.root / "adapter.sh"
         self.script.write_text(ADAPTER.read_text(encoding="utf-8").replace("/tmp/alwayroute", self.private.as_posix()), encoding="utf-8")
-        self.env = {**os.environ, "PATH": str(self.bin)+os.pathsep+os.environ["PATH"],
+        if not os.access(UCODE, os.X_OK):
+            raise RuntimeError("Configured existing host ucode is not executable")
+        self.env = {**os.environ, "PATH": str(self.bin)+os.pathsep+str(Path(UCODE).parent)+os.pathsep+os.environ["PATH"],
                     "AR_EXTERNAL_STATE": str(self.state)}
 
     def tearDown(self):

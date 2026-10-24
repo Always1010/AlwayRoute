@@ -31,6 +31,7 @@ class CiBuildTests(unittest.TestCase):
                         'manager-init': 'tests/manager/init-service-test.py',
                         'manager-watchdog': 'tests/manager/test-timeout.py',
                         'forwarding-tests': 'tests/integration/forwarding-test.py',
+                        'external-forwarding-tests': 'tests/integration/external-forwarding-test.py',
                         'downloader-security': 'tests/firmware/run_uclient_security_tests.py'}
         real_run = ci.run
         for failure in (None, *gate_scripts):
@@ -53,6 +54,8 @@ class CiBuildTests(unittest.TestCase):
                         self.assertEqual(str(command[1]), gate_scripts[name])
                         if name in ('manager-imports', 'manager-tests'):
                             self.assertEqual(command[2], ucode)
+                        if name == 'external-forwarding-tests':
+                            self.assertEqual(kwargs['env']['ALWAYROUTE_TEST_UCODE'], str(ucode))
                         if name == 'downloader-security':
                             self.assertEqual(command[command.index('--core') + 1], task / 'artifacts/sing-box-host')
                             self.assertEqual(command[command.index('--ucode') + 1], ucode)
