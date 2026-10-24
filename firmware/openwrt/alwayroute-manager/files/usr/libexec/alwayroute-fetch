@@ -6,8 +6,17 @@ import * as fs from 'fs';
 function quote(s){return "'"+replace(s,"'","'\\''")+"'";}
 let request=json(fs.readfile('/tmp/alwayroute/fetch.json'));
 if(type(request.url)!='string')exit(1);
-let allowed=index(request.url,'https://')==0 || (request.allowHttp===true && index(request.url,'http://')==0);
-if(!allowed)exit(1);
+request.url=trim(request.url);let prefix=match(request.url,/^[A-Za-z][A-Za-z0-9+.-]*:/);
+if(prefix)request.url=lc(prefix[0])+substr(request.url,length(prefix[0]));
+if(!length(request.url) || length(request.url)>2048 || match(request.url,/[ "'<>\\]/))exit(1);
+for(let c in split(request.url,''))if(ord(c)<32 || ord(c)==127)exit(1);
+let parts=match(request.url,/^(https?):\/\/([^\/?#]+)([\/?#].*)?$/);
+if(!parts || (parts[1]=='http' && request.allowHttp!==true))exit(1);
+// Match the model's authority check, rejecting missing hosts before starting
+// uclient-fetch; preserve userinfo and signed query bytes exactly as supplied.
+let authority=split(parts[2],'@'),host=pop(authority);
+let endpoint=substr(host,0,1)=='['?match(host,/^\[[0-9A-Fa-f:.]+\](:([0-9]*))?$/):match(host,/^[^:@\[\]]+(:([0-9]*))?$/);
+if(!endpoint || (length(endpoint[2] ?? '') && int(endpoint[2])>65535))exit(1);
 // This opt-in parser bound is supplied by the pinned uclient package patch.
 // An older downloader rejects the option and the update fails closed.
 let protocol=request.allowHttp===true?'':'--https-only ';

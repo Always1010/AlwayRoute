@@ -16,6 +16,22 @@ function text(value, max) {
 };
 function id(value) { return type(value) == 'string' && match(value, /^[A-Za-z0-9_-]{1,64}$/) != null; }
 function integer(value, min, max) { return type(value) == 'int' && value >= min && value <= max; }
+function canonicalSubscriptionUrl(value) {
+ if(type(value)!='string')return value;
+ value=trim(value);let prefix=match(value,/^[A-Za-z][A-Za-z0-9+.-]*:/);
+ return prefix?lc(prefix[0])+substr(value,length(prefix[0])):value;
+};
+function validSubscriptionUrl(value,allowHttp) {
+ value=canonicalSubscriptionUrl(value);
+ if(!text(value,2048) || match(value,/[ "'<>\\]/))return false;
+ let parts=match(value,/^(https?):\/\/([^\/?#]+)([\/?#].*)?$/);
+ if(!parts || (parts[1]=='http' && allowHttp!==true))return false;
+ // URL parsers may repair https:///host. Require the authority in the input,
+ // then check the host after any userinfo without rewriting signed URL bytes.
+ let authority=split(parts[2],'@'),host=pop(authority);
+ let endpoint=substr(host,0,1)=='['?match(host,/^\[[0-9A-Fa-f:.]+\](:([0-9]*))?$/):match(host,/^[^:@\[\]]+(:([0-9]*))?$/);
+ return endpoint!=null && (!length(endpoint[2] ?? '') || int(endpoint[2])<=65535);
+};
 const POLICY_VERSION = 2;
 const LIMITS = {nodes:128,rules:512,subscriptions:16,groups:16,inputBytes:131072,ruleValues:128};
 const POLICIES = loadPolicies();
@@ -64,6 +80,7 @@ function legacyFallback(m) {
 };
 export function normalize(m) {
  let n=clone(m);
+ if(type(n)=='object' && type(n.subscriptions)=='array')for(let s in n.subscriptions)if(type(s)=='object')s.url=canonicalSubscriptionUrl(s.url);
  if(type(n)!='object' || n.policyVersion==POLICY_VERSION)return n;
  if(n.policyVersion==1 && type(n.groups)=='array' && type(n.rules)=='array')return migratePolicies(n);
  if(n.policyVersion!=null)return n;
@@ -133,8 +150,7 @@ export function validate(m) {
   require(id(s.id) && !sourceIds[s.id] && length(s.id)<=20 && text(s.name,128),'订阅标识无效或重复'); sourceIds[s.id]=true;
   require(type(s.enabled)=='bool' && integer(s.intervalHours,0,168),'订阅开关或周期无效');
   require(s.allowHttp==null || type(s.allowHttp)=='bool','HTTP 例外必须为布尔开关');
-  let schemeAllowed=type(s.url)=='string' && (index(s.url,'https://')==0 || (s.allowHttp===true && index(s.url,'http://')==0));
-  require(text(s.url,2048) && schemeAllowed && !match(s.url,/[ "'<>\\]/),'订阅需要 HTTPS；HTTP 须对此订阅显式允许');
+  require(validSubscriptionUrl(s.url,s.allowHttp),'订阅需要有效的 HTTPS 地址；HTTP 须对此订阅显式允许');
  }
  for (let n in m.nodes) { node(n); require(!ids[n.id],'节点ID重复'); ids[n.id]=true; require(n.source == null || sourceIds[n.source], '节点引用未知订阅'); }
  for (let key,o in m.overrides) {

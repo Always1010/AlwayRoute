@@ -26,6 +26,11 @@ insecure.subscriptions[0].allowHttp=false;rejected(()=>validate(insecure),'HTTP 
 insecure.subscriptions[0].allowHttp=true;check(validate(insecure).subscriptions[0].allowHttp,'explicit HTTP exception accepted');
 insecure.subscriptions[0].allowHttp='true';rejected(()=>validate(insecure),'HTTP exception requires boolean true');
 insecure.subscriptions[0].url='https://example.invalid/sub';insecure.subscriptions[0].allowHttp=false;check(validate(insecure).schema==1,'HTTPS remains valid with exception disabled');
+for(let url in ['https:///missing-host','https://#fragment','https://?query','https://user@:443/sub','https://:443/sub']){insecure.subscriptions[0].url=url;rejected(()=>validate(insecure),'subscription URL requires a nonempty authority and host: '+url);}
+insecure.subscriptions[0].url=' HTTPS://user:pass@example.test/sub?token=%2fA+z#keep ';
+let canonical=normalize(insecure);check(validate(insecure).schema==1 && canonical.subscriptions[0].url=='https://user:pass@example.test/sub?token=%2fA+z#keep','uppercase HTTPS and surrounding whitespace normalize only scheme without rewriting URL credentials or signed query');
+insecure.subscriptions[0].url=' HTTP://example.test/sub ';rejected(()=>validate(insecure),'uppercase HTTP still requires an explicit exception');
+insecure.subscriptions[0].allowHttp=true;check(validate(normalize(insecure)).subscriptions[0].url=='http://example.test/sub','explicit HTTP exception accepts a normalized uppercase scheme');
 m.groups[0].selected=nodes[0].id;validate(m);
 let config=generate(m);check(config.outbounds[1].server_port==443,'typed VMess config');
 check(config.dns.cache_capacity==1024,'DNS budget matches the pinned core minimum of 1024 entries');
