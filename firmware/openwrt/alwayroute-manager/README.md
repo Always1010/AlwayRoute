@@ -32,12 +32,12 @@ URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通
 
 - `current.json`：最新确认配置及revision；旧save/select接口也可保存待应用草稿。
 - `lastgood.json`：最近通过核心加载与转发适配器确认的模型；出口健康仍为unverified。
-- `previous.json`：上一份应用模型，供保存草稿相同于lastgood时回退。
-- `applying.json`：提交标志及原启停设置；configure/rollback还保存原current，未清除时读取与启动恢复旧配置，避免半提交配置。
+- `previous.json`：上一份内容不同的成功应用模型；重复启动、无内容变化的应用和失败尝试不覆盖回退历史。
+- `applying.json`：提交标志及原启停设置；`previousGood`保存事务前lastgood，`previousHistory`保存原历史文件字节，configure/rollback还保存原current。未清除时读取与启动恢复旧配置及历史，兼容旧标志从previous.json恢复的格式。
 - `service.json`：用户启停选择；停止后重启不会自动恢复代理。
 - `subscription-status.json`：最多16个当前来源的更新时间、成功状态及脱敏错误码。
 
-每份模型最多128KiB，三份持久副本最多384KiB；configure提交标志还暂存一份原current，原子写候选另增加最多128KiB。
+每份模型最多128KiB，三份持久副本最多384KiB；事务标志还可暂存原current、lastgood及带JSON转义的历史原文，标志本身最坏接近512KiB。加上原子写候选，持久峰值可接近1MiB，另有元数据和文件系统开销；逻辑上限不保证任意Flash余量下都能提交。持久恢复写失败时先保留故障阻断，不能静默回到直连。
 `/tmp/alwayroute/`放置生成运行配置、核心API认证头、订阅正文、作业进度、实时检查和最多20条脱敏事件，
 不将流量历史写闪存。目录强制0700，文件0600。每次核心进程实际启动（包括procd重启）前都从内核随机源生成新secret，
 同时写入`runtime.json`和`core-api.headers`；随机源或私密写入失败时删除两者并拒绝启动。
@@ -63,7 +63,7 @@ import此时同样排入后台worker。省略activate继续保留原仅保存语
 核心重启前先建立故障阻断，init停止阶段按重启标志维持阻断，待核心确认后激活代理。
 恢复失败保持阻断，不自动撤销转发变成直连；仅显式停止或Direct模式恢复基础联网。
 显式停止若无法撤销自有转发规则，返回FORWARDING_STOP_FAILED并保留核心和启动设置。
-重启从lastgood或未完成事务的previous重建；短期post-start确认器核实进程和selector后才启动转发。
+重启从lastgood或未完成事务的快照重建，在修复持久元数据之前先建立故障阻断。一次性post-start确认器对管理锁进行有界重试，核实进程和selector后才启动转发；没有待恢复代次时直接退出。当前配置损坏时，显式停止仍可执行，恢复可直接使用有效历史副本。
 coreAPI只监听127.0.0.1:9090，CORS只允许`http://127.0.0.1`，混合代理只监听127.0.0.1:7890。
 所有管理、节点检测、流量及状态核心请求都通过uclient固定顺序的
 `--header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers`发送Bearer认证；
@@ -93,7 +93,7 @@ Clash YAML中的顶层proxies块。完整Clash其余监听、secret、proxy-grou
 YAML用逐字符token及缩进解析，未使用正则抽取字段。
 锚点、标签、嵌套flow map/数组、多行字符串、未知节点字段、其他协议、跳过证书验证和udp:false均拒绝。
 不宣称支持任意Clash YAML。示例仅使用example.invalid及全合成UUID。
-节点连接身份(type/server/port/uuid)SHA256生成稳定ID；改名不变ID；
+新节点按规范化完整连接参数生成SHA256稳定ID，包含端点、凭证、加密、TLS和传输设置，改名不变ID。刷新时完整连接相同的存量节点沿用原ID与sourceKey，保留既有覆盖及引用；同端点但WS路径、Host或TLS设置不同的节点可以共存。
 覆盖与排除独立保存，更新消失选中或被引用节点时拒绝整个更新，原数据保留。
 
 验证命令（使用已有ucode，不安装依赖）：
