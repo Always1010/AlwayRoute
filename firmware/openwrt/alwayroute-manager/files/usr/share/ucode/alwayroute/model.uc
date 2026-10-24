@@ -185,7 +185,7 @@ export function generateValidated(m) {
   // Validation permits only one group reference: a non-Proxy group may follow Proxy.
   target=selections[target] ?? target;
   if(target=='Proxy')target=selections.Proxy;
-  let d={server:target=='direct'?'bootstrap':'proxy-dns'};
+  let d=target=='block'?{action:'reject'}:{server:target=='direct'?'bootstrap':'proxy-dns'};
   for(let key,value in rule)d[key]=value;
   push(dnsRules,d);
  }
@@ -205,7 +205,7 @@ export function generateValidated(m) {
   let field=r.type=='domain'?'domain':r.type=='suffix'?'domain_suffix':r.type=='regex'?'domain_regex':'ip_cidr';
   let values=ruleValues(r);if(r.type=='ip')values=map(values,value=>value+'/32');
   let rule={};rule[field]=values;
-  if(r.outbound=='block') rule.action='reject'; else {rule.action='route';rule.outbound=r.outbound;}
+  if(r.outbound=='block' || (r.outbound=='Other' && selections.Other=='block')) rule.action='reject'; else {rule.action='route';rule.outbound=r.outbound;}
   push(rules,rule);
   if(r.type=='ip' || r.type=='cidr')push(ipOverrides,rule);
   if(r.type=='domain' || r.type=='suffix' || r.type=='regex') {let d={};d[field]=values;domainDns(d,r.outbound);}
@@ -235,7 +235,7 @@ export function generateValidated(m) {
   }
  }
  let final=m.mode=='direct'?'direct':m.mode=='global'?'Proxy':'Other';
- if(m.mode=='rule')for(let g in m.groups)if(g.id=='Other' && g.selected=='block'){push(rules,{action:'reject'});final='direct';}
+ if(m.mode=='rule' && selections.Other=='block') {push(rules,{action:'reject'});push(dnsRules,{action:'reject'});final='direct';}
  return {log:{disabled:true},inbounds:[{type:'mixed',tag:'local-mixed',listen:'127.0.0.1',listen_port:7890},
  {type:'tproxy',tag:'lan-tproxy',listen:'0.0.0.0',listen_port:7893}],outbounds,
  dns:{servers:[{type:'local',tag:'bootstrap'},{type:'https',tag:'proxy-dns',server:'1.1.1.1',tls:{enabled:true,server_name:'cloudflare-dns.com'},detour:'Proxy'}],rules:dnsRules,final:m.mode=='direct'?'bootstrap':'proxy-dns',reverse_mapping:true,strategy:'ipv4_only',cache_capacity:1024},

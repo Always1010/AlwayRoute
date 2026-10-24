@@ -91,6 +91,14 @@ check(routeIndex(withoutOpenAIRules,'OpenAI')<0 && index(route(withoutOpenAIRule
 let misplaced=clone(m);push(misplaced.groups,shift(misplaced.groups));rejected(()=>validate(misplaced),'Other must remain the final policy group');
 let blocked=clone(m);group(blocked,'Other').selected='block';let blockedConfig=generate(blocked);
 check(blockedConfig.route.final=='direct' && blockedConfig.route.rules[length(blockedConfig.route.rules)-1].action=='reject' && outbound(blockedConfig,'Other').default=='direct' && join(',',outbound(blockedConfig,'Other').outbounds)=='direct,'+nodes[0].id+',Proxy','Other block fallback becomes a terminal reject while retaining all valid selector members');
+blocked.rules=[{id:'other_domain',enabled:true,type:'domain',value:'blocked.invalid',outbound:'Other'},
+ {id:'other_regex',enabled:true,type:'regex',value:'blocked\\.invalid$',outbound:'Other'},
+ {id:'other_ip',enabled:true,type:'cidr',value:'192.0.2.0/24',outbound:'Other'},
+ {id:'explicit_block',enabled:true,type:'suffix',value:'ads.invalid',outbound:'block'}];
+blockedConfig=generate(blocked);
+check(length(filter(blockedConfig.route.rules,r=>r.outbound=='Other'))==0 && blockedConfig.route.rules[2].action=='reject' && blockedConfig.route.rules[3].action=='reject' && blockedConfig.route.rules[4].action=='reject','manual domain regex and IP rules following blocked Other reject before any direct selector');
+check(blockedConfig.dns.rules[0].action=='reject' && blockedConfig.dns.rules[1].action=='reject' && blockedConfig.dns.rules[2].action=='reject' && blockedConfig.dns.rules[length(blockedConfig.dns.rules)-1].action=='reject','explicit blocks and blocked Other reject matching DNS and the unmatched DNS fallback');
+check(blockedConfig.route.rules[length(blockedConfig.route.rules)-3].action=='reject' && blockedConfig.route.rules[length(blockedConfig.route.rules)-3].ip_cidr[0]=='192.0.2.0/24','resolved domains recheck IP rules following blocked Other as reject');
 
 let scale=clone(m);scale.nodes=[];scale.groups=[{id:'Proxy',name:'Proxy',selected:'n127'}];
 for(let i=0;i<128;i++){let n=clone(nodes[0]);n.id='n'+i;n.name='Node '+i;push(scale.nodes,n);}
