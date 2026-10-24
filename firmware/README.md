@@ -21,7 +21,7 @@ GitHub托管Runner按版本tag构建4A发布包的准备、触发和下载流程
 3. `alwayroute-input/`放外部核心、不含凭证的`build-info.json`及上游LICENSE；核对架构、静态链接、来源和SHA。核心包的`PKG_FILE_DEPENDS`跟踪三项外部输入，禁止对该ELF二次strip改变已验身份。
    管理包另需 `alwayroute-input/routing/` 中的两份国内 `.srs`、`manifest.json` 和第三方 `LICENSE`。按 [规则构建说明](../config/routing/README.md) 在构建主机从固定提交生成，审查后复制这四项，不复制源 JSON。管理包追踪这些外部输入；镜像检查同时核对来源锁、清单与二进制哈希，缺失或过期输入不能作为新镜像交付。
 4. 用所选设备组合seed（下节说明），准备对应feed后`make defconfig`，审查完整配置差异。`openwrt/evaluation.config`完整保留原4A配方作为兼容快照；测试保证组合seed与它的有效选项一致。保留固定feeds提交、完整／差异配置、内核配置和包清单。
-5. 按[部署策略](../config/deployment/README.md)显式选择并渲染首启脚本，审阅后放入构建树，同时提供已有SSH公钥；不放主机私钥、订阅或节点。原`openwrt/99-alwayroute-management`仅是当前实验策略兼容快照，不是硬件默认值。首启marker使保留配置升级跳过默认LAN／SSH／Web初始化，旧基础镜像迁移先核对并备份marker。
+5. 按[部署策略](../config/deployment/README.md)显式选择并渲染首启脚本，审阅后放入构建树，同时提供已有SSH公钥；不放主机私钥、订阅或节点。实际首启策略和历史脚本只保存在 `.local/lab/`；公开合成示例不代表某台设备的默认值。首启marker使保留配置升级跳过默认LAN／SSH／Web初始化，旧基础镜像迁移先核对并备份marker。
 6. 在固定上游版本先`git apply --check`核对`001-4a-evaluation-image-limit.patch`，它将本设备IMAGE_SIZE限制为13248KiB，不修改物理分区；原厂OS1为13MiB，与OpenWrt固件区分开核算。
 7. 使用已有工具链和缓存定向构建／重打包，运行镜像检查，绑定源码提交、输入哈希、最终镜像及日志。设备暂存／应用另见[部署](../docs/operations/deployment.md)。
 
