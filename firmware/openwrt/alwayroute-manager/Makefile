@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=11
+PKG_RELEASE:=12
 PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
 ROUTING_INPUT:=$(TOPDIR)/alwayroute-input/routing
@@ -17,6 +17,7 @@ define Package/alwayroute-manager
   CATEGORY:=Network
   TITLE:=AlwayRoute transactional configuration manager
   DEPENDS:=+alwayroute-core +alwayroute-forwarding +rpcd-mod-ucode +ucode +ucode-mod-fs +ucode-mod-digest +uclient-fetch +ca-bundle
+  EXTRA_DEPENDS:=uclient-fetch (>=2026.06.07~daad21fa-r4), libuclient (>=2026.06.07~daad21fa-r4)
 endef
 
 define Package/alwayroute-manager/conffiles
