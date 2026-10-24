@@ -74,6 +74,10 @@ def main():
             patch = inner_patch('020-uclient-header-limits.patch', 'package/libs/uclient/patches/900-header-limits.patch')
             run(['patch', '--batch', '--fuzz=0', '--dry-run', '-p1'], source, data=patch)
             run(['patch', '--batch', '--fuzz=0', '-p1'], source, data=patch)
+        if 'uclient_http_set_https_only' not in (source/'uclient-http.c').read_text():
+            patch = inner_patch('021-uclient-https-only.patch', 'package/libs/uclient/patches/901-https-only.patch')
+            run(['patch', '--batch', '--fuzz=0', '--dry-run', '-p1'], source, data=patch)
+            run(['patch', '--batch', '--fuzz=0', '-p1'], source, data=patch)
         common = ['-Dubox_include_dir='+str(work/'include'), '-Dubox_library='+str(host/'lib/libubox.so')]
         run(['cmake', '-S', work/'ustream', '-B', work/'ssl-build', *common])
         run(['cmake', '--build', work/'ssl-build', '--target', 'ustream-ssl', '-j2'])

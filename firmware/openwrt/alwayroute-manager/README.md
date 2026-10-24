@@ -22,8 +22,8 @@ LuCI 长操作轮询 job_status，不占用 rpcd 执行订阅抓取或核心重�
 订阅请求关闭环境代理继承。未带该选项的系统下载保持原行为；旧下载器拒绝新选项时更新失败，保留旧节点，不回退无界请求。
 每个订阅可由管理员显式设置`allowHttp:true`，仅为该来源允许http://输入；
 缺字段、false或非布尔true均不构成许可。HTTP没有传输加密，不全局放开，也不允许其他scheme。
-固定uclient-fetch源码自动跟随最多10次重定向，没有CLI关闭或限制选项，
-因此不能保证重定向链阻止HTTPS降级；只严格约束初始URL，不添加猜测参数。
+固定uclient配方另提供`--https-only`，默认来源在建立初始连接和跟随每次重定向前强制HTTPS，最多10次跳转；HTTP降级在发送请求前拒绝。
+仅该来源的布尔`allowHttp:true`可关闭HTTPS强制策略；证书验证始终开启。隔离测试使用临时可信证书验证HTTPS正常跳转、错误证书拒绝及降级目标未收到请求。
 固定镜像未编BusyBox timeout，本包使用一次性POSIX shell watchdog约束下载进程，
 完成后清理计时子进程，无需安装timeout或改变BusyBox配置。
 URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通状态；完整配置仅有管理写权限可读。

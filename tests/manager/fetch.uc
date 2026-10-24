@@ -18,11 +18,13 @@ let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
 check(runFixture({url:'https://example.invalid/sub'})==0 && calls==1,'HTTPS accepted without HTTP exception');
 check(index(lastCommand,'--no-check-certificate')<0,'HTTPS retains default certificate validation');
+check(index(lastCommand,'--https-only')>=0,'default subscription policy enforces HTTPS on the complete redirect chain');
 check(index(lastCommand,'--header-limits')>=0 && index(lastCommand,'--no-proxy')>=0,'subscription downloader bounds parser metadata and ignores ambient proxy credentials');
 check(runFixture({url:'http://example.invalid/sub'})==1 && calls==0,'HTTP rejected without flag');
 check(runFixture({url:'http://example.invalid/sub',allowHttp:false})==1 && calls==0,'HTTP rejected with disabled flag');
 check(runFixture({url:'http://example.invalid/sub',allowHttp:'true'})==1 && calls==0,'HTTP string true is not permission');
 check(runFixture({url:'http://example.invalid/sub',allowHttp:true})==0 && calls==1,'explicit boolean HTTP exception accepted');
+check(index(lastCommand,'--https-only')<0,'only the explicitly approved source can use an HTTP redirect');
 check(runFixture({url:'ftp://example.invalid/sub',allowHttp:true})==1 && calls==0,'exception cannot allow arbitrary scheme');
 check(runFixture({url:'https://example.invalid/sub',allowHttp:false})==0 && calls==1,'HTTPS accepted with disabled exception');
 printf('PASS %d downloader permission checks\n',checks);
