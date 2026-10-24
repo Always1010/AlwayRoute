@@ -272,8 +272,8 @@ function recover(good,wasRunning) {
  }
  return {restored:false,guarded:forwarding('guard'),errorCode:recoveryCode ?? 'RECOVERY_UNCONFIRMED'};
 };
-function applyModel(m,commitCurrent,plan) {
- let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?model():null;
+function applyModel(m,commitCurrent,plan,previousCurrent) {
+ let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?(previousCurrent ?? model()):null;
  let pending={previousRevision:good?.revision ?? null,previousService:service,previousRunning:wasRunning};
  if(commitCurrent)pending.previousCurrent=before;
  // The candidate is only in tmp; current and lastgood remain valid across power loss.
@@ -398,7 +398,18 @@ function execute(method,args) {
   restoreMetadata(interrupted,good,service);
   write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified'});
  }
- let m=model();
+ let m,damagedCurrent=null;
+ try {m=model();}catch(e) {
+  // Stopping must not depend on the file being stopped. Recovery can use a
+  // validated lastgood even when current cannot supply a revision or model.
+  if(method=='service' && args.action=='stop')m={revision:null};
+  else if(method=='rollback') {
+   damagedCurrent=lastGood() ?? normalized(read(DATA+'/previous.json',null));
+   if(!damagedCurrent)fail('NO_ROLLBACK','没有可恢复的历史配置');
+   if(type(args.expectedRevision)!='int' || args.expectedRevision<damagedCurrent.revision || args.expectedRevision>2147483645)fail('REVISION_CONFLICT','损坏配置恢复需要不早于可用副本的有效版本号');
+   m=clone(damagedCurrent);m.revision=args.expectedRevision;
+  }else die(e.message);
+ }
  if(method=='service') {
   if(args.action=='stop') {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
@@ -437,10 +448,9 @@ function execute(method,args) {
  if(method=='refresh')return refresh(args,m);
  if(method=='apply')return applyModel(m);
  if(method=='rollback') {
-  let good=lastGood(),previous=normalized(read(DATA+'/previous.json',null));
-  let target=(good && good.revision!=m.revision)?good:previous;
+  let good=lastGood(),target=damagedCurrent ?? ((good && good.revision!=m.revision)?good:normalized(read(DATA+'/previous.json',null)));
   if(!target)fail('NO_ROLLBACK','没有可恢复的历史配置');
-  target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target,true);return result(target);
+  target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target,true,null,damagedCurrent);return result(target);
  }
  fail('UNSUPPORTED','该方法尚未支持');
 };
