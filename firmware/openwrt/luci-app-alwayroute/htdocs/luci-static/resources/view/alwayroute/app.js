@@ -216,7 +216,9 @@ return view.extend({
 			else if (['configure', 'service', 'import', 'refresh', 'rollback', 'apply'].indexOf(method) >= 0) {
 				try {
 					self.runtime = await self.readRuntimeStatus(true);
-					self.updateState(self.runtime.state || self.state);
+					var refreshedState = self.runtime.state || self.state;
+					self.updateState(refreshedState);
+					if (refreshedState.savedRevision != null && refreshedState.savedRevision !== self.revision) self.conflict = true;
 					if (self.runtimeSnapshotPending(self.runtime, true)) self.uncertain = true;
 				}
 				catch (_error) { self.runtime = null; self.uncertain = true; }

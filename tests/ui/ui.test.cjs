@@ -239,7 +239,7 @@ test('failed configure preserves previous model and failed runtime confirmation 
   assert.equal(view.uncertain, false); assert.equal(view.draft.groups[0].selected, 'n2');
 });
 
-test('failed runtime mutations refresh confirmed state and block writes when status stays unknown', async () => {
+test('failed runtime mutations refresh state and block stale or unconfirmed writes', async () => {
   for (const failedMethod of ['configure', 'service', 'import', 'refresh', 'rollback', 'apply']) {
     const calls = [];
     const { view } = harness(async method => {
@@ -254,6 +254,9 @@ test('failed runtime mutations refresh confirmed state and block writes when sta
     assert.deepEqual(calls, [failedMethod, 'status']);
     assert.equal(view.serviceRunning(), false); assert.equal(view.state.savedRevision, 2);
     assert.equal(view.state.lastError, '已进入故障阻断'); assert.equal(!!view.uncertain, false);
+    assert.equal(view.conflict, true);
+    await assert.rejects(view.configureModel(model.clone(view.draft)), /配置已由其他会话更新/);
+    assert.deepEqual(calls, [failedMethod, 'status']);
   }
 
   const { view } = harness(async method => {
