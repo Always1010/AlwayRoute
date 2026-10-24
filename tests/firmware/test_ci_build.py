@@ -28,6 +28,7 @@ class CiBuildTests(unittest.TestCase):
     def test_runtime_gates_run_before_packaging_and_each_failure_blocks_release(self):
         gate_scripts = {'manager-imports': 'tests/manager/check-imports.py',
                         'manager-tests': 'tests/manager/run-tests.py',
+                        'manager-init': 'tests/manager/init-service-test.py',
                         'manager-watchdog': 'tests/manager/test-timeout.py',
                         'forwarding-tests': 'tests/integration/forwarding-test.py',
                         'downloader-security': 'tests/firmware/run_uclient_security_tests.py'}
