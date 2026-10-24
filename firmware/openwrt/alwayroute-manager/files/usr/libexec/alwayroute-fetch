@@ -15,7 +15,9 @@ if(!parts || (parts[1]=='http' && request.allowHttp!==true))exit(1);
 // Match the model's authority check, rejecting missing hosts before starting
 // uclient-fetch; preserve userinfo and signed query bytes exactly as supplied.
 let authority=split(parts[2],'@'),host=pop(authority);
-let endpoint=substr(host,0,1)=='['?match(host,/^\[[0-9A-Fa-f:.]+\](:([0-9]*))?$/):match(host,/^[^:@\[\]]+(:([0-9]*))?$/);
+let bracketed=substr(host,0,1)=='[';
+if(!bracketed && (index(host,'[')>=0 || index(host,']')>=0))exit(1);
+let endpoint=bracketed?match(host,/^\[[0-9A-Fa-f:.]+\](:([0-9]*))?$/):match(host,/^[^:@]+(:([0-9]*))?$/);
 if(!endpoint || (length(endpoint[2] ?? '') && int(endpoint[2])>65535))exit(1);
 // This opt-in parser bound is supplied by the pinned uclient package patch.
 // An older downloader rejects the option and the update fails closed.

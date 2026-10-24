@@ -31,4 +31,5 @@ for(let url in ['https:///missing-host','https://#fragment','https://?query','ht
 check(runFixture({url:' HTTPS://user:pass@example.test/sub?token=%2fA+z#keep '})==0 && index(lastCommand,"'https://user:pass@example.test/sub?token=%2fA+z#keep'")>=0 && index(lastCommand,'--https-only')>=0,'downloader normalizes HTTPS scheme while preserving URL bytes and downgrade protection');
 check(runFixture({url:'HTTP://example.test/sub'})==1 && calls==0,'uppercase HTTP cannot bypass explicit permission');
 check(runFixture({url:'HTTP://example.test/sub',allowHttp:true})==0 && index(lastCommand,"'http://example.test/sub'")>=0 && index(lastCommand,'--https-only')<0,'uppercase HTTP works only with explicit boolean permission');
+for(let url in ['https://example.test:8443/sub','https://[::1]/sub','https://[::1]:8443/sub'])check(runFixture({url})==0 && calls==1,'downloader accepts hostname and IPv6 authorities with optional port');
 printf('PASS %d downloader permission checks\n',checks);

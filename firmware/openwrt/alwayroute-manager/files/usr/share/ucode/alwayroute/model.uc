@@ -29,7 +29,9 @@ function validSubscriptionUrl(value,allowHttp) {
  // URL parsers may repair https:///host. Require the authority in the input,
  // then check the host after any userinfo without rewriting signed URL bytes.
  let authority=split(parts[2],'@'),host=pop(authority);
- let endpoint=substr(host,0,1)=='['?match(host,/^\[[0-9A-Fa-f:.]+\](:([0-9]*))?$/):match(host,/^[^:@\[\]]+(:([0-9]*))?$/);
+ let bracketed=substr(host,0,1)=='[';
+ if(!bracketed && (index(host,'[')>=0 || index(host,']')>=0))return false;
+ let endpoint=bracketed?match(host,/^\[[0-9A-Fa-f:.]+\](:([0-9]*))?$/):match(host,/^[^:@]+(:([0-9]*))?$/);
  return endpoint!=null && (!length(endpoint[2] ?? '') || int(endpoint[2])<=65535);
 };
 const POLICY_VERSION = 2;
