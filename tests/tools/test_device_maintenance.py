@@ -56,6 +56,23 @@ def sample_snapshot():
 
 
 class MaintenanceTests(unittest.TestCase):
+    def test_optional_deployment_files_preserve_presence_without_blocking_public_images(self):
+        # Standard OpenWrt may use password authentication and no custom defaults.
+        before = sample_snapshot()
+        device.validate_snapshot(before)
+        blob, _ = make_archive()
+        device.validate_backup(blob)
+        after = copy.deepcopy(before)
+        for name in device.OPTIONAL_CONFIG:
+            after["critical_hashes"][name] = hashlib.sha256(name.encode()).hexdigest()
+        device.validate_snapshot(after)
+        self.assertFalse(device.compare_snapshots(before, after)["match"])
+        self.assertFalse(device.compare_snapshots(after, before)["match"])
+        for hashes in (before["critical_hashes"], after["critical_hashes"]):
+            with mock.patch.object(device, "run_router", return_value=json.dumps(
+                    {"hashes": hashes, "pending": False}).encode()):
+                self.assertEqual(device.critical_hashes({}), (hashes, False))
+
     def test_tar_valid_required_files_and_no_extraction(self):
         blob, content = make_archive()
         with mock.patch.object(tarfile.TarFile, "extractall", side_effect=AssertionError("must never extract")):

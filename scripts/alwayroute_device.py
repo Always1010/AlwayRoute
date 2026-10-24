@@ -24,10 +24,10 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 REQUIRED_CONFIG = (
     "etc/config/network", "etc/config/dhcp", "etc/config/wireless",
     "etc/config/dropbear", "etc/config/uhttpd", "etc/shadow",
-    "etc/dropbear/authorized_keys", "etc/alwayroute/management-initialized",
     "etc/alwayroute/current.json", "etc/alwayroute/lastgood.json",
     "etc/alwayroute/service.json",
 )
+OPTIONAL_CONFIG = ("etc/dropbear/authorized_keys", "etc/alwayroute/management-initialized")
 MAX_ARCHIVE = 16 * 1024 * 1024
 MAX_EXPANDED = 32 * 1024 * 1024
 MAX_MEMBERS = 4096
@@ -110,9 +110,11 @@ def read_hashes(environment: dict, paths: list[str], prefix: str = "/") -> dict:
 
 def critical_hashes(environment: dict) -> tuple[dict, bool]:
     code = ("import * as fs from 'fs';import {sha256} from 'digest';let paths="
-            + json.dumps(list(REQUIRED_CONFIG))
+            + json.dumps(list(REQUIRED_CONFIG + OPTIONAL_CONFIG))
             + ";for(let p in (fs.glob('/etc/dropbear/dropbear_*_host_key')??[]))push(paths,substr(p,1));"
-            "let h={};for(let p in paths){let s=fs.readfile('/'+p);if(s==null)exit(3);h[p]=sha256(s);}"
+            "let optional=" + json.dumps(list(OPTIONAL_CONFIG)) + ";"
+            "let h={};for(let p in paths){let s=fs.readfile('/'+p);"
+            "if(s==null){if(index(optional,p)>=0 && fs.lstat('/'+p)==null)continue;exit(3);}h[p]=sha256(s);}"
             "printf('%J',{hashes:h,pending:fs.stat('/etc/alwayroute/applying.json')!=null});")
     result = object_json(run_router(environment, ["ucode", "-"], data=code.encode(), timeout=90))
     hashes = valid_hashes(result.get("hashes"))
