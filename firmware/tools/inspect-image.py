@@ -397,7 +397,13 @@ def main(argv=None):
         # The service is allowed to autostart only after a user enabled it and a
         # successful revision exists. A fresh image contains neither state file.
         store = readfile('usr/share/ucode/alwayroute/store.uc')
-        check('manager_boot_requires_enabled_lastgood', b"read(DATA+'/service.json',{enabled:false})" in store and b"read(DATA+'/lastgood.json',null)" in store and b'if(!config.enabled || !good)return false;' in store)
+        boot = re.search(rb'export function boot\(\) \{(.*?)\n\};', store, re.S)
+        boot = boot.group(1) if boot else b''
+        check('manager_boot_requires_enabled_lastgood', b"read(DATA+'/service.json',{enabled:false})" in boot
+              and b'good=lastGood()' in boot and b'if(!config.enabled || !good)' in boot and b'return false;' in boot)
+        guard = boot.find(b"forwarding('guard')")
+        recovery = boot.rfind(b'if(pending)restoreMetadata(pending,good,config);')
+        check('manager_boot_guards_before_persistent_recovery', 0 <= guard < recovery)
         init = readfile('etc/init.d/alwayroute')
         check('subscription_downloader_header_option', b'header-limits' in readfile('bin/uclient-fetch'))
         check('subscription_downloader_header_parser', b'uclient_http_set_header_limits' in readfile('usr/lib/libuclient.so'))
