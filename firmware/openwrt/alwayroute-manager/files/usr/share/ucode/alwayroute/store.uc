@@ -105,6 +105,12 @@ function pendingGood(pending) {
  let good=pending.previousRevision==null?null:normalized(pending.previousGood ?? read(DATA+'/previous.json',null));
  return good?.revision==pending.previousRevision?good:null;
 }
+function recoveryCopy() {
+ let good=null;
+ try {good=lastGood();}catch(e){}
+ if(!good)try{good=normalized(read(DATA+'/previous.json',null));}catch(e){}
+ return good;
+}
 function restoreMetadata(pending,good,service) {
  if(pending.previousCurrent)write(DATA+'/current.json',normalized(pending.previousCurrent));
  if(good)write(DATA+'/lastgood.json',good);
@@ -288,7 +294,7 @@ function sameContent(a,b) {
  return sprintf('%J',a)==sprintf('%J',b);
 }
 function applyModel(m,commitCurrent,plan,previousCurrent) {
- let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?(previousCurrent ?? model()):null;
+ let good=previousCurrent ?? lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?(previousCurrent ?? model()):null;
  let pending={previousRevision:good?.revision ?? null,previousGood:good,previousHistory:fs.readfile(DATA+'/previous.json'),previousService:service,previousRunning:wasRunning};
  if(commitCurrent)pending.previousCurrent=before;
  // The candidate is only in tmp; current and lastgood remain valid across power loss.
@@ -419,7 +425,7 @@ function execute(method,args) {
   // validated lastgood even when current cannot supply a revision or model.
   if(method=='service' && args.action=='stop')m={revision:null};
   else if(method=='rollback') {
-   damagedCurrent=lastGood() ?? normalized(read(DATA+'/previous.json',null));
+   damagedCurrent=recoveryCopy();
    if(!damagedCurrent)fail('NO_ROLLBACK','没有可恢复的历史配置');
    if(type(args.expectedRevision)!='int' || args.expectedRevision<damagedCurrent.revision || args.expectedRevision>2147483645)fail('REVISION_CONFLICT','损坏配置恢复需要不早于可用副本的有效版本号');
    m=clone(damagedCurrent);m.revision=args.expectedRevision;
@@ -463,7 +469,7 @@ function execute(method,args) {
  if(method=='refresh')return refresh(args,m);
  if(method=='apply')return applyModel(m);
  if(method=='rollback') {
-  let good=lastGood(),target=damagedCurrent ?? ((good && good.revision!=m.revision)?good:normalized(read(DATA+'/previous.json',null)));
+  let good=damagedCurrent ?? lastGood(),target=damagedCurrent ?? ((good && good.revision!=m.revision)?good:normalized(read(DATA+'/previous.json',null)));
   if(!target)fail('NO_ROLLBACK','没有可恢复的历史配置');
   target=clone(target);target.revision=m.revision+1;validate(target);applyModel(target,true,null,damagedCurrent);return result(target);
  }
@@ -476,7 +482,13 @@ export function call(method,args,inline) {
   try{return cancelCheck(args ?? {});}catch(e){return {ok:false,error:{code:'INVALID_JOB',message:'无法取消：检测任务已结束、已变化或取消标志写入失败'}};}
  }
  if(index(['capabilities','get','status','traffic','logs','export'],method)>=0) {
-  try{return execute(method,args ?? {});}catch(e){return {ok:false,error:{code:'READ_FAILED',message:'读取状态失败，请检查持久配置及核心状态'}};}
+  try{return execute(method,args ?? {});}catch(e){
+   let error={code:'READ_FAILED',message:'读取状态失败，请检查持久配置及核心状态'};
+   // Expose only the validated recovery revision, never a historical model or
+   // the raw parsing error. Other read failures retain their existing contract.
+   if(method=='get' && match(e.message ?? '',/^ALWAYROUTE:(STORAGE_CORRUPT|INVALID_MODEL):/))error.details={recoveryRevision:recoveryCopy()?.revision ?? null,canStop:true};
+   return {ok:false,error};
+  }
  }
  let lock=fs.open(TMP+'/manager.lock','ae',0600);
  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有配置事务进行中，请稍后重试'}};}
