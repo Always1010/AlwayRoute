@@ -475,6 +475,13 @@ function execute(method,args) {
  }
  fail('UNSUPPORTED','该方法尚未支持');
 };
+function failedRead(error,recoverable) {
+ let safe={code:'READ_FAILED',message:'读取状态失败，请检查持久配置及核心状态'};
+ // The caller marks only model() failures as recoverable. Auxiliary state and
+ // subscription diagnostics must never suggest replacing a valid current.
+ if(recoverable && match(error.message ?? '',/^ALWAYROUTE:(STORAGE_CORRUPT|INVALID_MODEL):/))safe.details={recoveryRevision:recoveryCopy()?.revision ?? null,canStop:true};
+ return {ok:false,error:safe};
+}
 export function call(method,args,inline) {
  init();
  if(method=='job_status')return jobStatus();
@@ -482,13 +489,12 @@ export function call(method,args,inline) {
   try{return cancelCheck(args ?? {});}catch(e){return {ok:false,error:{code:'INVALID_JOB',message:'无法取消：检测任务已结束、已变化或取消标志写入失败'}};}
  }
  if(index(['capabilities','get','status','traffic','logs','export'],method)>=0) {
-  try{return execute(method,args ?? {});}catch(e){
-   let error={code:'READ_FAILED',message:'读取状态失败，请检查持久配置及核心状态'};
-   // Expose only the validated recovery revision, never a historical model or
-   // the raw parsing error. Other read failures retain their existing contract.
-   if(method=='get' && match(e.message ?? '',/^ALWAYROUTE:(STORAGE_CORRUPT|INVALID_MODEL):/))error.details={recoveryRevision:recoveryCopy()?.revision ?? null,canStop:true};
-   return {ok:false,error};
+  if(method=='get') {
+   let current;
+   try{current=model();}catch(e){return failedRead(e,true);}
+   try{return result(current);}catch(e){return failedRead(e,false);}
   }
+  try{return execute(method,args ?? {});}catch(e){return failedRead(e,false);}
  }
  let lock=fs.open(TMP+'/manager.lock','ae',0600);
  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有配置事务进行中，请稍后重试'}};}
