@@ -8,7 +8,8 @@
 
 | 报告 | 保留价值与后续关系 |
 | --- | --- |
-| [内存、资源、安全与效率审查修复](2026-10-24-security-resource-fixes.md) | 订阅解析预算／HTTPS、UDP socket回收、Windows备份ACL、构建进程组、异步状态、核心认证及发布门禁；源码与隔离验证完成，未部署 |
+| [资源修复固件构建与升级验证](2026-10-24-firmware-refresh.md) | r12／r6／uclient r4完整刷写，336项检查、45个ROM文件一致，revision48及10组选择保留；页面登录与长期验收边界另列 |
+| [内存、资源、安全与效率审查修复](2026-10-24-security-resource-fixes.md) | 订阅解析预算／HTTPS、UDP socket回收、Windows备份ACL、构建进程组、异步状态、核心认证及发布门禁；该轮源码与隔离验证完成，后续整机部署见上条报告 |
 | [CI host digest独立冷构建](2026-10-24-ci-host-digest-cold-check.md) | 锁定归档冷编libmd／json-c／ucode，真实fs／digest检查；边界为独立ARM64构建，未执行完整GitHub Runner |
 | [配置切换与恢复修复](2026-10-24-selection-recovery.md) | manager r11；选择读回、受管进程就绪及恢复阶段诊断；恢复转发并验证同出口热切换，设备网络配置保持 |
 | [代理时延优化与 TLS 恢复候选](2026-10-23-latency-optimization.md) | r10 嗅探优化已在 revision46 生效；有限公网样本、TLS 恢复测试和 321 项候选镜像检查，核心尚未刷写 |
