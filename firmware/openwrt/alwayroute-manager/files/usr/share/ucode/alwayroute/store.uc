@@ -7,7 +7,7 @@ import { selectionPlan } from 'alwayroute.selection';
 import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
 import { statusSnapshot, invalidateStatus } from 'alwayroute.status';
 
-const DATA='/etc/alwayroute', TMP='/tmp/alwayroute', CORE_HEADER=TMP+'/core-api.headers', CORE_HEADER_PREFIX='Authorization: Bearer ';
+const DATA='/etc/alwayroute', TMP='/tmp/alwayroute', CORE_HEADER=TMP+'/core-api.headers', CORE_LOCK=TMP+'/core.lock', CORE_HEADER_PREFIX='Authorization: Bearer ';
 let verifiedModelBytes=null,verifiedModel=null;
 let verifiedModels=[];
 function privatePath(path,type,mode) {let info=fs.lstat(path);return info?.type==type && info.uid==0 && info.mode==mode;}
@@ -34,25 +34,37 @@ function writePrivate(path,data) {
  if(!fs.rename(path+'.new',path)) {fs.unlink(path+'.new');fail('STORAGE_ERROR','私密运行文件原子保存失败');}
  if(!privatePath(path,'file',0600)) {fs.unlink(path);fail('STORAGE_ERROR','私密运行文件原子保存失败');}
 }
-function clearCoreRuntime() {fs.unlink(CORE_HEADER);fs.unlink(CORE_HEADER+'.new');fs.unlink(TMP+'/runtime.json');fs.unlink(TMP+'/runtime.json.new');}
+function withCoreLock(callback) {
+ let existing=fs.lstat(CORE_LOCK);
+ if(existing && !privatePath(CORE_LOCK,'file',0600))fail('STORAGE_ERROR','核心运行锁不是root私有普通文件');
+ let lock=fs.open(CORE_LOCK,'ae',0600);
+ if(!lock || !existing && (!fs.chmod(CORE_LOCK,0600) || !privatePath(CORE_LOCK,'file',0600)) || !lock.lock('x')) {lock?.close();fail('STORAGE_ERROR','无法取得核心运行配置锁');}
+ let result,error;
+ try {result=callback();}catch(e){error=e;}
+ lock.lock('u');lock.close();if(error)die(error.message);return result;
+}
+function clearCoreRuntimeUnlocked() {fs.unlink(CORE_HEADER);fs.unlink(CORE_HEADER+'.new');fs.unlink(TMP+'/runtime.json');fs.unlink(TMP+'/runtime.json.new');}
+function clearCoreRuntime() {return withCoreLock(clearCoreRuntimeUnlocked);}
 function newCoreSecret() {
  let secret=trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? '');
  if(!match(secret,/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/))fail('CORE_CREDENTIAL_FAILED','内核随机源不可用，拒绝启动核心接口');
  return secret;
 }
-function installCoreSecret(config,secret) {
- clearCoreRuntime();
+function installCoreSecretUnlocked(config,secret) {
+ clearCoreRuntimeUnlocked();
  try {
   secret=secret ?? newCoreSecret();
   config=clone(config);config.experimental.clash_api.secret=secret;
   writePrivate(CORE_HEADER,CORE_HEADER_PREFIX+secret);writePrivate(TMP+'/runtime.json',sprintf('%J',config));
   return config;
- }catch(e){clearCoreRuntime();die(e.message);}
+ }catch(e){clearCoreRuntimeUnlocked();die(e.message);}
 }
 function installCoreModel(m) {
- clearCoreRuntime();
- try {let secret=newCoreSecret();return installCoreSecret(generateRuntimeValidated(m,secret),secret);}
- catch(e){clearCoreRuntime();die(e.message);}
+ return withCoreLock(function() {
+  clearCoreRuntimeUnlocked();
+  try {let secret=newCoreSecret();return installCoreSecretUnlocked(generateRuntimeValidated(m,secret),secret);}
+  catch(e){clearCoreRuntimeUnlocked();die(e.message);}
+ });
 }
 function coreHeaderSecret() {
  let header=fs.readfile(CORE_HEADER,1025);
@@ -126,7 +138,7 @@ function command(cmd) {return system(cmd+' >/dev/null 2>&1')==0;}
 function running() {return command('/usr/libexec/alwayroute-timeout 3 /etc/init.d/alwayroute running');}
 function fetchJson(path, stream, limit) {
  limit=limit ?? 65536;
- let command='/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - '+"'http://127.0.0.1:9090"+path+"' 2>/dev/null";
+ let command='/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - '+"'http://127.0.0.1:9090"+path+"' 2>/dev/null";
  if(stream)command+=' | /bin/busybox head -n 1';
  let p=fs.popen(command,'r');if(!p)return null;
  let s=p.read(limit+1),status=p.close();if(status!=0 || !s || length(s)>limit)return null;
@@ -190,7 +202,7 @@ function putSelection(id,target) {
  // IDs are model-validated, and JSON is passed in a private file, never shell input.
  target=target=='block'?'direct':target;
  write(TMP+'/selection.json',{name:target});
- let status=system('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id+' >/dev/null 2>&1');
+ let status=system('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id+' >/dev/null 2>&1');
  fs.unlink(TMP+'/selection.json');
  if(status!=0) {
   // A lost response does not prove that the PUT was rejected. Only this
@@ -218,7 +230,11 @@ function switchSelections(m,plan) {
  for(let change in plan.changes)putSelection(change.id,change.after);
  // Keep a service respawn on the same confirmed choice; persistent boot recovery
  // remains governed by lastgood and the durable applying marker.
- writePrivate(TMP+'/runtime.json',sprintf('%J',plan.config));
+ withCoreLock(function() {
+  let runtime=read(TMP+'/runtime.json',null),secret=coreHeaderSecret(),planned=plan.config?.experimental?.clash_api?.secret;
+  if(!secret || secret!==planned || runtime?.experimental?.clash_api?.secret!==secret)fail('CORE_SELECT_FAILED','核心凭据在选择提交期间已变化，正在恢复上一份配置');
+  writePrivate(TMP+'/runtime.json',sprintf('%J',plan.config));
+ });
  if(!waitCore(m,null,3))fail('CORE_SELECT_FAILED','核心实际选择未确认，正在恢复上一份配置');
 }
 function restart(m) {
@@ -531,7 +547,9 @@ export function started() {
 // Called by the procd command wrapper immediately before every process spawn,
 // including automatic respawns. Only the internal runtime secret changes.
 export function prepareCoreStart() {
- init();let config=read(TMP+'/runtime.json',null);
- if(type(config)!='object' || config?.experimental?.clash_api?.external_controller!='127.0.0.1:9090')fail('CORE_CREDENTIAL_FAILED','核心运行配置不可用');
- installCoreSecret(config);return true;
+ init();return withCoreLock(function() {
+  let config=read(TMP+'/runtime.json',null);
+  if(type(config)!='object' || config?.experimental?.clash_api?.external_controller!='127.0.0.1:9090')fail('CORE_CREDENTIAL_FAILED','核心运行配置不可用');
+  installCoreSecretUnlocked(config);return true;
+ });
 };

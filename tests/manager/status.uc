@@ -19,7 +19,7 @@ let fs={
   assert(index(command,'alwayroute-timeout 3')>=0,'every status probe has an external deadline');
   let body;
   if(index(command,'ubus call service list')>=0){serviceProbes++;body=sprintf('%J',serviceReply);}
-  else if(index(command,'/proxies')>=0){coreProbes++;assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'core status uses the private API header without following redirects');if(onCoreProbe)onCoreProbe();body=coreReply?'{"proxies":{"Proxy":{"type":"Selector","now":"n1"}}}':'{}';}
+  else if(index(command,'/proxies')>=0){coreProbes++;assert(index(command,'--header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'core status bounds headers, bypasses ambient proxies and uses the private API header without following redirects');if(onCoreProbe)onCoreProbe();body=coreReply?'{"proxies":{"Proxy":{"type":"Selector","now":"n1"}}}':'{}';}
   else {forwardingProbes++;body='{"available":true,"running":true,"scope":"test"}';}
   return {read:()=>body,close:()=>index(command,'ubus call service list')>=0?serviceExit:0};
  }

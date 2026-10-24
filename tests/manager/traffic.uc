@@ -11,7 +11,7 @@ let fs={
   write:function(body){files[path]=body;return length(body);},flush:()=>true,close:function(){if(owns)sampling=false;return true;},
   lock:function(mode){if(mode=='u'){sampling=false;owns=false;return true;}if(sampling)return false;sampling=true;owns=true;return true;}
  };},
- popen:function(command){probes++;assert(index(command,'alwayroute-timeout 3')>=0,'stream has external total deadline');assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'stream uses the private API header without following redirects');return {read:function(){if(onSample)onSample();return '{"up":12,"down":34}\n';},close:()=>0};}
+ popen:function(command){probes++;assert(index(command,'alwayroute-timeout 3')>=0,'stream has external total deadline');assert(index(command,'--header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'stream bounds headers, bypasses ambient proxies and uses the private API header without following redirects');return {read:function(){if(onSample)onSample();return '{"up":12,"down":34}\n';},close:()=>0};}
 };
 // TRAFFIC_SOURCE
 let checks=0;

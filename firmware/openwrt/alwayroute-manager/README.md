@@ -42,7 +42,9 @@ URL会出现在短期root下载进程参数中，不写日志、coreAPI或普通
 不将流量历史写闪存。目录强制0700，文件0600。每次核心进程实际启动（包括procd重启）前都从内核随机源生成新secret，
 同时写入`runtime.json`和`core-api.headers`；随机源或私密写入失败时删除两者并拒绝启动。
 既有临时目录必须是root所有、0700的真实目录，候选及最终文件必须是root所有、0600的普通文件；符号链接、宽权限或其他所有者均拒绝且不尝试改权。
-secret不进入用户模型、RPC、事件或命令行参数。flock非阻塞锁配CLOEXEC，防后台子进程继承锁。
+secret不进入用户模型、RPC、事件或命令行参数。事务flock非阻塞锁配CLOEXEC，防后台子进程继承锁。
+独立的`core.lock`以CLOEXEC打开并短暂阻塞等待，在同一个短临界区内保护运行配置读取、secret轮换、认证头与运行配置成对写入及清理；
+热切换写回前在锁内复核候选、运行配置和认证头仍使用同一secret，进程启动包装器释放锁后才执行核心检查和`exec`。
 读取current时按原始文件字节缓存已通过完整校验的模型，并始终返回独立副本；内容改变立刻重新校验，损坏文件不能回退旧缓存，applying.previousCurrent仍按事务恢复规则处理。
 事务内最多缓存三份字节相同的已验证模型，避免current/lastgood/恢复副本反复校验；候选在revision递增后完整校验一次。内部generateValidated只接收已验证且未再改动的模型，公开generate仍完整校验，避免重复校验有效节点。
 
@@ -63,8 +65,9 @@ import此时同样排入后台worker。省略activate继续保留原仅保存语
 显式停止若无法撤销自有转发规则，返回FORWARDING_STOP_FAILED并保留核心和启动设置。
 重启从lastgood或未完成事务的previous重建；短期post-start确认器核实进程和selector后才启动转发。
 coreAPI只监听127.0.0.1:9090，CORS只允许`http://127.0.0.1`，混合代理只监听127.0.0.1:7890。
-所有管理、节点检测、流量及状态核心请求都通过uclient的`--header-file /tmp/alwayroute/core-api.headers`
-发送Bearer认证，并使用`--no-redirect`禁止把认证头带到重定向目标。固定uclient缺少这些选项、头文件缺失或权限不私密时请求失败；
+所有管理、节点检测、流量及状态核心请求都通过uclient固定顺序的
+`--header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers`发送Bearer认证；
+请求限制响应头、不继承环境代理，并禁止把认证头带到重定向目标。固定uclient缺少这些选项、头文件缺失或权限不私密时请求失败；
 管理端不回退无认证请求，也不以旧核心或缓存快照确认事务成功。热切换只允许运行配置比纯模型生成结果多这一项内部secret，候选继续保留同一secret；
 完整重启由启动包装器再次旋转凭据。实时selector及转发检查仍是事务提交依据。
 流量RPC立即读取/tmp短期样本，独立的一次性采样器读取核心流式接口，不占用rpcd等待采样。

@@ -33,7 +33,7 @@ export function sampleTraffic() {
  try {
   let epoch=readTrafficFile('traffic-epoch.json'),revision=readTrafficFile('state.json')?.appliedRevision;
   if(epoch && revision!=null) {
-   let p=fs.popen('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - http://127.0.0.1:9090/traffic 2>/dev/null | /bin/busybox head -n 1','r'),sample=null;
+   let p=fs.popen('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch --header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - http://127.0.0.1:9090/traffic 2>/dev/null | /bin/busybox head -n 1','r'),sample=null;
    if(p){let body=p.read(4097);p.close();try{if(body && length(body)<=4096)sample=json(trim(body));}catch(e){}}
    if(readTrafficFile('traffic-epoch.json')?.id==epoch.id && readTrafficFile('state.json')?.appliedRevision===revision) {
     let valid=type(sample?.up)=='int' && sample.up>=0 && type(sample?.down)=='int' && sample.down>=0;

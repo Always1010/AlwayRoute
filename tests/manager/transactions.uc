@@ -3,33 +3,34 @@ import { sha256 } from 'digest';
 
 // In-memory adapters exercise the actual store transaction code. No host paths,
 // networking, process execution, or persistent files are accessed by this suite.
-let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,currentReads=0;
+let files={},locked=false,coreLocked=false,coreLockAcquisitions=0,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,onRuntimeRead=null,currentReads=0;
 let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0,onDelay=null;
-let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null,putAcceptedError=false;
-let liveConfig=null,corePid=700,retiringPids={},onRestart=null,onSleep=null,managedRunning=true,activateAlwaysFails=false,apiReadFailures=0,identityReadFailures=0,putReadFailure=false;
+let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null,putAcceptedError=false,onPut=null;
+let liveConfig=null,corePid=700,retiringPids={},onRestart=null,onSleep=null,prepareSpawn=null,managedRunning=true,activateAlwaysFails=false,apiReadFailures=0,identityReadFailures=0,putReadFailure=false;
 let randomCounter=0,randomAvailable=true,apiExit=0,coreCommands=[],modes={},pathTypes={},owners={},spawnSecrets=[],badPrivateMode=false;
 function processStat(pid) {let fields=['S'];for(let i=1;i<20;i++)push(fields,i==19?sprintf('%d',pid):'0');return sprintf('%d (sing-box) %s',pid,join(' ',fields));}
 let fs={
  mkdir:function(path,mode){modes[path]=mode;pathTypes[path]='directory';owners[path]=0;return true;},chmod:function(path,mode){modes[path]=mode;return true;},
  lstat:function(path){return pathTypes[path]?{type:pathTypes[path],uid:owners[path] ?? 0,mode:modes[path]}:null;},
- readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return randomAvailable?sprintf('00000000-0000-4000-8000-%012d',++randomCounter):null;if(path=='/proc/'+corePid+'/stat' && active)return processStat(corePid);for(let pid,stat in retiringPids)if(path=='/proc/'+pid+'/stat')return stat;if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
+ readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return randomAvailable?sprintf('00000000-0000-4000-8000-%012d',++randomCounter):null;if(path=='/proc/'+corePid+'/stat' && active)return processStat(corePid);for(let pid,stat in retiringPids)if(path=='/proc/'+pid+'/stat')return stat;if(path=='/etc/alwayroute/current.json')currentReads++;if(path=='/tmp/alwayroute/runtime.json' && onRuntimeRead)onRuntimeRead();return files[path] ?? null;},
  access:function(path){return path=='/proc/123' || (path=='/usr/libexec/alwayroute-forwarding' && helperAvailable);},
- rename:function(from,to){if(to==failRename){failRename=null;return false;}files[to]=files[from];modes[to]=badPrivateMode && (to=='/tmp/alwayroute/core-api.headers' || to=='/tmp/alwayroute/runtime.json')?0644:modes[from];pathTypes[to]=pathTypes[from];owners[to]=owners[from];delete files[from];delete modes[from];delete pathTypes[from];delete owners[from];return true;},
- unlink:function(path){if(path==failUnlink){failUnlink=null;return false;}delete files[path];delete modes[path];delete pathTypes[path];delete owners[path];return true;},
+ rename:function(from,to){if(to=='/tmp/alwayroute/core-api.headers' || to=='/tmp/alwayroute/runtime.json')assert(coreLocked,'credential pair writes stay under core.lock');if(to==failRename){failRename=null;return false;}files[to]=files[from];modes[to]=badPrivateMode && (to=='/tmp/alwayroute/core-api.headers' || to=='/tmp/alwayroute/runtime.json')?0644:modes[from];pathTypes[to]=pathTypes[from];owners[to]=owners[from];delete files[from];delete modes[from];delete pathTypes[from];delete owners[from];return true;},
+ unlink:function(path){if(index(['/tmp/alwayroute/core-api.headers','/tmp/alwayroute/core-api.headers.new','/tmp/alwayroute/runtime.json','/tmp/alwayroute/runtime.json.new'],path)>=0)assert(coreLocked,'credential pair cleanup stays under core.lock');if(path==failUnlink){failUnlink=null;return false;}delete files[path];delete modes[path];delete pathTypes[path];delete owners[path];return true;},
  open:function(path,mode,perm){
   if(path==failWrite){failWrite=null;return null;}
   if(perm!=null)modes[path]=perm;
-  if(mode?.[0]=='w' || mode?.[0]=='a'){if(files[path]==null)files[path]='';pathTypes[path]='file';owners[path]=0;}
-  let owns=false;
+  let first=substr(mode ?? '',0,1);
+  if(first=='w' || first=='a'){if(files[path]==null)files[path]='';pathTypes[path]='file';owners[path]=0;}
+  let isCore=path=='/tmp/alwayroute/core.lock',owns=false;
   return {
    write:function(value){files[path]=value;return length(value);},flush:()=>true,
-   close:function(){if(owns)locked=false;return true;},
-   lock:function(mode){if(mode=='u'){locked=false;owns=false;return true;}if(locked)return null;locked=true;owns=true;if(onLock){let callback=onLock;onLock=null;callback();}return true;}
+   close:function(){if(owns){if(isCore)coreLocked=false;else locked=false;}return true;},
+   lock:function(mode){if(mode=='u'){if(isCore)coreLocked=false;else locked=false;owns=false;return true;}if(isCore?coreLocked:locked)return null;if(isCore){coreLocked=true;coreLockAcquisitions++;}else{locked=true;if(onLock){let callback=onLock;onLock=null;callback();}}owns=true;return true;}
   };
  },
  popen:function(command){
   let body='{}';
-  if(index(command,'127.0.0.1:9090')>=0){push(coreCommands,command);assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'every core read uses the private header file and disables redirects');let secret=json(files['/tmp/alwayroute/runtime.json'] ?? '{}')?.experimental?.clash_api?.secret;assert(!secret || index(command,secret)<0,'the core secret never enters a process argument');}
+  if(index(command,'127.0.0.1:9090')>=0){push(coreCommands,command);assert(index(command,'--header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'every core read bounds headers, bypasses ambient proxies, uses the private header file and disables redirects');let secret=json(files['/tmp/alwayroute/runtime.json'] ?? '{}')?.experimental?.clash_api?.secret;assert(!secret || index(command,secret)<0,'the core secret never enters a process argument');}
   if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';if(onDelay)body=onDelay(command) ?? body;}
   else if(index(command,'ubus call service list')>=0){body=sprintf('%J',{alwayroute:{instances:{instance1:{running:active && managedRunning,pid:corePid,command:['/usr/bin/sing-box','run']}}}});if(identityReadFailures>0){identityReadFailures--;body='{}';}}
   else if(index(command,'alwayroute-forwarding status')>=0)body=sprintf('%J',{available:true,running:forwardingMode=='active',guarded:forwardingMode=='guarded'});
@@ -39,19 +40,21 @@ let fs={
 };
 function system(command){
  if(index(command,'/bin/sleep 1')>=0 && onSleep)onSleep();
- if(index(command,'--method PUT')>=0){push(coreCommands,command);assert(index(command,'--no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'selector writes use the private header file and disable redirects');let secret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;assert(index(command,secret)<0,'the core secret never enters selector arguments');putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(putReadFailure){putReadFailure=false;apiReadFailures=1;}if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
+ if(index(command,'--method PUT')>=0){push(coreCommands,command);assert(index(command,'--header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers')>=0,'selector writes bound headers, bypass ambient proxies, use the private header file and disable redirects');let secret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;assert(index(command,secret)<0,'the core secret never enters selector arguments');putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(onPut){let callback=onPut;onPut=null;callback();}if(putReadFailure){putReadFailure=false;apiReadFailures=1;}if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
  if(index(command,'alwayroute-forwarding guard')>=0){guardCalls++;forwardingMode='guarded';}
  if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;forwardingMode='stopped';}
  if(index(command,'alwayroute-forwarding activate')>=0){if(activateAlwaysFails)return 1;if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
  if(index(command,'sing-box check')>=0 && allChecksFail)return 1;
  if(index(command,'sing-box check')>=0 && checkFails){checkFails=false;return 1;}
  if(index(command,'alwayroute running')>=0)return active && managedRunning?0:1;
- if(index(command,'alwayroute restart')>=0){restartCalls++;prepareCoreStart();active=true;corePid++;liveChoices={};liveConfig=json(files['/tmp/alwayroute/runtime.json']);push(spawnSecrets,liveConfig.experimental.clash_api.secret);for(let o in liveConfig.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;if(onRestart)onRestart();}
+ if(index(command,'alwayroute restart')>=0){restartCalls++;prepareSpawn();active=true;corePid++;liveChoices={};liveConfig=json(files['/tmp/alwayroute/runtime.json']);push(spawnSecrets,liveConfig.experimental.clash_api.secret);for(let o in liveConfig.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;if(onRestart)onRestart();}
  if(index(command,'alwayroute stop')>=0)active=false;
  return 0;
 }
 
 // MANAGER_SOURCE
+
+prepareSpawn=prepareCoreStart;
 
 let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
@@ -122,11 +125,12 @@ call('check',{subscriptionId:'demo'});work();onDelay=null;let batchJob=call('job
 check(batchJob.status=='succeeded' && batchJob.progress.total==2 && batchJob.progress.completed==2 && batchJob.result.passed==1 && batchJob.result.failed==1 && delayCalls-batchBefore==2,'subscription check skips disabled/excluded nodes and continues after a failed probe');
 check(guardCalls==beforeGuards && stopCalls==beforeStops && active && files['/tmp/alwayroute/runtime.json']==beforeRuntime && files['/etc/alwayroute/current.json']==sprintf('%J',batchModel),'detection leaves forwarding, runtime and persistent configuration untouched');
 batchBefore=delayCalls;
-onDelay=function(){assert(call('save',{}).error.code=='BUSY','configuration excluded during checks');assert(call('cancel_check',{jobId:'stale'}).ok==false,'stale cancellation rejected');assert(call('cancel_check',{jobId:'test-job'}).ok,'cancel bypasses held transaction lock');};
-call('check',{subscriptionId:'demo'});work();onDelay=null;batchJob=call('job_status',{}).job;
+let queuedCheck=call('check',{subscriptionId:'demo'}),cancelJobId=queuedCheck.job.id;
+onDelay=function(){assert(call('save',{}).error.code=='BUSY','configuration excluded during checks');assert(call('cancel_check',{jobId:'stale'}).ok==false,'stale cancellation rejected');assert(call('cancel_check',{jobId:cancelJobId}).ok,'cancel bypasses held transaction lock');};
+work();onDelay=null;batchJob=call('job_status',{}).job;
 check(batchJob.status=='cancelled' && batchJob.result.completed==1 && batchJob.result.cancelled && delayCalls-batchBefore==1 && batchJob.result.checks.n1.delay==9,'cancel stops before next node and retains completed results');
-check(call('cancel_check',{jobId:'test-job'}).ok==false && !files['/tmp/alwayroute/check-cancel-test-job'],'finished jobs reject cancel and marker is cleaned');
-batchBefore=delayCalls;call('check',{nodeId:'n1'});call('cancel_check',{jobId:'test-job'});work();
+check(call('cancel_check',{jobId:cancelJobId}).ok==false && !files['/tmp/alwayroute/check-cancel-'+cancelJobId],'finished jobs reject cancel and marker is cleaned');
+batchBefore=delayCalls;queuedCheck=call('check',{nodeId:'n1'});call('cancel_check',{jobId:queuedCheck.job.id});work();
 check(call('job_status',{}).job.status=='cancelled' && delayCalls==batchBefore,'queued cancellation prevents even the first probe');
 let manual=clone(batchModel.nodes[0]);manual.id='manual';manual.source=null;push(batchModel.nodes,manual);
 files['/etc/alwayroute/current.json']=sprintf('%J',batchModel);
@@ -258,17 +262,18 @@ call('configure',{expectedRevision:12,model:hotNext});work();r=call('get',{});
 check(call('job_status',{}).job.status=='succeeded' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls==beforeRestarts && putCalls==beforePuts+1,'lost PUT acknowledgement commits only after actual choice confirmation without restarting the live core');
 check(sprintf('%J',generate(r.model))==publicRuntime(files['/tmp/alwayroute/runtime.json']) && json(files['/etc/alwayroute/lastgood.json']).revision==13 && !files['/etc/alwayroute/applying.json'],'hot switch commits runtime defaults and persistent recovery metadata together');
 hotBase=clone(r.model);
-for(let failure in ['put','readback','runtime','lastgood','current','marker','partial']) {
+for(let failure in ['put','readback','credential','runtime','lastgood','current','marker','partial']) {
  hotNext=clone(hotBase);hotNext.groups[0].selected='n1';
  if(failure=='put')putFails=true;
  if(failure=='readback')putMismatch=true;
+ if(failure=='credential')onPut=prepareCoreStart;
  if(failure=='runtime')failWrite='/tmp/alwayroute/runtime.json.new';
  if(failure=='lastgood')failWrite='/etc/alwayroute/lastgood.json.new';
  if(failure=='current')failRename='/etc/alwayroute/current.json';
  if(failure=='marker')failUnlink='/etc/alwayroute/applying.json';
  if(failure=='partial'){hotNext.groups[1].selected='n1';putFailAt=putCalls+2;}
  beforeRestarts=restartCalls;
- call('configure',{expectedRevision:13,model:hotNext});work();r=call('get',{});putMismatch=false;putFailAt=null;
+ call('configure',{expectedRevision:13,model:hotNext});work();r=call('get',{});putMismatch=false;putFailAt=null;onPut=null;
  check(call('job_status',{}).job.status=='failed' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls>beforeRestarts && sprintf('%J',generate(hotBase))==publicRuntime(files['/tmp/alwayroute/runtime.json']) && !files['/etc/alwayroute/applying.json'],'hot '+failure+' failure fully restores old core, metadata and revision');
 }
 hotNext=clone(hotBase);hotNext.groups[1].selected='direct';beforeRestarts=restartCalls;
@@ -322,8 +327,13 @@ let delayedNext=clone(call('get',{}).model);delayedNext.groups[0].selected='n1';
 beforeRestarts=restartCalls;putReadFailure=true;
 call('configure',{expectedRevision:delayedNext.revision,model:delayedNext});work();
 check(call('job_status',{}).job.status=='succeeded' && restartCalls==beforeRestarts && liveChoices.Proxy=='n1','successful PUT tolerates a transient final readback failure without restarting the core');
-let previousSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;prepareCoreStart();let respawnSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;
-check(previousSecret!=respawnSecret && files['/tmp/alwayroute/core-api.headers']=='Authorization: Bearer '+respawnSecret,'every process spawn rotates the runtime and header credential together');
+let previousSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret,lockCount=coreLockAcquisitions,contenderBlocked=false;
+onRuntimeRead=function(){
+ assert(coreLocked,'spawn preparation holds core.lock before reading runtime.json');
+ let contender=fs.open('/tmp/alwayroute/core.lock','ae',0600);contenderBlocked=!contender.lock('xn');contender.close();onRuntimeRead=null;
+};
+prepareCoreStart();let respawnSecret=json(files['/tmp/alwayroute/runtime.json']).experimental.clash_api.secret;
+check(contenderBlocked && coreLockAcquisitions==lockCount+1 && previousSecret!=respawnSecret && files['/tmp/alwayroute/core-api.headers']=='Authorization: Bearer '+respawnSecret,'spawn preparation serializes the runtime read and credential pair rewrite under one independent lock');
 let savedRuntime=files['/tmp/alwayroute/runtime.json'];modes['/tmp/alwayroute']=0777;let unsafeDirectory=false;try{prepareCoreStart();}catch(e){unsafeDirectory=index(e.message,'STORAGE_ERROR')>=0;}
 check(unsafeDirectory && modes['/tmp/alwayroute']==0777,'a pre-created non-private runtime directory is rejected without changing its permissions');
 modes['/tmp/alwayroute']=0700;owners['/tmp/alwayroute']=1000;let foreignDirectory=false;try{prepareCoreStart();}catch(e){foreignDirectory=index(e.message,'STORAGE_ERROR')>=0;}
@@ -334,6 +344,11 @@ pathTypes['/tmp/alwayroute']='directory';files['/tmp/alwayroute/runtime.json']=s
 badPrivateMode=true;let unsafeFile=false;try{prepareCoreStart();}catch(e){unsafeFile=index(e.message,'STORAGE_ERROR')>=0;}badPrivateMode=false;
 check(unsafeFile && files['/tmp/alwayroute/runtime.json']==null && files['/tmp/alwayroute/core-api.headers']==null,'a non-private credential or runtime result is removed and rejected');
 files['/tmp/alwayroute/runtime.json']=savedRuntime;modes['/tmp/alwayroute/runtime.json']=0600;pathTypes['/tmp/alwayroute/runtime.json']='file';owners['/tmp/alwayroute/runtime.json']=0;
+lockCount=coreLockAcquisitions;prepareCoreStart();savedRuntime=files['/tmp/alwayroute/runtime.json'];
+check(coreLockAcquisitions==lockCount+1 && files['/tmp/alwayroute/core-api.headers']!=null,'a private-write failure releases core.lock for the next spawn preparation');
 randomAvailable=false;let entropyFailed=false;try{prepareCoreStart();}catch(e){entropyFailed=index(e.message,'CORE_CREDENTIAL_FAILED')>=0;}randomAvailable=true;
 check(entropyFailed && files['/tmp/alwayroute/runtime.json']==null && files['/tmp/alwayroute/core-api.headers']==null,'missing kernel randomness removes old credentials and fails closed');
+files['/tmp/alwayroute/runtime.json']=savedRuntime;modes['/tmp/alwayroute/runtime.json']=0600;pathTypes['/tmp/alwayroute/runtime.json']='file';owners['/tmp/alwayroute/runtime.json']=0;
+lockCount=coreLockAcquisitions;prepareCoreStart();
+check(coreLockAcquisitions==lockCount+1 && files['/tmp/alwayroute/core-api.headers']!=null,'an entropy failure releases core.lock for a later valid spawn');
 printf('PASS %d manager transaction checks\n',checks);

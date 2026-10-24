@@ -52,7 +52,7 @@ function sampleService() {
 function sampleCore(service) {
  if(service.service.status!='current')return unknownCore();
  if(!service.service.running)return {status:'current',available:false,groups:{}};
- let response=boundedJson("/bin/uclient-fetch --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - 'http://127.0.0.1:9090/proxies'",262144)?.value,groups={};
+ let response=boundedJson("/bin/uclient-fetch --header-limits --no-proxy --no-redirect --header-file /tmp/alwayroute/core-api.headers -q -T 2 -O - 'http://127.0.0.1:9090/proxies'",262144)?.value,groups={};
  if(!response?.proxies)return unknownCore();
  for(let tag,proxy in response.proxies)if(proxy?.type=='Selector' && type(proxy.now)=='string')groups[tag]={now:proxy.now};
  return {status:'current',available:true,groups};
