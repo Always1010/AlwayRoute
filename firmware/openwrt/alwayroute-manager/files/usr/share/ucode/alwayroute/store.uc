@@ -28,9 +28,11 @@ function write(path,value) {
 function writePrivate(path,data) {
  if(fs.lstat(path+'.new'))fail('STORAGE_ERROR','私密运行候选路径已存在');
  let f=fs.open(path+'.new','w',0600);
- if(!f || !fs.chmod(path+'.new',0600) || !privatePath(path+'.new','file',0600)) {f?.close();fail('STORAGE_ERROR','无法创建私密运行文件');}
+ if(!f || !fs.chmod(path+'.new',0600) || !privatePath(path+'.new','file',0600)) {f?.close();fs.unlink(path+'.new');fail('STORAGE_ERROR','无法创建私密运行文件');}
  let n=f.write(data),flushed=f.flush(),closed=f.close();
- if(n!=length(data) || !flushed || !closed || !fs.rename(path+'.new',path) || !privatePath(path,'file',0600))fail('STORAGE_ERROR','私密运行文件原子保存失败');
+ if(n!=length(data) || !flushed || !closed) {fs.unlink(path+'.new');fail('STORAGE_ERROR','私密运行文件原子保存失败');}
+ if(!fs.rename(path+'.new',path)) {fs.unlink(path+'.new');fail('STORAGE_ERROR','私密运行文件原子保存失败');}
+ if(!privatePath(path,'file',0600)) {fs.unlink(path);fail('STORAGE_ERROR','私密运行文件原子保存失败');}
 }
 function clearCoreRuntime() {fs.unlink(CORE_HEADER);fs.unlink(CORE_HEADER+'.new');fs.unlink(TMP+'/runtime.json');fs.unlink(TMP+'/runtime.json.new');}
 function newCoreSecret() {
