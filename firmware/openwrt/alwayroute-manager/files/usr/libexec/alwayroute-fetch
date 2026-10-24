@@ -8,7 +8,9 @@ let request=json(fs.readfile('/tmp/alwayroute/fetch.json'));
 if(type(request.url)!='string')exit(1);
 let allowed=index(request.url,'https://')==0 || (request.allowHttp===true && index(request.url,'http://')==0);
 if(!allowed)exit(1);
-let p=fs.popen('/usr/libexec/alwayroute-timeout 20 /bin/uclient-fetch -q -T 15 -O - '+quote(request.url)+' 2>/dev/null','r');
+// This opt-in parser bound is supplied by the pinned uclient package patch.
+// An older downloader rejects the option and the update fails closed.
+let p=fs.popen('/usr/libexec/alwayroute-timeout 20 /bin/uclient-fetch --header-limits --no-proxy -q -T 15 -O - '+quote(request.url)+' 2>/dev/null','r');
 if(!p)exit(1);
 let content=p.read(131073),status=p.close();
 fs.unlink('/tmp/alwayroute/fetch.json');

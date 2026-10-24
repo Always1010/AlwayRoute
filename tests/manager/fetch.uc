@@ -18,6 +18,7 @@ let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
 check(runFixture({url:'https://example.invalid/sub'})==0 && calls==1,'HTTPS accepted without HTTP exception');
 check(index(lastCommand,'--no-check-certificate')<0,'HTTPS retains default certificate validation');
+check(index(lastCommand,'--header-limits')>=0 && index(lastCommand,'--no-proxy')>=0,'subscription downloader bounds parser metadata and ignores ambient proxy credentials');
 check(runFixture({url:'http://example.invalid/sub'})==1 && calls==0,'HTTP rejected without flag');
 check(runFixture({url:'http://example.invalid/sub',allowHttp:false})==1 && calls==0,'HTTP rejected with disabled flag');
 check(runFixture({url:'http://example.invalid/sub',allowHttp:'true'})==1 && calls==0,'HTTP string true is not permission');

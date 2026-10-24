@@ -1,0 +1,172 @@
+--- a/package/libs/uclient/Makefile
++++ b/package/libs/uclient/Makefile
+@@ -1,7 +1,7 @@
+ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=uclient
+-PKG_RELEASE=1
++PKG_RELEASE=2
+ 
+ PKG_SOURCE_PROTO:=git
+ PKG_SOURCE_URL=$(PROJECT_GIT)/project/uclient.git
+--- /dev/null
++++ b/package/libs/uclient/patches/900-header-limits.patch
+@@ -0,0 +1,158 @@
++--- a/uclient.h
+++++ b/uclient.h
++@@ -36,6 +36,7 @@
++ 	UCLIENT_ERROR_SSL_INVALID_CERT,
++ 	UCLIENT_ERROR_SSL_CN_MISMATCH,
++ 	UCLIENT_ERROR_MISSING_SSL_CONTEXT,
+++	UCLIENT_ERROR_RESPONSE_LIMIT,
++ 	__UCLIENT_ERROR_MAX
++ };
++ 
++@@ -128,6 +129,8 @@
++ /* HTTP */
++ extern const struct uclient_backend uclient_backend_http;
++ 
+++int uclient_http_set_header_limits(struct uclient *cl, unsigned int bytes,
+++				   unsigned int lines, unsigned int line_bytes);
++ int uclient_http_reset_headers(struct uclient *cl);
++ int uclient_http_set_header(struct uclient *cl, const char *name, const char *value);
++ int uclient_http_set_request_type(struct uclient *cl, const char *type);
++--- a/uclient-http.c
+++++ b/uclient-http.c
++@@ -121,6 +121,8 @@
++ 
++ 	struct blob_buf headers;
++ 	struct blob_buf meta;
+++	unsigned int max_header_bytes, max_header_lines, max_header_line_bytes;
+++	unsigned int header_bytes, header_lines;
++ };
++ 
++ enum {
++@@ -262,6 +264,8 @@
++ static void uclient_http_init_request(struct uclient_http *uh)
++ {
++ 	uh->seq++;
+++	uh->header_bytes = 0;
+++	uh->header_lines = 0;
++ 	uclient_http_reset_state(uh);
++ 	blob_buf_init(&uh->meta, 0);
++ }
++@@ -818,6 +822,18 @@
++ 	uclient_notify_eof(uh);
++ }
++ 
+++// Check before metadata allocation, including incomplete and folded lines.
+++static bool uclient_http_header_fits(struct uclient_http *uh, unsigned int bytes)
+++{
+++	if ((uh->max_header_bytes && bytes > uh->max_header_bytes - uh->header_bytes) ||
+++	    (uh->max_header_lines && uh->header_lines >= uh->max_header_lines) ||
+++	    (uh->max_header_line_bytes && bytes > uh->max_header_line_bytes)) {
+++		uclient_http_error(uh, UCLIENT_ERROR_RESPONSE_LIMIT);
+++		return false;
+++	}
+++	return true;
+++}
+++
++ static void __uclient_notify_read(struct uclient_http *uh)
++ {
++ 	struct uclient *uc = &uh->uc;
++@@ -841,10 +857,14 @@
++ 
++ 		do {
++ 			sep = strchr(data, '\n');
++-			if (!sep)
+++			if (!sep) {
+++				uclient_http_header_fits(uh, len);
++ 				break;
+++			}
++ 
++ 			next = sep + 1;
+++			if (!uclient_http_header_fits(uh, next - data))
+++				return;
++ 			if (sep > data && sep[-1] == '\r')
++ 				sep--;
++ 
++@@ -863,6 +883,8 @@
++ 
++ 			*sep = 0;
++ 			cur_len = next - data;
+++			uh->header_bytes += cur_len;
+++			uh->header_lines++;
++ 			uclient_parse_http_line(uh, data);
++ 			if (seq != uh->seq)
++ 				return;
++@@ -1118,6 +1140,19 @@
++ 	return -1;
++ }
++ 
+++int uclient_http_set_header_limits(struct uclient *cl, unsigned int bytes,
+++				   unsigned int lines, unsigned int line_bytes)
+++{
+++	struct uclient_http *uh = container_of(cl, struct uclient_http, uc);
+++
+++	if (cl->backend != &uclient_backend_http || uh->state > HTTP_STATE_INIT)
+++		return -EINVAL;
+++	uh->max_header_bytes = bytes;
+++	uh->max_header_lines = lines;
+++	uh->max_header_line_bytes = line_bytes;
+++	return 0;
+++}
+++
++ int
++ uclient_http_reset_headers(struct uclient *cl)
++ {
++--- a/uclient-fetch.c
+++++ b/uclient-fetch.c
++@@ -59,6 +59,7 @@
++ static bool proxy = true;
++ static bool default_certs = false;
++ static bool no_output;
+++static bool bounded_headers;
++ static const char *opt_output_file;
++ static int output_fd = -1;
++ static int error_ret;
++@@ -559,6 +560,7 @@
++ 	fprintf(stderr,
++ 		"Usage: %s [options] <URL>\n"
++ 		"Options:\n"
+++		"\t--header-limits\t\t\tBound response headers to 16KiB / 64 lines / 4KiB per line\n"
++ 		"	-4				Use IPv4 only\n"
++ 		"	-6				Use IPv6 only\n"
++ 		"	-O <file>			Redirect output to file (use \"-\" for stdout)\n"
++@@ -651,6 +653,7 @@
++ 	L_QUIET,
++ 	L_VERBOSE,
++ 	L_HEADER,
+++	L_HEADER_LIMITS,
++ };
++ 
++ static const struct option longopts[] = {
++@@ -673,6 +676,7 @@
++ 	[L_QUIET] = { "quiet", no_argument, NULL, 0 },
++ 	[L_VERBOSE] = { "verbose", no_argument, NULL, 0 },
++ 	[L_HEADER] = { "header", required_argument, NULL, 0 },
+++	[L_HEADER_LIMITS] = { "header-limits", no_argument, NULL, 0 },
++ 	{}
++ };
++ 
++@@ -701,6 +705,9 @@
++ 		switch(ch) {
++ 		case 0:
++ 			switch (longopt_idx) {
+++			case L_HEADER_LIMITS:
+++				bounded_headers = true;
+++				break;
++ 			case L_NO_CHECK_CERTIFICATE:
++ 				verify = false;
++ 				if (ssl_ctx)
++@@ -940,6 +947,10 @@
++ 		error_ret = 1;
++ 		goto out;
++ 	}
+++	if (bounded_headers && uclient_http_set_header_limits(cl, 16384, 64, 4096)) {
+++		error_ret = 1;
+++		goto out;
+++	}
++ 	if (af >= 0)
++ 	    uclient_http_set_address_family(cl, af);
++ 

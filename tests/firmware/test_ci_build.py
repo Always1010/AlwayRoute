@@ -29,7 +29,8 @@ class CiBuildTests(unittest.TestCase):
         gate_scripts = {'manager-imports': 'tests/manager/check-imports.py',
                         'manager-tests': 'tests/manager/run-tests.py',
                         'manager-watchdog': 'tests/manager/test-timeout.py',
-                        'forwarding-tests': 'tests/integration/forwarding-test.py'}
+                        'forwarding-tests': 'tests/integration/forwarding-test.py',
+                        'downloader-security': 'tests/firmware/run_uclient_security_tests.py'}
         real_run = ci.run
         for failure in (None, *gate_scripts):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:

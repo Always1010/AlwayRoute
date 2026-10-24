@@ -129,7 +129,8 @@ def runtime_release_gate(tree, logs):
             ('manager-imports', ['tests/manager/check-imports.py', ucode]),
             ('manager-tests', ['tests/manager/run-tests.py', ucode, '-']),
             ('manager-watchdog', ['tests/manager/test-timeout.py', FIRMWARE / 'openwrt/alwayroute-manager/files/usr/libexec/alwayroute-timeout']),
-            ('forwarding-tests', ['tests/integration/forwarding-test.py'])):
+            ('forwarding-tests', ['tests/integration/forwarding-test.py']),
+            ('downloader-security', ['tests/firmware/run_uclient_security_tests.py', '--openwrt-tree', tree])):
         run([sys.executable, *arguments], ROOT, logs, name, timeout=120)
 
 

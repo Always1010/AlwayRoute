@@ -7,7 +7,7 @@
   "board": "xiaomi,mi-router-4a-gigabit",
   "excluded_boards": ["xiaomi,mi-router-4a-gigabit-v2"],
   "seed_files": ["openwrt/common.config", "devices/xiaomi-4a-gigabit.config"],
-  "patches": ["openwrt/patches/001-4a-evaluation-image-limit.patch"],
+  "patches": ["openwrt/patches/001-4a-evaluation-image-limit.patch", "openwrt/patches/020-uclient-header-limits.patch"],
   "image": {
     "path": "bin/targets/ramips/mt7621/openwrt-ramips-mt7621-xiaomi_mi-router-4a-gigabit-squashfs-sysupgrade.bin",
     "manifest_suffix": "-squashfs-sysupgrade.bin",

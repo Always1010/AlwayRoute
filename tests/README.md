@@ -23,13 +23,14 @@
 | `manager/run.uc` | 通过真实模块导入检查模型与订阅 | 匹配的 ucode 与模块搜索路径 |
 | `tools/test_routing_build.py`、`firmware/test_routing_payload.py` | 固定规则输入的哈希、范围及镜像载荷一致性 | 已有 Python，无网络与设备访问 |
 | `integration/routing-core.py` | 真实核心的域名／DNS、IP 补漏、Other 与手工阻断 | 构建主机已有 ucode／sing-box；仅合成回环服务 |
+| `firmware/run_uclient_security_tests.py` | 用现有OpenWrt源码和host libubox隔离构建下载器，测试响应头总量、数量、长行、折叠、不完整头及正常正文／跳转 | 已有CMake、编译器与OpenSSL开发文件；仅临时目录和回环服务，不安装、不修改构建树 |
 | `manager/test-timeout.py` | shell watchdog 退出码、截止超时和中断清理 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/check-contract.py` | UI／RPC 方法、ACL 和菜单绑定的静态一致性 | 已有 Python，可在电脑运行 |
 | `integration/forwarding-test.py` | 用替身命令检查转发所有权、失败清理等行为 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/management-defaults-test.py` | 临时目录中检查首启 marker、失败重试与权限 | POSIX shell 与 Python，适合 构建主机 |
 | `integration/runtime-api.uc` | 真实 fs／digest、文件锁、私有权限及错误编码兼容性 | 固定 OpenWrt host ucode，适合 构建主机 |
 
-发布 CI 在 OpenWrt 生成 host ucode（含 fs／digest）后，强制执行 `manager/check-imports.py`、`manager/run-tests.py`、`manager/test-timeout.py` 和 `integration/forwarding-test.py`，任一失败不得打包发布。host digest 来自 CI 任务树内的锁定 libmd／ucode 构建，不依赖个人主机或设备。
+发布 CI 在 OpenWrt 生成 host ucode（含 fs／digest）后，强制执行 `manager/check-imports.py`、`manager/run-tests.py`、`manager/test-timeout.py`、`integration/forwarding-test.py` 和 `firmware/run_uclient_security_tests.py`，任一失败不得打包发布。host digest 来自 CI 任务树内的锁定 libmd／ucode 构建，不依赖个人主机或设备。
 
 ## 电脑可运行的检查
 
