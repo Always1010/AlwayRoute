@@ -1,0 +1,304 @@
+#!/bin/sh
+# Own only inet alwayroute_external, table 20232 and priority 10232.
+set -eu
+umask 077
+STATE=/tmp/alwayroute
+RUNTIME=$STATE/external-runtime.json
+OWNER=$STATE/external-forwarding.owner
+SNAPSHOT=$STATE/external-forwarding.installed
+RULES=$STATE/external-forwarding.nft
+PHASE=$STATE/external-forwarding.phase
+TABLE=20232
+PRIORITY=10232
+MARK=0x42000000/0xff000000
+fail() { printf '%s\n' "$1" >&2; exit 1; }
+private_file() { [ ! -L "$1" ] && [ "$(stat -c '%F:%u:%a' "$1" 2>/dev/null)" = 'regular file:0:600' ]; }
+init() {
+    for tool in nft ip ucode stat cmp; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+    [ ! -L "$STATE" ] && [ "$(stat -c '%F:%u:%a' "$STATE" 2>/dev/null)" = 'directory:0:700' ] || fail 'Runtime directory must be root private'
+    for path in "$OWNER" "$SNAPSHOT" "$RULES" "$PHASE"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then private_file "$path" || fail 'Unsafe ownership state'; fi
+    done
+    # A netlink/permission failure cannot be interpreted as an absent table.
+    nft list tables >/dev/null 2>&1 || fail 'Cannot inspect nft tables'
+}
+read_config() {
+    private_file "$RUNTIME" || fail 'Runtime must be a root private regular file'
+    context=$(ucode -e '
+import * as fs from "fs";
+function need(ok) { if(!ok) die("Invalid external forwarding configuration\n"); }
+function fields(o, names) { need(type(o)=="object"); for(let k in o) need(index(names,k)>=0); for(let k in names) need(k in o); }
+function address(v) {
+ if(type(v)!="string" || !match(v,/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/))return false;
+ let a=split(v,"."); for(let n in a)if(int(n)>255 || sprintf("%d",int(n))!=n)return false;
+ return int(a[0])>0 && int(a[0])<224 && int(a[0])!=127;
+}
+function mac(v) { return type(v)=="string" && match(v,/^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$/) && v!="00:00:00:00:00:00"; }
+let raw=fs.readfile("/tmp/alwayroute/external-runtime.json");need(type(raw)=="string" && length(raw)<=8192);let c=json(raw);
+fields(c,["schema","revision","enabled","link","clients","dns","bypass4","faultPolicy","family"]);
+need(c.schema===1 && type(c.revision)=="int" && c.revision>=0 && c.revision<=2147483645 && c.enabled===true && c.family=="ipv4" && c.faultPolicy=="block");
+fields(c.link,["interface","routerAddress","gatewayAddress","gatewayMac"]);
+need(type(c.link.interface)=="string" && length(c.link.interface)<=15 && match(c.link.interface,/^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/));
+need(address(c.link.routerAddress) && address(c.link.gatewayAddress) && c.link.routerAddress!=c.link.gatewayAddress && mac(c.link.gatewayMac));
+need(type(c.clients)=="array" && length(c.clients)==1); fields(c.clients[0],["address","mac"]);
+let client=c.clients[0];need(address(client.address) && mac(client.mac) && client.address!=c.link.routerAddress && client.address!=c.link.gatewayAddress && client.mac!=c.link.gatewayMac);
+fields(c.dns,["listenPort","gatewayPort","localDomains"]);
+for(let p in [c.dns.listenPort,c.dns.gatewayPort])need(type(p)=="int" && p>=1 && p<=65535);
+need(c.dns.listenPort!=53 && type(c.dns.localDomains)=="array" && length(c.dns.localDomains)>=1 && length(c.dns.localDomains)<=16);
+let seen={};
+for(let d in c.dns.localDomains) {
+ need(type(d)=="string" && length(d)<=253 && match(d,/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/) && index(d,"..")<0 && !seen[d]);
+ for(let label in split(d,"."))need(length(label)<=63 && match(label,/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/));seen[d]=true;
+}
+need(type(c.bypass4)=="array" && length(c.bypass4)<=32);seen={};
+for(let cidr in c.bypass4) {
+ need(type(cidr)=="string");let a=split(cidr,"/");need(length(a)==2 && address(a[0]) && match(a[1],/^([1-9]|[12][0-9]|3[0-2])$/) && !seen[cidr]);
+ let number=0;for(let n in split(a[0],"."))number=number*256+int(n);need(number % (2 ** (32-int(a[1])))==0);seen[cidr]=true;
+}
+print(join("|",[c.link.interface,c.link.routerAddress,c.link.gatewayAddress,client.address,client.mac,c.link.gatewayMac,c.dns.listenPort,join(", ",c.bypass4)]));
+') || fail 'Invalid configuration'
+    IFS='|' read -r LAN ROUTER GATEWAY CLIENT CLIENT_MAC GATEWAY_MAC DNS_PORT EXTRA <<EOF
+$context
+EOF
+}
+read_owner() {
+    private_file "$OWNER" || fail 'Missing ownership record'
+    IFS='|' read -r SAVED_LAN SAVED_ROUTER SAVED_GATEWAY SAVED_CLIENT SAVED_CLIENT_MAC SAVED_GATEWAY_MAC SAVED_NETWORK SAVED_DNS_PORT TOKEN <<EOF
+$(cat "$OWNER")
+EOF
+    case "$SAVED_LAN" in ''|*[!A-Za-z0-9_.:-]*) fail 'Invalid ownership record';; esac
+    case "$SAVED_GATEWAY" in ''|*[!0-9.]*) fail 'Invalid ownership record';; esac
+    case "$SAVED_NETWORK" in ''|*[!0-9./]*) fail 'Invalid saved LAN prefix';; esac
+    case "$SAVED_DNS_PORT" in ''|*[!0-9]*) fail 'Invalid saved DNS port';; esac
+    [ "$SAVED_DNS_PORT" -ge 1 ] && [ "$SAVED_DNS_PORT" -le 65535 ] && [ "$SAVED_DNS_PORT" -ne 53 ] || fail 'Invalid saved DNS port'
+    case "$TOKEN" in ''|*[!a-fA-F0-9-]*) fail 'Invalid ownership token';; esac
+    [ "${#TOKEN}" -eq 36 ] || fail 'Invalid ownership token'
+}
+priority_rules() { ip -4 rule show | awk -v key="$PRIORITY:" '$1 == key'; }
+table_routes() { ip -4 route show table "$TABLE" 2>/dev/null || true; }
+owned_rule() { [ "$(priority_rules)" = "$PRIORITY:$(printf '\t')from all fwmark $MARK lookup $TABLE" ] || [ "$(priority_rules)" = "$PRIORITY: from all fwmark $MARK lookup $TABLE" ]; }
+owned_route() { [ "$(table_routes)" = "default via $SAVED_GATEWAY dev $SAVED_LAN onlink" ]; }
+has_table() { nft -s list table inet alwayroute_external >/dev/null 2>&1; }
+verify_table() {
+    private_file "$SNAPSHOT" || fail 'Missing installed nft ownership snapshot'
+    nft -s list table inet alwayroute_external | cmp -s - "$SNAPSHOT" || fail 'External nft table changed; refusing removal'
+    grep -Fq "comment \"alwayroute-external $TOKEN\"" "$SNAPSHOT" || fail 'Invalid installed nft ownership token'
+}
+check_owned() {
+    if [ -f "$OWNER" ]; then
+        read_owner
+        if has_table; then verify_table; fi
+        [ -z "$(priority_rules)" ] || owned_rule || fail 'External routing priority changed'
+        [ -z "$(table_routes)" ] || owned_route || fail 'External routing table changed'
+    else
+        has_table && fail 'Unowned external nft table exists'
+        [ -z "$(priority_rules)" ] || fail 'External routing priority in use'
+        [ -z "$(table_routes)" ] || fail 'External routing table in use'
+    fi
+}
+read_lan_network() {
+    router_cidr=$(ip -4 -o addr show dev "$LAN" | awk -v address="$ROUTER" '$3 == "inet" { split($4,a,"/"); if(a[1]==address) print $4 }')
+    LAN_NETWORK=$(AR_EXTERNAL_LAN_PREFIX="$router_cidr" ucode -e '
+let raw=getenv("AR_EXTERNAL_LAN_PREFIX");
+if(type(raw)!="string" || !match(raw,/^[0-9]{1,3}(\.[0-9]{1,3}){3}\/([1-9]|[12][0-9]|3[0-2])$/))die("Invalid LAN address prefix\n");
+let p=split(raw,"/"), n=0;
+for(let octet in split(p[0],".")){if(int(octet)>255)die("Invalid LAN address\n");n=n*256+int(octet);}
+let size=2 ** (32-int(p[1]));n=int(n/size)*size;
+print(sprintf("%d.%d.%d.%d/%s",int(n/16777216),int(n/65536)%256,int(n/256)%256,n%256,p[1]));
+') || fail 'Router address does not match LAN'
+}
+check_environment() {
+    nft list table inet alwayroute >/dev/null 2>&1 && fail 'Internal forwarding is still present'
+    ruleset=$(nft list ruleset) || fail 'Cannot inspect flow offloading'
+    printf '%s\n' "$ruleset" | grep -q 'flow add' && fail 'Flow offloading must be disabled'
+    ip link show dev "$LAN" >/dev/null || fail 'LAN interface is absent'
+    read_lan_network
+    if [ -f "$OWNER" ]; then [ "$LAN_NETWORK" = "$SAVED_NETWORK" ] || fail 'LAN prefix changed; previous scope remains owned'; fi
+    route=$(ip -4 route get "$GATEWAY") || fail 'Gateway is not on-link'
+    printf '%s\n' "$route" | grep -Eq "^$GATEWAY dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Gateway route does not match LAN'
+    printf '%s\n' "$route" | grep -Eq '(^|[[:space:]])via[[:space:]]' && fail 'Gateway must be directly on-link'
+    route=$(ip -4 route get "$CLIENT") || fail 'Client is not on-link'
+    printf '%s\n' "$route" | grep -Eq "^$CLIENT dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Client route does not match LAN'
+}
+begin_owner() {
+    if [ -f "$OWNER" ]; then
+        [ "$SAVED_LAN|$SAVED_ROUTER|$SAVED_GATEWAY|$SAVED_CLIENT|$SAVED_CLIENT_MAC|$SAVED_GATEWAY_MAC|$SAVED_NETWORK|$SAVED_DNS_PORT" = "$LAN|$ROUTER|$GATEWAY|$CLIENT|$CLIENT_MAC|$GATEWAY_MAC|$LAN_NETWORK|$DNS_PORT" ] || fail 'Disable previous external scope before changing link, client or DNS listener'
+    else
+        TOKEN=$(cat /proc/sys/kernel/random/uuid)
+        printf '%s\n' "$LAN|$ROUTER|$GATEWAY|$CLIENT|$CLIENT_MAC|$GATEWAY_MAC|$LAN_NETWORK|$DNS_PORT|$TOKEN" > "$OWNER"
+        read_owner
+    fi
+}
+render() {
+    phase=$1
+    cat <<EOF
+table inet alwayroute_external {
+    comment "alwayroute-external $TOKEN"
+    set bypass4 {
+        type ipv4_addr
+        flags interval
+        auto-merge
+        elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4${EXTRA:+, $EXTRA} }
+    }
+    chain selected_prerouting {
+        type filter hook prerouting priority -152; policy accept;
+        iifname != "$LAN" return
+        ether saddr $GATEWAY_MAC ip saddr $CLIENT drop
+        ether saddr != $CLIENT_MAC return
+        meta nfproto != ipv4 return
+        ip saddr != $CLIENT return
+EOF
+    if [ "$phase" = active ]; then
+        cat <<EOF
+        meta l4proto { tcp, udp } th dport 53 return
+        ip daddr $LAN_NETWORK fib daddr oifname "$LAN" return
+        ip daddr @bypass4 return
+        fib daddr type local return
+        ip daddr { $ROUTER, $GATEWAY } return
+        meta l4proto { tcp, udp } meta mark set (meta mark & 0x00ffffff) | 0x42000000
+EOF
+    else
+        # Stop the selected public packet before any later interception hook
+        # could redirect it into a local socket and evade the forward guard.
+        cat <<EOF
+        meta l4proto { tcp, udp } th dport 53 drop
+        ip daddr $LAN_NETWORK fib daddr oifname "$LAN" return
+        ip daddr @bypass4 return
+        fib daddr type local return
+        ip daddr { $ROUTER, $GATEWAY } return
+        drop
+EOF
+    fi
+    cat <<EOF
+    }
+    chain selected_input {
+        type filter hook input priority -6; policy accept;
+EOF
+    if [ "$phase" = guarded ]; then
+        printf '        iifname "%s" ether saddr %s meta l4proto { tcp, udp } th dport { 53, %s } reject\n' "$LAN" "$CLIENT_MAC" "$DNS_PORT"
+    else
+        # Existing conntrack DNS entries may predate our DNAT. Never let these
+        # continue querying the base resolver or a former direct destination.
+        printf '        iifname "%s" ether saddr %s meta l4proto { tcp, udp } th dport 53 reject\n' "$LAN" "$CLIENT_MAC"
+    fi
+    cat <<EOF
+        iifname != "lo" meta l4proto { tcp, udp } th dport $DNS_PORT iifname != "$LAN" reject
+        iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ether saddr != $CLIENT_MAC reject
+        iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ip saddr != $CLIENT reject
+    }
+    chain selected_output {
+        type filter hook output priority -6; policy accept;
+        oifname "$LAN" ip daddr $CLIENT icmp type redirect drop
+    }
+    chain selected_forward {
+        type filter hook forward priority -6; policy accept;
+        iifname != "$LAN" return
+        ether saddr $GATEWAY_MAC ip saddr $CLIENT drop
+        ether saddr != $CLIENT_MAC return
+        meta l4proto { tcp, udp } th dport 53 reject
+        meta nfproto ipv6 ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } return
+        meta nfproto ipv6 reject with icmpv6 type admin-prohibited
+        ip saddr != $CLIENT reject
+        ip daddr $LAN_NETWORK fib daddr oifname "$LAN" return
+        ip daddr @bypass4 return
+        ip daddr { $ROUTER, $GATEWAY } return
+EOF
+    if [ "$phase" = active ]; then
+        printf '        meta l4proto { tcp, udp } meta mark & 0xff000000 == 0x42000000 oifname "%s" return\n' "$LAN"
+    fi
+    cat <<EOF
+        reject
+    }
+EOF
+    if [ "$phase" = active ]; then
+        cat <<EOF
+    chain selected_dns {
+        type nat hook prerouting priority -101; policy accept;
+        iifname "$LAN" ether saddr $CLIENT_MAC ip saddr $CLIENT meta l4proto { tcp, udp } th dport 53 dnat ip to $ROUTER:$DNS_PORT
+    }
+EOF
+    fi
+    printf '}\n'
+}
+candidate() {
+    phase=$1
+    { if has_table; then printf 'delete table inet alwayroute_external\n'; fi; render "$phase"; } > "$RULES"
+    nft --check --file "$RULES" || fail 'External nft validation failed'
+}
+install_table() {
+    phase=$1
+    candidate "$phase"
+    nft --file "$RULES" || fail 'External nft apply failed; previous table retained'
+    nft -s list table inet alwayroute_external > "$SNAPSHOT" || fail 'Cannot record installed nft table'
+    printf '%s\n' "$phase" > "$PHASE"
+}
+retire_routes() {
+    routes_failed=0
+    if [ -n "$(priority_rules)" ]; then
+        if owned_rule; then ip -4 rule del priority "$PRIORITY" fwmark "$MARK" lookup "$TABLE" || routes_failed=1; else routes_failed=1; fi
+    fi
+    if [ -n "$(table_routes)" ]; then
+        if owned_route; then ip -4 route del default via "$SAVED_GATEWAY" dev "$SAVED_LAN" onlink table "$TABLE" || routes_failed=1; else routes_failed=1; fi
+    fi
+    [ "$routes_failed" -eq 0 ]
+}
+prepare() {
+    read_config; check_owned; check_environment
+    if [ -f "$OWNER" ]; then begin_owner; fi
+    TOKEN=00000000-0000-4000-8000-000000000000
+    candidate active
+}
+guard() {
+    read_config; check_owned
+    if [ -f "$OWNER" ]; then LAN_NETWORK=$SAVED_NETWORK; else read_lan_network; fi
+    begin_owner
+    # Deliberately independent of on-link probes: address loss must still guard.
+    install_table guarded
+    retire_routes || fail 'Guard installed but routing cleanup is incomplete'
+}
+activate() {
+    read_config; check_owned; check_environment; begin_owner
+    # First prevent base-route leakage, including if any following command fails.
+    install_table guarded
+    retire_routes || fail 'Cannot retire previous external routing'
+    ip -4 route add default via "$GATEWAY" dev "$LAN" onlink table "$TABLE" || fail 'Cannot install external route; guard retained'
+    ip -4 rule add priority "$PRIORITY" fwmark "$MARK" lookup "$TABLE" || fail 'Cannot install external policy rule; guard retained'
+    candidate active
+    if ! nft --file "$RULES"; then
+        retire_routes || true
+        fail 'Activation failed; guard retained'
+    fi
+    nft -s list table inet alwayroute_external > "$SNAPSHOT" || fail 'Cannot confirm installed nft table'
+    printf 'active\n' > "$PHASE"
+}
+stop() {
+    # The saved descriptor and installed snapshot suffice even if runtime is corrupt.
+    check_owned
+    [ -f "$OWNER" ] || return 0
+    stop_failed=0
+    if has_table; then nft delete table inet alwayroute_external || stop_failed=1; fi
+    retire_routes || stop_failed=1
+    if [ "$stop_failed" -eq 0 ]; then rm -f "$OWNER" "$SNAPSHOT" "$RULES" "$PHASE"; else fail 'External cleanup incomplete; ownership retained'; fi
+}
+status() {
+    if [ ! -f "$OWNER" ]; then
+        check_owned
+        printf '%s\n' '{"available":true,"running":false,"guarded":false,"residual":false,"phase":"inactive","verification":"unverified"}'
+        return
+    fi
+    check_owned
+    has_table || fail 'Owned external nft table is absent'
+    phase=$(cat "$PHASE")
+    if [ "$phase" = active ] && owned_rule && owned_route; then
+        LAN=$SAVED_LAN ROUTER=$SAVED_ROUTER GATEWAY=$SAVED_GATEWAY CLIENT=$SAVED_CLIENT
+        check_environment
+        printf '%s\n' '{"available":true,"running":true,"guarded":false,"residual":true,"phase":"active","family":"ipv4","verification":"unverified","routerOriginated":"direct"}'
+    elif [ "$phase" = guarded ]; then
+        printf '%s\n' '{"available":true,"running":false,"guarded":true,"residual":true,"phase":"guarded","verification":"unverified"}'
+    else fail 'External state is inconsistent'; fi
+}
+init
+case "${1:-}" in
+    prepare) prepare;; guard) guard;; activate) activate;; stop) stop;; status) status;;
+    *) fail 'Usage: alwayroute-external-forwarding {prepare|guard|activate|stop|status}';;
+esac
