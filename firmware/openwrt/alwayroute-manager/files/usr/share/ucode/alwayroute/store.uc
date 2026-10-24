@@ -53,7 +53,7 @@ function restoreMetadata(pending,good,service) {
  write(DATA+'/service.json',service);system('/bin/sync');
  if(!fs.unlink(DATA+'/applying.json'))fail('STORAGE_ERROR','恢复提交标志无法清除');system('/bin/sync');
 }
-function state(m) {m=m ?? model();let runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null};}
+function state(m) {m=m ?? model();let runtime=read(TMP+'/state.json',{});return {savedRevision:m.revision,appliedRevision:runtime.appliedRevision ?? null,healthy:runtime.healthy ?? 'unverified',lastError:runtime.lastError ?? null,lastFailure:runtime.lastFailure ?? null};}
 function jobStatus() {
  let job=read(TMP+'/job.json',null);
  if(job?.status=='running' && (job.pid?!fs.access('/proc/'+job.pid):time()-job.started>10)) {
@@ -111,6 +111,39 @@ function choicesMatch(m,core) {
  for(let g in m.groups)if(core.groups[g.id]?.now!=selected(g))return false;
  return true;
 }
+function processIdentity(pid) {
+ if(type(pid)!='int' || pid<=0)return null;
+ let stat=fs.readfile('/proc/'+pid+'/stat');if(!stat)return null;
+ let started=split(split(trim(stat),') ')[1] ?? '', ' ')[19];
+ return match(started ?? '',/^[0-9]+$/)?sprintf('%d:%s',pid,started):null;
+}
+function coreProcess() {
+ let p=fs.popen("ubus call service list '{\"name\":\"alwayroute\"}' 2>/dev/null",'r');if(!p)return null;
+ let body=p.read(8193);p.close();if(!body || length(body)>8192)return null;
+ try {
+  let service=json(body),found=null;
+  for(let name,instance in service.alwayroute?.instances ?? {})if(instance.running && instance.command?.[0]=='/usr/bin/sing-box') {
+   let identity=processIdentity(instance.pid);if(!identity || found)return null;
+   found={pid:instance.pid,identity};
+  }
+  return found;
+ }catch(e){return null;}
+}
+function waitCore(m,previous,attempts) {
+ // Each API read has its own bounded timeout. A procd restart is asynchronous:
+ // reject even matching choices until the old process has actually exited.
+ attempts=attempts ?? 10;
+ for(let i=0;i<attempts;i++) {
+  let current=coreProcess(),retired=!previous || processIdentity(previous.pid)!=previous.identity;
+  if(current && retired && running() && choicesMatch(m,coreStatus()))return true;
+  if(i<attempts-1)system('/bin/sleep 1');
+ }
+ return false;
+}
+function failureCode(error) {
+ let text=error.message ?? '',marker=index(text,'ALWAYROUTE:'),code=marker>=0?split(substr(text,marker+11),':')[0]:null;
+ return index(['UNCONFIGURED','CORE_CHECK_FAILED','CORE_START_FAILED','CORE_LOAD_FAILED','CORE_SELECT_FAILED','FORWARDING_CHECK_FAILED','FORWARDING_GUARD_FAILED','FORWARDING_APPLY_FAILED','STORAGE_ERROR'],code)>=0?code:'INTERNAL';
+}
 function putSelection(id,target) {
  // IDs are model-validated, and JSON is passed in a private file, never shell input.
  target=target=='block'?'direct':target;
@@ -142,10 +175,12 @@ function switchSelections(m,plan) {
  // Keep a service respawn on the same confirmed choice; persistent boot recovery
  // remains governed by lastgood and the durable applying marker.
  write(TMP+'/runtime.json',plan.config);
- if(!running() || !choicesMatch(m,coreStatus()))fail('CORE_SELECT_FAILED','核心实际选择未确认，正在恢复上一份配置');
+ if(!waitCore(m,null,3))fail('CORE_SELECT_FAILED','核心实际选择未确认，正在恢复上一份配置');
 }
 function restart(m) {
  if(m.mode!='direct')for(let g in m.groups)if(g.id=='Proxy' && g.selected=='direct')fail('UNCONFIGURED','请先为 Proxy 选择已启用代理节点');
+ let previous=coreProcess();
+ if(!previous && running())fail('CORE_LOAD_FAILED','无法确认现有核心进程身份，拒绝把旧实例当作新配置');
  checkConfig(m);
  invalidateTraffic();
  if(!forwarding('prepare'))fail('FORWARDING_CHECK_FAILED','转发预检失败');
@@ -154,14 +189,12 @@ function restart(m) {
  write(TMP+'/restarting.json',{guarded:true});
  let restarted=command('/etc/init.d/alwayroute restart');fs.unlink(TMP+'/restarting.json');
  if(!restarted)fail('CORE_START_FAILED','核心启动失败或转发状态转换失败');
- let observed=null;
- for(let i=0;i<4;i++){observed=coreStatus();if(observed.available)break;system('/bin/sleep 1');}
- if(!observed?.available)fail('CORE_LOAD_FAILED','核心 API 未确认配置加载');
- for(let g in m.groups)if(observed.groups[g.id]?.now!=selected(g))fail('CORE_LOAD_FAILED','实际策略选择与候选不一致');
+ if(!waitCore(m,previous))fail('CORE_LOAD_FAILED','新核心进程及全部策略选择未在等待窗口内确认');
  if(!forwarding('activate'))fail('FORWARDING_APPLY_FAILED','转发应用失败');
 };
 function recover(good,wasRunning) {
- if(good && wasRunning) {try{restart(good);return {restored:true,guarded:false};}catch(e){}}
+ let recoveryCode=null;
+ if(good && wasRunning) {try{restart(good);return {restored:true,guarded:false};}catch(e){recoveryCode=failureCode(e);}}
  if(!wasRunning) {
   // Keep interception guarded while removing a candidate started by this attempt.
   try {
@@ -173,7 +206,7 @@ function recover(good,wasRunning) {
    if(stopped && forwarding('stop'))return {restored:false,stopped:true,guarded:false};
   }catch(e){}
  }
- return {restored:false,guarded:forwarding('guard')};
+ return {restored:false,guarded:forwarding('guard'),errorCode:recoveryCode ?? 'RECOVERY_UNCONFIRMED'};
 };
 function applyModel(m,commitCurrent,plan) {
  let good=lastGood(),wasRunning=running(),service=read(DATA+'/service.json',{enabled:false}),before=commitCurrent?model():null;
@@ -195,7 +228,9 @@ function applyModel(m,commitCurrent,plan) {
   // the next boot rebuild previous.json instead of a half-committed candidate.
   try {restoreMetadata(pending,good,service);}catch(storageError){}
   let message=recovery.restored?'应用失败，已恢复上一份可用配置':recovery.stopped?'应用失败，服务已恢复停止状态':recovery.guarded?'应用及恢复失败，已进入故障阻断':'应用及恢复失败，故障阻断未确认；保留核心并需人工处理';
-  try {write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified',lastError:message});event(message,'error');}catch(stateError){}
+  let lastFailure={code:failureCode(e),recoveryCode:recovery.errorCode ?? null};
+  if(lastFailure.recoveryCode)message+='（恢复阶段：'+lastFailure.recoveryCode+'）';
+  try {write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified',lastError:message,lastFailure});event(message,'error');}catch(stateError){}
   die(e.message);
  }
  try {event('核心加载已确认；出口与终端接管仍须实测');}catch(logError){}
@@ -439,12 +474,9 @@ export function started() {
  try {
   let runtime=read(TMP+'/state.json',{});
   if(runtime.restoringRevision!=null) {
-   let pending=read(DATA+'/applying.json',null),good=normalized(read(DATA+(pending?'/previous.json':'/lastgood.json'),null)),core=null;
+   let pending=read(DATA+'/applying.json',null),good=normalized(read(DATA+(pending?'/previous.json':'/lastgood.json'),null));
    if(good?.revision==runtime.restoringRevision) {
-    for(let i=0;i<4;i++){core=coreStatus();if(core.available)break;system('/bin/sleep 1');}
-    let matches=running() && core?.available;
-    for(let g in good.groups)if(core?.groups?.[g.id]?.now!=selected(g))matches=false;
-    if(matches && forwarding('activate'))write(TMP+'/state.json',{appliedRevision:good.revision,healthy:'unverified'});
+    if(waitCore(good,null) && forwarding('activate'))write(TMP+'/state.json',{appliedRevision:good.revision,healthy:'unverified'});
     else {forwarding('guard');write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified',lastError:'启动恢复未通过核心/转发检查，已请求故障阻断'});}
    }
   }

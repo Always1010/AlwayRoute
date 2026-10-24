@@ -6,9 +6,11 @@ import { sha256 } from 'digest';
 let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,currentReads=0;
 let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0,onDelay=null;
 let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null,putAcceptedError=false;
+let liveConfig=null,corePid=700,retiringPids={},onRestart=null,onSleep=null,managedRunning=true,activateAlwaysFails=false,apiReadFailures=0,identityReadFailures=0,putReadFailure=false;
+function processStat(pid) {let fields=['S'];for(let i=1;i<20;i++)push(fields,i==19?sprintf('%d',pid):'0');return sprintf('%d (sing-box) %s',pid,join(' ',fields));}
 let fs={
  mkdir:()=>true,chmod:()=>true,
- readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
+ readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/proc/'+corePid+'/stat' && active)return processStat(corePid);for(let pid,stat in retiringPids)if(path=='/proc/'+pid+'/stat')return stat;if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
  access:function(path){return path=='/proc/123' || (path=='/usr/libexec/alwayroute-forwarding' && helperAvailable);},
  rename:function(from,to){if(to==failRename){failRename=null;return false;}files[to]=files[from];delete files[from];return true;},
  unlink:function(path){if(path==failUnlink){failUnlink=null;return false;}delete files[path];return true;},
@@ -24,20 +26,22 @@ let fs={
  popen:function(command){
   let body='{}';
   if(index(command,'/delay?')>=0){delayCalls++;body='{"delay":9}';if(onDelay)body=onDelay(command) ?? body;}
+  else if(index(command,'ubus call service list')>=0){body=sprintf('%J',{alwayroute:{instances:{instance1:{running:active && managedRunning,pid:corePid,command:['/usr/bin/sing-box','run']}}}});if(identityReadFailures>0){identityReadFailures--;body='{}';}}
   else if(index(command,'alwayroute-forwarding status')>=0)body=sprintf('%J',{available:true,running:forwardingMode=='active',guarded:forwardingMode=='guarded'});
-  else if(index(command,'/proxies')>=0){let cfg=json(files['/tmp/alwayroute/runtime.json']),proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:liveChoices[o.tag] ?? o.default,all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);}
+  else if(index(command,'/proxies')>=0){let cfg=liveConfig ?? {outbounds:[]},proxies={};for(let o in cfg.outbounds)proxies[o.tag]=o.type=='selector'?{type:'Selector',now:liveChoices[o.tag],all:o.outbounds,history:[]}:{type:'VMess',name:o.tag,history:[]};body=sprintf('%J',{proxies});lastProxyBodyLength=length(body);if(apiReadFailures>0){apiReadFailures--;body='{}';}}
   return {read:function(limit){if(index(command,'/proxies')>=0)lastProxyReadLimit=limit;return substr(body,0,limit);},close:()=>0};
  }
 };
 function system(command){
- if(index(command,'--method PUT')>=0){putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
+ if(index(command,'/bin/sleep 1')>=0 && onSleep)onSleep();
+ if(index(command,'--method PUT')>=0){putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(putReadFailure){putReadFailure=false;apiReadFailures=1;}if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
  if(index(command,'alwayroute-forwarding guard')>=0){guardCalls++;forwardingMode='guarded';}
  if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;forwardingMode='stopped';}
- if(index(command,'alwayroute-forwarding activate')>=0){if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
+ if(index(command,'alwayroute-forwarding activate')>=0){if(activateAlwaysFails)return 1;if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
  if(index(command,'sing-box check')>=0 && allChecksFail)return 1;
  if(index(command,'sing-box check')>=0 && checkFails){checkFails=false;return 1;}
- if(index(command,'alwayroute running')>=0)return active?0:1;
- if(index(command,'alwayroute restart')>=0){restartCalls++;active=true;liveChoices={};let cfg=json(files['/tmp/alwayroute/runtime.json']);for(let o in cfg.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;}
+ if(index(command,'alwayroute running')>=0)return active && managedRunning?0:1;
+ if(index(command,'alwayroute restart')>=0){restartCalls++;active=true;corePid++;liveChoices={};liveConfig=json(files['/tmp/alwayroute/runtime.json']);for(let o in liveConfig.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;if(onRestart)onRestart();}
  if(index(command,'alwayroute stop')>=0)active=false;
  return 0;
 }
@@ -86,13 +90,13 @@ r=call('apply',{expectedRevision:1});check(r.ok && r.job.status=='running' && !a
 check(call('save',{expectedRevision:1,model:r.model}).error.code=='BUSY','queued mutation excluded');
 work();r=call('job_status',{});check(!r.busy && r.job.status=='succeeded' && active,'worker completes and releases transaction lock');
 check(call('get',{}).state.appliedRevision==1,'applied distinct from saved');
-let normalRuntime=files['/tmp/alwayroute/runtime.json'],largeRuntime={outbounds:[]},largeChoices=[];
+let normalRuntime=files['/tmp/alwayroute/runtime.json'],normalLiveConfig=clone(liveConfig),normalLiveChoices=clone(liveChoices),largeRuntime={outbounds:[]},largeChoices=[];
 for(let i=0;i<128;i++){let tag=sprintf('n%03d_',i);while(length(tag)<64)tag+='x';push(largeChoices,tag);push(largeRuntime.outbounds,{type:'vmess',tag});}
 for(let i=0;i<16;i++)push(largeRuntime.outbounds,{type:'selector',tag:'group_'+i,outbounds:largeChoices,default:largeChoices[i]});
-files['/tmp/alwayroute/runtime.json']=sprintf('%J',largeRuntime);currentReads=0;let largeStatus=call('status',{});
+files['/tmp/alwayroute/runtime.json']=sprintf('%J',largeRuntime);liveConfig=largeRuntime;liveChoices={};for(let o in largeRuntime.outbounds)if(o.type=='selector')liveChoices[o.tag]=o.default;currentReads=0;let largeStatus=call('status',{});
 check(currentReads==1 && lastProxyBodyLength>65536 && lastProxyReadLimit==262145 && largeStatus.core.available && length(keys(largeStatus.core.groups))==16,'maximum node and group status loads the model once and reads the bounded response beyond the old 64KiB cutoff');
 check(largeStatus.core.groups.group_15.now==largeChoices[15] && length(keys(largeStatus.core.groups.group_15))==1 && largeStatus.core.groups[largeChoices[0]]==null,'core status retains only selector choices needed for runtime confirmation');
-files['/tmp/alwayroute/runtime.json']=normalRuntime;
+files['/tmp/alwayroute/runtime.json']=normalRuntime;liveConfig=normalLiveConfig;liveChoices=normalLiveChoices;
 call('check',{nodeId:'n1'});work();let checked=call('job_status',{}).job;
 check(checked.status=='succeeded' && checked.result.checkedRevision==1 && checked.result.delay==9,'node check uses matching applied revision');
 let originalModel=files['/etc/alwayroute/current.json'],batchModel=clone(call('get',{}).model);
@@ -275,4 +279,36 @@ check(call('get',{}).model.nodes[0].name==originalName,'restored file is read us
 let invalidCandidate=clone(call('get',{}).model);invalidCandidate.nodes[0].port=0;
 call('configure',{expectedRevision:invalidCandidate.revision,model:invalidCandidate});work();
 check(call('job_status',{}).job.error.code=='INVALID_MODEL' && files['/etc/alwayroute/current.json']==cachedRaw,'cached validation cannot admit a modified invalid candidate into optimized generation');
+
+// A real procd restart is asynchronous. API contents must not be inferred from
+// the newly written runtime file or accepted while the old process is alive.
+let asyncModel=clone(call('get',{}).model),asyncSleeps=0;
+onRestart=function(){liveChoices.Proxy='not-ready';};
+onSleep=function(){asyncSleeps++;liveChoices.Proxy=asyncModel.groups[0].selected;};
+restart(asyncModel);onRestart=null;onSleep=null;
+check(asyncSleeps>0 && forwardingMode=='active','restart waits for every selector rather than rejecting the first available but stale API');
+let oldPid=corePid;retiringPids[oldPid]=processStat(oldPid);asyncSleeps=0;
+asyncModel.nodes[0].port++;
+onSleep=function(){asyncSleeps++;delete retiringPids[oldPid];};
+restart(asyncModel);onSleep=null;
+check(asyncSleeps>0 && corePid!=oldPid && forwardingMode=='active','matching selectors cannot confirm a full restart until the old managed process has exited');
+onRestart=function(){apiReadFailures=2;};asyncSleeps=0;onSleep=function(){asyncSleeps++;};
+restart(asyncModel);onRestart=null;onSleep=null;
+check(asyncSleeps>=2 && forwardingMode=='active','temporary API unavailability is retried within the bounded startup window');
+identityReadFailures=1;beforeRestarts=restartCalls;let identityRejected=false;
+try{restart(asyncModel);}catch(e){identityRejected=index(e.message,'CORE_LOAD_FAILED')>=0;}
+check(identityRejected && restartCalls==beforeRestarts,'unobservable running process identity cannot be treated as an absent old instance');
+activateAlwaysFails=true;
+call('apply',{expectedRevision:asyncModel.revision});work();activateAlwaysFails=false;
+let failedState=call('status',{}).state;
+check(failedState.appliedRevision==null && forwardingMode=='guarded' && failedState.lastFailure?.code=='FORWARDING_APPLY_FAILED' && failedState.lastFailure?.recoveryCode=='FORWARDING_APPLY_FAILED','failed apply and recovery preserve both sanitized failure stages while keeping the guard');
+onRestart=function(){managedRunning=false;};
+call('apply',{expectedRevision:asyncModel.revision});work();onRestart=null;managedRunning=true;
+failedState=call('get',{}).state;
+check(failedState.appliedRevision==null && forwardingMode=='guarded' && failedState.lastFailure?.recoveryCode=='CORE_LOAD_FAILED','matching API choices without a running managed process cannot confirm recovery');
+call('service',{action:'start'});work();
+let delayedNext=clone(call('get',{}).model);delayedNext.groups[0].selected='n1';
+beforeRestarts=restartCalls;putReadFailure=true;
+call('configure',{expectedRevision:delayedNext.revision,model:delayedNext});work();
+check(call('job_status',{}).job.status=='succeeded' && restartCalls==beforeRestarts && liveChoices.Proxy=='n1','successful PUT tolerates a transient final readback failure without restarting the core');
 printf('PASS %d manager transaction checks\n',checks);
