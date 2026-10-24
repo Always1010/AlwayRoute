@@ -53,8 +53,85 @@ def image_stamp(image):
 
 
 def require_posix_host():
-    if os.name != 'posix' or not Path('/proc').is_dir():
-        raise SystemExit('This supervisor requires the existing POSIX build host with /proc; no build was started')
+    if (os.name != 'posix' or not Path('/proc').is_dir()
+            or not hasattr(os, 'waitid') or not hasattr(os, 'WNOWAIT')):
+        raise SystemExit('This supervisor requires the existing POSIX build host with /proc and waitid(WNOWAIT); no build was started')
+
+
+def leader_exited(process):
+    # Do not poll()/wait() here: retaining even an exited leader pins its PID
+    # (also the PGID), so a later group signal cannot target a reused number.
+    return os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+
+
+def wait_for_leader(process, timeout):
+    deadline = time.monotonic() + timeout
+    while not leader_exited(process):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(0.1, remaining))
+
+
+def group_is_running(group):
+    for proc in Path('/proc').iterdir():
+        if not proc.name.isdecimal():
+            continue
+        try:
+            # comm may contain spaces and ')'; fields after its final ')' are
+            # state, ppid, pgrp, session. Zombies need reaping, not more signals.
+            fields = (proc / 'stat').read_text().rsplit(')', 1)[1].split()
+            if fields[0] not in ('Z', 'X') and int(fields[2]) == group and int(fields[3]) == group:
+                return True
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return False
+
+
+def wait_for_group(group, timeout):
+    deadline = time.monotonic() + timeout
+    while group_is_running(group):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.1, remaining))
+    return True
+
+
+class BuildCleanupError(RuntimeError):
+    pass
+
+
+def stop_build_group(process, grace_seconds=20, kill_seconds=5):
+    # A reaped leader no longer anchors ownership. Never signal that PGID again.
+    if process.returncode is not None:
+        return
+
+    def send(sig):
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+
+    try:
+        graceful = False
+        try:
+            send(signal.SIGTERM)
+            try:
+                graceful = wait_for_group(process.pid, grace_seconds)
+            finally:
+                # The leader can exit on TERM while a descendant ignores it.
+                # Escalate before releasing the leader's PID pin.
+                if not graceful:
+                    send(signal.SIGKILL)
+                    if not wait_for_group(process.pid, kill_seconds):
+                        raise RuntimeError('Build process group is still running after SIGKILL')
+        finally:
+            # Reap our direct child even after escalation/errors. Remaining
+            # zombies belong to their respective parents (or init).
+            process.wait(timeout=kill_seconds)
+    except BaseException as error:
+        raise BuildCleanupError('Could not confirm build process group cleanup') from error
 
 
 def run_build(context):
@@ -96,7 +173,7 @@ def supervise(context, source, work):
                 'status': 'running', 'incremental': True, 'device': device['id'],
                 'image_limit_bytes': device['image']['max_bytes'],
             }
-            while process.poll() is None:
+            while not leader_exited(process):
                 usage = subprocess.run(['du', '-sb', str(work)], capture_output=True, text=True, timeout=60)
                 if usage.returncode not in (0, 1) or not usage.stdout.strip():
                     raise RuntimeError('No valid workspace size measurement')
@@ -108,13 +185,9 @@ def supervise(context, source, work):
                 temporary.replace(statefile)
                 if size > state['disk_limit_bytes'] or time.monotonic() - begin > context['timeout_seconds']:
                     state['stop_reason'] = 'budget guard'
-                    os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=20)
+                    stop_build_group(process)
                     break
-                try:
-                    process.wait(timeout=20)
-                except subprocess.TimeoutExpired:
-                    pass
+                wait_for_leader(process, 20)
             returncode = process.wait()
             log.flush()
             # OpenWrt can ignore image recipe failures and leave an older .bin.
@@ -132,15 +205,17 @@ def supervise(context, source, work):
             statefile.write_text(json.dumps(state, indent=2) + '\n')
             print(json.dumps(state), flush=True)
             return 0 if accepted else returncode or 1
-        except BaseException:
-            if process and process.poll() is None:
+        except BaseException as failure:
+            error = traceback.format_exc()
+            cleanup_error = error if isinstance(failure, BuildCleanupError) else None
+            if process is not None:
                 try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    process.wait(timeout=15)
-                except Exception:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    stop_build_group(process)
+                except BaseException:
+                    cleanup_error = traceback.format_exc()
             statefile.write_text(json.dumps({
-                'status': 'supervisor_failed_build_stopped', 'error': traceback.format_exc(),
+                'status': 'supervisor_failed_cleanup_incomplete' if cleanup_error else 'supervisor_failed_build_stopped',
+                'error': error, 'cleanup_error': cleanup_error,
             }, indent=2) + '\n')
             raise
 
