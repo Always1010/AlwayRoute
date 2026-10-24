@@ -1,0 +1,4 @@
+#!/usr/bin/ucode
+'use strict';
+import { sampleStatus } from 'alwayroute.status';
+sampleStatus();

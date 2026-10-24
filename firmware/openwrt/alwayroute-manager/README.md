@@ -60,6 +60,7 @@ import此时同样排入后台worker。省略activate继续保留原仅保存语
 coreAPI只监听127.0.0.1:9090，混合代理只监听127.0.0.1:7890。
 流量RPC立即读取/tmp短期样本，独立的一次性采样器读取核心流式接口，不占用rpcd等待采样。
 样本携带时间戳、15秒有效期、revision与重启epoch，未采到/过期/服务停止显示不可用；最多每5秒启动一次，独立锁防重叠，无新依赖或常驻服务。
+状态RPC也只读取/tmp短期快照；独立一次性采样器有界读取procd、核心HTTP和转发状态。快照携带时间戳、30秒有效期、applied revision、管理重启epoch和核心PID/启动时刻；缺失、过期、探测失败或跨越revision/epoch时返回明确unknown及null布尔值，不把未知伪报为停止。配置事务继续使用实时有界检查确认核心进程、全部selector及转发状态，观察快照不参与提交或成功判定。状态采样文件只存在/tmp，不写持久flash。
 
 转发包为必需依赖，提供 `/usr/libexec/alwayroute-forwarding prepare|activate|guard|stop|status`，
 前三个以退出码报告结果，status输出JSON。读取固定`/tmp/alwayroute/runtime.json`；
@@ -91,7 +92,7 @@ python tests/manager/run-tests.py /path/to/ucode -
 ucode -L firmware/openwrt/alwayroute-manager/files/usr/share/ucode tests/manager/run.uc
 ```
 
-第一项保持import/export进行真实管理模块导入，不调用管理方法；第二项将模块机械组合到stdin，运行模型/导入、内存适配事务及下载脚本许可检查；
+第一项保持import/export进行真实管理模块导入，不调用管理方法；第二项将模块机械组合到stdin，运行模型/导入、内存适配事务、异步traffic/status采样及下载脚本许可检查；
 第三项检查模型与订阅的真实模块导入。事务适配器覆盖revision冲突、后台排队、配置校验失败、
 提交写失败恢复、回退、凭证导出脱敏、停机持久、启动中断恢复、转发停止失败、
 适配器缺失及核心恢复失败保持阻断，未访问设备。

@@ -179,9 +179,25 @@ return view.extend({
 		}
 		return next().finally(function() { self.activeJob = null; });
 	},
+	runtimeSnapshotPending: function(runtime, requireCore) {
+		if (!runtime) return true;
+		if (runtime.snapshot && runtime.snapshot.status !== 'current') return true;
+		var service = runtime.service, running = typeof service === 'boolean' ? service : service && service.running;
+		if (typeof running !== 'boolean' || service && service.status === 'unknown') return true;
+		return !!(requireCore && running && runtime.core && runtime.core.status === 'unknown');
+	},
+	readRuntimeStatus: async function(requireCore) {
+		var runtime;
+		for (var attempt = 0; attempt < 10; attempt++) {
+			runtime = await this.request('status');
+			if (!this.runtimeSnapshotPending(runtime, requireCore)) return runtime;
+			if (attempt < 9) await new Promise(function(resolve) { window.setTimeout(resolve, 1000); });
+		}
+		return runtime;
+	},
 	confirmRuntime: async function(result, expectedRunning) {
 		var runtime;
-		try { runtime = await this.request('status'); }
+		try { runtime = await this.readRuntimeStatus(!!result.model); }
 		catch (_error) { var unavailable = new Error('操作已返回，但无法确认实际状态，请重新检查'); unavailable.code = 'STATE_UNCONFIRMED'; throw unavailable; }
 		this.runtime = runtime;
 		var running = this.serviceRunning(), candidate = result.model;
@@ -254,7 +270,7 @@ return view.extend({
 			if (progress.busy || progress.job && progress.job.status === 'running') {
 				this.uncertain = true; this.message = { type: 'error', text: '后台操作仍在执行，请稍后重新检查。' }; return;
 			}
-			var saved = await this.request('get'), runtime = await this.request('status');
+			var saved = await this.request('get'), runtime = await this.readRuntimeStatus(true);
 			if (!runtime.service || typeof runtime.service.running !== 'boolean') throw new Error('仍无法确认服务状态');
 			if (!runtime.state || runtime.state.savedRevision !== saved.model.revision) throw new Error('读取期间配置再次变化，请重新检查');
 			this.accept(saved); this.runtime = runtime; this.updateState(runtime.state || saved.state);

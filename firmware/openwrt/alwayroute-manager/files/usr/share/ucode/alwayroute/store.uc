@@ -5,6 +5,7 @@ import { fail, clone, empty, normalize, validate, effective, generateValidated, 
 import { parse } from 'alwayroute.subscription';
 import { selectionPlan } from 'alwayroute.selection';
 import { trafficSnapshot, invalidateTraffic } from 'alwayroute.traffic';
+import { statusSnapshot, invalidateStatus } from 'alwayroute.status';
 
 const DATA='/etc/alwayroute', TMP='/tmp/alwayroute';
 let verifiedModelBytes=null,verifiedModel=null;
@@ -81,7 +82,7 @@ function result(m) {
 function expected(args,m) {if(type(args.expectedRevision)!='int' || args.expectedRevision!=m.revision)fail('REVISION_CONFLICT','配置已由其他操作更新，请重新加载');}
 function saved(m) {validate(m);write(DATA+'/current.json',m);system('/bin/sync');event('配置已保存');return result(m);}
 function command(cmd) {return system(cmd+' >/dev/null 2>&1')==0;}
-function running() {return command('/etc/init.d/alwayroute running');}
+function running() {return command('/usr/libexec/alwayroute-timeout 3 /etc/init.d/alwayroute running');}
 function fetchJson(path, stream, limit) {
  limit=limit ?? 65536;
  let command='/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 -O - '+"'http://127.0.0.1:9090"+path+"' 2>/dev/null";
@@ -92,7 +93,7 @@ function fetchJson(path, stream, limit) {
 };
 function forwarding(action) {
  if(!fs.access('/usr/libexec/alwayroute-forwarding','x'))return action=='status'?{available:false,scope:'unverified'}:false;
- if(action=='status') {let p=fs.popen('/usr/libexec/alwayroute-forwarding status 2>/dev/null','r');if(!p)return {available:false,scope:'unverified'};let s=p.read(8192);p.close();try{return json(s);}catch(e){return {available:false,scope:'unverified'};}}
+ if(action=='status') {let p=fs.popen('/usr/libexec/alwayroute-timeout 3 /usr/libexec/alwayroute-forwarding status 2>/dev/null','r');if(!p)return {available:false,scope:'unverified'};let s=p.read(8192);p.close();try{return json(s);}catch(e){return {available:false,scope:'unverified'};}}
  return command('/usr/libexec/alwayroute-forwarding '+action);
 };
 function coreStatus() {
@@ -118,7 +119,7 @@ function processIdentity(pid) {
  return match(started ?? '',/^[0-9]+$/)?sprintf('%d:%s',pid,started):null;
 }
 function coreProcess() {
- let p=fs.popen("ubus call service list '{\"name\":\"alwayroute\"}' 2>/dev/null",'r');if(!p)return null;
+ let p=fs.popen("/usr/libexec/alwayroute-timeout 3 ubus call service list '{\"name\":\"alwayroute\"}' 2>/dev/null",'r');if(!p)return null;
  let body=p.read(8193);p.close();if(!body || length(body)>8192)return null;
  try {
   let service=json(body),found=null;
@@ -182,7 +183,7 @@ function restart(m) {
  let previous=coreProcess();
  if(!previous && running())fail('CORE_LOAD_FAILED','无法确认现有核心进程身份，拒绝把旧实例当作新配置');
  checkConfig(m);
- invalidateTraffic();
+ invalidateTraffic();invalidateStatus();
  if(!forwarding('prepare'))fail('FORWARDING_CHECK_FAILED','转发预检失败');
  if(!forwarding('guard'))fail('FORWARDING_GUARD_FAILED','无法建立故障阻断，保留当前核心');
  write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});
@@ -318,7 +319,7 @@ function execute(method,args) {
  if(method=='capabilities')return {ok:true,schema:1,protocols:['vmess'],subscriptionFormats:['vmess-uri','base64-vmess-list','clash-json','clash-yaml-block-subset','clash-yaml-flow-scalars'],limits:modelLimits(),forwarding:'unverified',nodeCheck:true,subscriptionCheck:true,batchCheck:true,allNodesCheck:true,retryFailedCheck:true,logs:true,policyPresets:policyCatalog()};
  if(method=='get')return result();
  if(method=='job_status')return jobStatus();
- if(method=='status') {let current=model();return {ok:true,state:state(current),service:{running:running()},core:coreStatus(),forwarding:forwarding('status'),checks:read(TMP+'/checks.json',{})};}
+ if(method=='status') {let current=model(),runtime=statusSnapshot();runtime.state=state(current);runtime.checks=read(TMP+'/checks.json',{});return runtime;}
  if(method=='traffic')return trafficSnapshot();
  if(method=='logs') {let entries=read(TMP+'/events.json',[]),limit=int(args.limit ?? 20);if(limit<1 || limit>20)limit=20;return {ok:true,entries:slice(entries,-limit)};}
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
@@ -340,7 +341,7 @@ function execute(method,args) {
    if(!forwarding('stop'))fail('FORWARDING_STOP_FAILED','转发撤销失败，保留核心及启动设置');
    if(!command('/etc/init.d/alwayroute stop') || running())fail('CORE_STOP_FAILED','核心停止失败，启动设置保持不变');
    if(interrupted)restoreMetadata(interrupted,lastGood(),{enabled:false});
-   invalidateTraffic();write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state(m)};
+   invalidateTraffic();invalidateStatus();write(DATA+'/service.json',{enabled:false});write(TMP+'/state.json',{appliedRevision:null,healthy:'unverified'});system('/bin/sync');event('服务已停止');return {ok:true,state:state(m)};
   }
   if(args.action=='start') {
    return applyModel(m);
@@ -449,7 +450,7 @@ export function work() {
  if(request.method=='check')fs.unlink(TMP+'/check-cancel-'+job.id);
 };
 export function boot() {
- init();invalidateTraffic();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();
+ init();invalidateTraffic();invalidateStatus();let config=read(DATA+'/service.json',{enabled:false}),good=lastGood();
  let pending=read(DATA+'/applying.json',null);
  if(pending) {
   config=pending.previousService ?? config;
@@ -469,7 +470,7 @@ export function due() {
  return responses;
 };
 export function started() {
- init();let lock=fs.open(TMP+'/manager.lock','ae',0600);
+ init();invalidateStatus();let lock=fs.open(TMP+'/manager.lock','ae',0600);
  if(!lock || !lock.lock('xn')){lock?.close();return;}
  try {
   let runtime=read(TMP+'/state.json',{});

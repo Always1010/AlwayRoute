@@ -11,6 +11,7 @@ result = subprocess.run(
     [ucode, '-L', str(package / 'ucode'), '-e',
      "import { call } from 'alwayroute.store'; "
      "import { sampleTraffic } from 'alwayroute.traffic'; "
+     "import { sampleStatus } from 'alwayroute.status'; "
      "import { selectionPlan } from 'alwayroute.selection'; "
      "print('PASS real manager module imports\\n');"],
     env={**os.environ, 'ALWAYROUTE_POLICY_DIR': str(package / 'alwayroute/policies')},

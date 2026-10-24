@@ -201,6 +201,30 @@ test('service toggle waits for actual response and uses one action button', asyn
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '停止'), null);
 });
 
+test('unknown status snapshot never appears stopped and runtime confirmation waits for a current sample', async () => {
+  const base = empty(); base.nodes = [node('n1'), node('n2')]; base.groups[0].selected = 'n1';
+  let candidate, statusCalls = 0;
+  const unknown = { snapshot: { status: 'unknown', sampledAt: null }, state: { savedRevision: 1, appliedRevision: 1 },
+    service: { status: 'unknown', running: null }, core: { status: 'unknown', available: null, groups: {} },
+    forwarding: { status: 'unknown', running: null } };
+  const { view, window } = harness(async (method, args) => {
+    if (method === 'configure') { candidate = model.clone(args[1]); candidate.revision = 1; return { model: candidate, state: { savedRevision: 1, appliedRevision: 1 } }; }
+    if (method === 'status' && ++statusCalls === 1) return unknown;
+    return { snapshot: { status: 'current', sampledAt: 100 }, state: { savedRevision: 1, appliedRevision: 1 },
+      service: { status: 'current', running: true }, core: { status: 'current', available: true,
+        groups: Object.fromEntries(candidate.groups.map(g => [g.id, { now: g.selected }])) },
+      forwarding: { status: 'current', available: true, running: true } };
+  });
+  window.setTimeout = (fn, ms) => ms === 1000 ? queueMicrotask(fn) : setTimeout(fn, ms);
+  view.draft = base; view.runtime = unknown; view.paint();
+  assert.equal(view.serviceRunning(), null); assert.equal(text(view.live.service), '未知');
+  assert.ok(find(view.root, n => n.attrs['aria-label'] === '重新检查'));
+  assert.doesNotMatch(view.configurationLabel(), /已停止/);
+  view.runtime = { service: { running: true } };
+  await view.chooseNode('Proxy', 'n2');
+  assert.equal(statusCalls, 2); assert.equal(view.serviceRunning(), true); assert.equal(view.actualChoice('Proxy'), 'n2');
+});
+
 test('request timeout leaves the previous model and blocks mutations until state is checked', async () => {
   const { view, window } = harness(async method => method === 'configure' ? new Promise(() => {}) : {});
   view.draft.nodes.push(node()); view.draft.groups[0].selected = 'n1';
