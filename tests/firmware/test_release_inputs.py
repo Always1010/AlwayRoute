@@ -3,10 +3,12 @@ import copy
 import contextlib
 import importlib.util
 import io
+import hashlib
 import json
 from pathlib import Path
 import sys
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -21,6 +23,31 @@ spec.loader.exec_module(builder)
 
 
 class ReleaseInputsTest(unittest.TestCase):
+    def test_core_source_rejects_unreviewed_build_inputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            source = work / 'source'
+            source.mkdir()
+            original = b'package main\nfunc main() {}\n'
+            (source / 'main.go').write_bytes(original)
+            archive = work / 'source.tar.gz'
+            with tarfile.open(archive, 'w:gz') as stream:
+                member = tarfile.TarInfo('pinned/main.go')
+                member.size = len(original)
+                stream.addfile(member, io.BytesIO(original))
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            self.assertEqual(builder.verify_source_tree(source, archive, digest), {'main.go'})
+            for name in ('unreviewed.go', 'unreviewed.s', 'unreviewed.syso', 'embedded.txt'):
+                with self.subTest(name=name):
+                    extra = source / name
+                    extra.write_bytes(b'unreviewed input')
+                    with self.assertRaisesRegex(SystemExit, 'Unexpected source file'):
+                        builder.verify_source_tree(source, archive, digest)
+                    extra.unlink()
+            (source / 'main.go').write_bytes(b'changed')
+            with self.assertRaisesRegex(SystemExit, 'differs from the pinned archive'):
+                builder.verify_source_tree(source, archive, digest)
+
     def test_release_inspector_accepts_standard_and_requires_explicit_experiments_outside_release(self):
         spec = importlib.util.spec_from_file_location('release_inspector', TOOLS / 'inspect-image.py')
         inspector = importlib.util.module_from_spec(spec)

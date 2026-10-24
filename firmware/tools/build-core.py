@@ -50,6 +50,33 @@ def core_environment(context, arch):
            'GOPATH': str(context['cache_root'] / 'gopath'), 'TMPDIR': str(context['cache_root'] / 'tmp')}
 
 
+def verify_source_tree(source, archive, expected_sha256=ARCHIVE_SHA):
+    """Verify every build input, including assembly, objects and embedded data."""
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != expected_sha256:
+        raise SystemExit('Pinned upstream archive hash mismatch')
+    verified = set()
+    with tarfile.open(archive) as tar:
+        for member in tar:
+            if member.isdir():
+                continue
+            if not member.isfile():
+                raise SystemExit('Unsupported upstream archive member')
+            relative = Path(*Path(member.name).parts[1:])
+            if relative.is_absolute() or '..' in relative.parts or not relative.parts:
+                raise SystemExit('Unexpected archive path')
+            data = tar.extractfile(member).read()
+            candidate = source / relative
+            if candidate.is_symlink() or not candidate.is_file() or candidate.read_bytes() != data:
+                raise SystemExit('Upstream source differs from the pinned archive: ' + str(relative))
+            verified.add(relative.as_posix())
+    for candidate in source.rglob('*'):
+        if candidate.is_symlink():
+            raise SystemExit('Unexpected symlink in the upstream tree')
+        if candidate.is_file() and candidate.relative_to(source).as_posix() not in verified:
+            raise SystemExit('Unexpected source file in the upstream tree: ' + candidate.relative_to(source).as_posix())
+    return verified
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--env', type=Path, required=True, help='Validated build-host environment JSON')
@@ -77,22 +104,7 @@ def main(argv=None):
     output = args.output.resolve()
     if output.exists():
         raise SystemExit('Refusing to replace an existing core; choose a fresh output path')
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != ARCHIVE_SHA:
-        raise SystemExit('Pinned upstream archive hash mismatch')
-    verified = set()
-    with tarfile.open(archive) as tar:
-        for member in tar:
-            if not member.isfile():
-                continue
-            relative = Path(*Path(member.name).parts[1:])
-            if relative.is_absolute() or '..' in relative.parts:
-                raise SystemExit('Unexpected archive path')
-            data = tar.extractfile(member).read()
-            if not (source / relative).is_file() or (source / relative).read_bytes() != data:
-                raise SystemExit('Upstream source differs from the pinned archive: ' + str(relative))
-            verified.add(relative.as_posix())
-    if any(p.relative_to(source).as_posix() not in verified for p in source.rglob('*.go')):
-        raise SystemExit('Unexpected Go source in the upstream tree')
+    verified = verify_source_tree(source, archive)
     go = context['go']
     version = subprocess.check_output([str(go), 'version'], text=True).strip()
     if 'go1.27.3 ' not in version:
