@@ -1,6 +1,6 @@
 # 访问与只读检查
 
-先阅读[环境角色](environments.md)，按私有环境选择电脑直连或经操作主机执行 SSH。
+先阅读[环境角色](environments.md)，按 `router` 角色选择从电脑直连或经操作主机执行 SSH。目标、端口和既有身份引用均从所选执行主机视角填写；改变访问方式不需要迁移构建树或缓存。
 
 ## 首次使用某个环境
 
@@ -10,8 +10,8 @@
 4. 检查build独立工作副本、构建树、缓存及输出根不是同一目录，再做源码同步dry-run。
 5. PC直连路径首次成功后，仍需验证LAN浏览器认证、断开Rock、新连接和重启；单次SSH成功不等于A8通过。
 
-当前没有因仓库整理而新建本机网卡、路由、SSH配置或服务。真实主机值由私有环境文件提供；历史文档中的占位符不应直接粘贴执行。
+实际接线、地址、SSH 用法和环境恢复说明保存在 `.local/lab/README.md` 及 `.local/lab/docs/`，不作为其他开发者的默认访问配置。
 
 日常联调可用`python scripts/device-maintenance.py --env .local/environments/current.json preflight`核对身份、核心与转发状态、空闲作业、待应用状态和revision；`resources`读取有限的进程／系统计数。全局`--expect-board`、`--expect-core-sha256`和`--manifest`可加入已知身份约束，放在子命令前。工具不会为使检查通过而启动服务或修复配置。
 
-调试前用`snapshot --save LABEL`留存私有基线，结束后用`compare SNAPSHOT_JSON`核对配置、选择和核心身份；输出只公开哈希与一致性。快照是多次读取的观察结果，不能当作事务锁。备份流程及恢复边界见[恢复说明](recovery.md)，已退役的批次脚本见本地环境资料。
+调试前用`snapshot --save LABEL`留存私有基线，结束后用`compare SNAPSHOT_JSON`核对配置、选择和核心身份；输出只公开哈希与一致性。快照是多次读取的观察结果，不能当作事务锁。备份流程及恢复边界见[恢复说明](recovery.md)。

@@ -23,7 +23,7 @@ SSH别名、身份文件和严格主机校验由已经准备好的SSH配置管�
 
 直接操作示例：构建位置保持不变，仅把router角色改为`executor=local`，从电脑使用既有SSH目标访问设备。local指电脑发起SSH，不表示在电脑运行目标架构程序。可按已有配置使用ProxyJump；工具不自动修改SSH配置。
 
-实际环境资料保存在被 Git 忽略的 `.local/lab/`，不属于项目默认配置。
+当前设备访问路径的实际值和验证记录保存在 `.local/lab/`。公开示例只表达角色关系，不预设某台构建主机或接线。
 
 traffic角色单独描述真实发流位置。只有核对源接口、地址、网关和目标后，才能把结果标为LAN回环、经核心直连、实际WAN或代理测试；不能用默认路由猜测测试路径。
 
@@ -42,7 +42,7 @@ python scripts/device.py --env .local/environments/current.json stage artifacts/
 
 同步apply要求已有成功preview，且输入和远端差异与预览一致；默认计划文件是`.local/runs/source-sync-plan.json`，可用`--plan`选择另一私有路径。stage默认只预览计划，显式`--apply`才复制并核验，固定使用`/tmp/alwayroute-stage-<hash>`暂存。
 
-旧`.local/lab/scripts/sync-rock.sh`作为兼容入口保留。工具用法和已实现的参数以各入口`--help`为准。真实环境文件与`.local/lab/`中的原始环境记录要一起受控保管；整理前资料仅作人工核对，不能当作自动执行脚本。
+工具用法和已实现的参数以各入口 `--help` 为准。环境导航位于 `.local/lab/README.md`，环境说明和专用脚本分别位于 `.local/lab/docs/`、`.local/lab/scripts/`；不直接执行历史实验脚本。
 
 ## 有限HTTPS测量
 

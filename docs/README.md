@@ -15,7 +15,7 @@
 | 维护分流数据 | [规则维护与来源](../config/routing/README.md)、[管理后端](../firmware/openwrt/alwayroute-manager/README.md) |
 | 升级与恢复 | [部署检查边界](operations/deployment.md)、[恢复条件](operations/recovery.md) |
 | 核对支持范围与硬件 | [设备列表](devices/README.md)、[移植流程](device-porting.md)、[4A适配与硬件边界](devices/xiaomi-4a.md) |
-| 查历史依据与失败 | [执行报告索引](reports/README.md)、本地环境资料 |
+| 查历史依据与失败 | [执行报告索引](reports/README.md) |
 
 ## 文档维护
 
@@ -24,4 +24,5 @@
 - 报告保留测试条件、失败、候选撤回及覆盖边界。修改错误时明确说明，不能将未执行写成已通过。
 - 真实环境、主机身份、备份索引和私有测量保存在被忽略的 `.local/` 或受控远端；公开材料只含通用角色、必要硬件事实、版本、哈希和脱敏统计。
 - 使用相对链接；路径改动后核对全部引用、脚本和测试。同步默认不删除远端旧文件，迁移后需按开发流程单独审查。
+- 当前环境导航在 `.local/lab/README.md`，环境专用文档／脚本在 `.local/lab/docs/`、`.local/lab/scripts/`，临时实验在 `.local/experiments/`，环境记录在 `.local/reports/`；这些资料不进入正式文档导航。
 - 新增长期文档或报告更新本索引或报告索引；仅改变常用入口或产品能力时修改根 README。

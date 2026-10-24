@@ -32,7 +32,6 @@ AlwayRoute/
     ├── upstream-sources.md
     ├── operations/            # 环境、访问、部署与恢复
     ├── devices/               # 公共硬件适配与刷机说明
-    ├── archive/               # 一次性整理与开发环境历史
     └── reports/               # 索引、执行事实、失败与脱敏证据
 ```
 
@@ -51,7 +50,10 @@ AlwayRoute/
 | 位置 | 用途 |
 | --- | --- |
 | `.local/environments/current.json` | 实际build／router／traffic环境；不保存密钥正文 |
-| `.local/lab/` | 私人接线、主机指纹／备份索引及整理前文档资料；不公开 |
+| `.local/lab/README.md` | 当前环境资料导航，不进入 Git |
+| `.local/lab/docs/`、`.local/lab/scripts/` | 实际接线、访问／恢复说明及环境专用脚本 |
+| `.local/experiments/`、`.local/reports/` | 一次性探针、原始测量及环境维护记录 |
+| `.local/maintenance/`、`.local/tools/` | 迁移／历史清理规则、校验映射及获准的本地工具 |
 | `.local/sources/`、`.local/source-cache/` | 锁定上游源码及归档；有用修改整理为正式补丁 |
 | `.local/incoming/`、`.local/ui-preview/` | 远端回传待审查、离线界面预览 |
 | `artifacts/` | 固件、包和原始检查产物；只提交脱敏结论、版本与哈希 |

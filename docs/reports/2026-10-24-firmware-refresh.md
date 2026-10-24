@@ -1,7 +1,7 @@
 # 资源修复固件构建与升级验证
 
 - 日期：2026-10-24（Asia/Shanghai）。状态：已完成增量构建及保留配置刷写。
-- 固件源码：`37aea1cad78ec3820311f63a1f13775934ee5fa5`；接续[资源与安全修复](2026-10-24-security-resource-fixes.md)和[配置恢复](2026-10-24-selection-recovery.md)。这是现有设备的私有实验镜像，未执行公开发布或 GitHub 冷构建。
+- 固件源码：`37aea1cad78ec3820311f63a1f13775934ee5fa5`；接续[资源与安全修复](2026-10-24-security-resource-fixes.md)和[配置恢复](2026-10-24-selection-recovery.md)。这是设备验证镜像，未执行本轮公开发布。
 
 ## 构建与产物
 

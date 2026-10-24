@@ -8,6 +8,8 @@
 
 三角色及字段见[环境说明](operations/environments.md)。公开示例只含占位值；实际配置在`.local/environments/current.json`。依赖已有Python、SSH及可用rsync／Git Bash；实际工具选择由入口帮助说明。缺少工具时报告，不安装软件，不写全局PATH、SSH配置、注册表或服务。过去获批的私有工具清单留在`.local/`供本机核对，不作为新环境已安装的证明。
 
+环境资料导航为 `.local/lab/README.md`；环境说明和专用脚本分别放 `.local/lab/docs/`、`.local/lab/scripts/`，一次性探针从创建时就放 `.local/experiments/`，原始测量与环境维护记录放 `.local/reports/`，迁移规则与校验放 `.local/maintenance/`。整个 `.local/` 由 Git 忽略，正式文档只保留通用方法。
+
 文本工作文件使用UTF-8／LF；Git索引规范化不会自动改写现有工作文件，而rsync传的是实际字节。尤其核对脚本shebang不得带CR；最终权限以包Makefile为准，不把Windows权限直接当作设备权限。
 
 ## 同步自有源码
@@ -19,7 +21,7 @@ python scripts/sync-source.py --env .local/environments/current.json
 python scripts/sync-source.py --env .local/environments/current.json --apply
 ```
 
-兼容入口`.local/lab/scripts/sync-rock.sh`保留；先以`--help`核对实际支持参数。同步只指向独立源码工作副本，禁止将整仓库目标设为`build.openwrt_tree`。Git元数据、本地私有数据、凭证、备份、第三方下载树、工具链、缓存和产物都不随源码同步。
+工具参数以 `scripts/sync-source.py --help` 为准。同步只指向独立源码工作副本，禁止将整仓库目标设为`build.openwrt_tree`。Git元数据、本地私有数据、凭证、备份、第三方下载树、工具链、缓存和产物都不随源码同步。
 
 每次先看dry-run，再apply；apply须有成功预览并核对输入与远端差异未变。计划默认保存在`.local/runs/source-sync-plan.json`，可用`--plan`选择。同步不使用全树`--delete`。本地改名删除后，远端可能留旧文件，需先核对明确路径，再单独处理；不能顺手清理构建树或缓存。包集成到OpenWrt的`package/`是另一受控步骤，不能由整仓库同步代替。
 

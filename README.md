@@ -15,7 +15,7 @@ AlwayRoute 面向 OpenWrt 路由器，提供基于 sing-box 的代理管理与�
 - [当前能力与限制](docs/status.md)：功能、性能和尚待实机验收的范围。
 - [开发与构建](docs/README.md)：开发指南、固件构建、接口与测试入口。
 - [GitHub 标签构建](docs/github-build.md)：推送版本 tag 构建当前4A固件，成功后发布下载包。
-- [历史记录](docs/reports/README.md)：历次验证、失败实验及替代关系；一次性仓库整理见本地环境资料。
+- [历史记录](docs/reports/README.md)：历次验证、失败实验及替代关系。
 
 ## 仓库内容
 

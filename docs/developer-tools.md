@@ -1,4 +1,4 @@
-# 开发工具与本地历史文件
+# 项目开发工具
 
 正式入口与环境配置共同维护；真实环境、原始输出和退役脚本不进入公开源码。工具只复用已有运行时，不自动安装软件。
 
@@ -9,7 +9,6 @@
 | `scripts/fetch-sources.py` | 锁定上游源码获取／校验；保持独立于设备连接 |
 | `scripts/build-routing.py` | 构建主机校验固定规则源并生成本地 `.srs` 与来源清单；显式允许下载，默认 IPv4，不安装工具或改写既有产物 |
 | `scripts/sync-source.py` | PC 到独立源码副本；默认预览、应用要求计划一致、传输已校验快照、不删除远端文件 |
-| `.local/lab/scripts/sync-rock.sh` | 使用本地 current 环境的兼容入口，也接受显式 `--env` |
 | `firmware/tools/sync-packages.py` | 构建机把明确选择的自有包集成到 package；默认预览、完整哈希验证，目标旧文件拒绝且不删除 |
 | `firmware/tools/render-management-defaults.py` | 显式读取部署策略生成待审首启脚本，不写构建树或设备 |
 | `firmware/tools/target_profile.py` | 离线查看设备配方、组合seed；不修改构建树或启用补丁 |
@@ -26,6 +25,6 @@
 
 构建监督器要求已有 Linux `/proc` 与 Python `waitid(WNOWAIT)`。超预算或监督异常时，对整个构建进程组发送 TERM，最多等待 20 秒；仍存活的后代升级 KILL，再等待最多 5 秒确认退出，并有界回收直接子进程。期间保留未回收的组长 PID，避免 PID／进程组编号复用导致误伤。清理未完成时状态为 `supervisor_failed_cleanup_incomplete`，不能按已停止处理。`tests/firmware/test-supervisor.py` 在 Windows 只验证隔离逻辑；真实信号、后代退出和回收用例须在已有 Linux 主机执行，测试的失败清理还要求已有 pidfd 支持。
 
-## 历史归档
+## 本地环境工具
 
-一次性脚本清理已经完成，处置依据见本地环境资料。旧刷写、停服和修改路由的实验脚本不作为当前入口，私有归档不随源码或发布产物上传。
+环境专用脚本与说明保存在 `.local/lab/scripts/` 和 `.local/lab/docs/`，导航为 `.local/lab/README.md`；临时实验在 `.local/experiments/`。它们不属于源码同步和公开发布输入。
