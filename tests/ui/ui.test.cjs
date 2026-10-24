@@ -420,6 +420,28 @@ test('new node editor omits empty optional TLS and websocket fields', () => {
   assert.equal(n.tls.serverName, undefined); assert.equal(n.transport.host, undefined); assert.equal(n.transport.path, '/');
 });
 
+test('node and subscription limits disable creation and are rechecked when modal changes commit', () => {
+  const { view } = harness(async () => ({}));
+  view.capabilities = { limits: { nodes: 1, subscriptions: 1 } };
+  let commit;
+  view.modal = (_title, _fields, c) => { commit = c; };
+
+  view.editNode();
+  view.draft.nodes.push(node());
+  assert.throws(() => commit(view.draft), /最多支持 1 个节点/);
+  let card = view.render_nodes();
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '导入节点').disabled, true);
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '添加节点').disabled, true);
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '编辑节点').disabled, false);
+
+  view.editSubscription();
+  view.draft.subscriptions.push({ id: 'sub', name: '订阅', url: 'https://example.test/sub', enabled: true, intervalHours: 0 });
+  assert.throws(() => commit(view.draft), /最多支持 1 个订阅/);
+  card = view.render_subscriptions();
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '添加订阅').disabled, true);
+  assert.equal(find(card, n => n.attrs && n.attrs['aria-label'] === '编辑订阅').disabled, false);
+});
+
 test('HTTP subscription permission defaults off and is scoped to the explicitly approved source', () => {
   const { view } = harness(async () => ({}));
   let fields, commit;

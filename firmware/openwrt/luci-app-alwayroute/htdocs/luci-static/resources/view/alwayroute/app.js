@@ -494,7 +494,8 @@ return view.extend({
 	},
 
 	render_nodes: function() {
-		var self = this, searchable = [], selected = this.selectedNodes || Object.create(null), eligible = Object.create(null);
+		var self = this, nodeLimit = this.modelLimit('nodes', 128), atNodeLimit = this.draft.nodes.length >= nodeLimit;
+		var searchable = [], selected = this.selectedNodes || Object.create(null), eligible = Object.create(null);
 		var locked = !!(this.busy || this.uncertain || this.readonly), blocked = this.dirty || this.conflict || this.state.appliedRevision == null || this.state.savedRevision !== this.state.appliedRevision;
 		this.draft.nodes.forEach(function(raw) { var n = model.effectiveNode(self.draft, raw); if (n.enabled && !n.excluded) eligible[n.id] = true; });
 		Object.keys(selected).forEach(function(id) { if (!eligible[id]) delete selected[id]; });
@@ -557,7 +558,7 @@ return view.extend({
 		return this.card('节点', [E('div', { 'class': 'ar-toolbar' }, [E('div', { 'class': 'ar-actions ar-filters' }, [search, sourceFilter]),
 			E('div', { 'class': 'ar-actions' }, [this.button('导入节点', '⇧', function() {
 				self.showImport('导入为手动节点', function(content) { return self.activateMutation('import', [self.revision, content, true], '节点已导入并生效。'); });
-			}, { text: true, disabled: this.dirty || this.conflict }), this.button('添加节点', '+', function() { self.editNode(); }, { text: true, primary: true })])]),
+			}, { text: true, disabled: atNodeLimit || this.dirty || this.conflict }), this.button('添加节点', '+', function() { self.editNode(); }, { text: true, primary: true, disabled: atNodeLimit })])]),
 			E('div', { 'class': 'ar-toolbar' }, [E('div', { 'class': 'ar-actions' }, [checkSelected,
 				this.button('扫描全部', '', function() { return self.checkAll(false); }, { text: true, disabled: blocked || !Object.keys(eligible).length }),
 				this.button('仅重试失败', '', function() { return self.checkAll(true); }, { text: true, disabled: blocked || !Object.keys(eligible).some(function(id) { var r = self.checks[id]; return r && r.checkedRevision === self.state.appliedRevision && r.healthy === 'failed'; }) })]), selection]),
@@ -598,7 +599,7 @@ return view.extend({
 	},
 
 	editNode: function(raw) {
-		var self = this;
+		var self = this, nodeLimit = this.modelLimit('nodes', 128);
 		var n = raw ? model.effectiveNode(this.draft, raw) : { name: '', type: 'vmess', enabled: true, server: '', port: 443, uuid: '', security: 'auto', alterId: 0 };
 		var name = this.input(n.name), server = this.input(n.server), port = this.input(n.port, 'number', { min: 1, max: 65535 });
 		var uuid = this.input(n.uuid, 'password', { autocomplete: 'new-password' });
@@ -625,6 +626,7 @@ return view.extend({
 			model.removeNode(next, raw.id);
 		} }] : [];
 		this.modal(raw ? '编辑节点' : '添加 VMess 节点', fields, function(next) {
+			if (!raw && next.nodes.length >= nodeLimit) throw new Error('最多支持 ' + nodeLimit + ' 个节点');
 			if (!name.value.trim() || !server.value.trim() || !uuid.value.trim()) throw new Error('名称、服务器和 UUID 必填');
 			if (!model.validPort(port.value)) throw new Error('端口须为 1–65535 的整数');
 			if (!/^\d+$/.test(alterId.value) || Number(alterId.value) > 65535) throw new Error('alterId 须为 0–65535 的整数');
@@ -713,7 +715,7 @@ return view.extend({
 	},
 
 	render_subscriptions: function() {
-		var self = this;
+		var self = this, subscriptionLimit = this.modelLimit('subscriptions', 16);
 		var rows = this.draft.subscriptions.map(function(s) {
 			var count = self.draft.nodes.filter(function(n) { return n.source === s.id; }).length;
 			return [s.name, s.enabled ? '启用' : '停用', String(count), s.intervalHours ? '每 ' + s.intervalHours + ' 小时' : '手动更新',
@@ -724,12 +726,13 @@ return view.extend({
 					self.button('从本地内容更新', '⇧', function() { self.importSubscription(s); }, { disabled: self.dirty || self.conflict || !s.enabled })])];
 		});
 		return this.card('订阅来源', [E('div', { 'class': 'ar-toolbar' }, [E('p', { 'class': 'ar-muted' }, ['订阅地址仅用于本机管理服务抓取，不发送公共转换服务。失败时保留旧节点。']),
-			this.button('添加订阅', '+', function() { self.editSubscription(); }, { text: true, primary: true })]),
+			this.button('添加订阅', '+', function() { self.editSubscription(); }, { text: true, primary: true, disabled: this.draft.subscriptions.length >= subscriptionLimit })]),
 			rows.length ? this.table(['名称', '状态', '节点数', '更新计划', '最近结果', '操作'], rows) : this.empty('暂无订阅，请先添加订阅，再更新节点。'),
 			E('p', { 'class': 'ar-muted' }, ['检测已加载、已启用且未排除的节点，逐个发送小型 HTTPS 请求；显示代理请求延迟，不自动切换出口。订阅只更新节点，不导入策略组和规则。'])]);
 	},
 	editSubscription: function(original) {
-		var self = this, s = original || { name: '', url: '', enabled: true, intervalHours: 0, allowHttp: false };
+		var self = this, subscriptionLimit = this.modelLimit('subscriptions', 16);
+		var s = original || { name: '', url: '', enabled: true, intervalHours: 0, allowHttp: false };
 		var name = this.input(s.name), url = this.input(s.url, 'password', { autocomplete: 'new-password' });
 		var enabled = this.input('', 'checkbox', { checked: s.enabled || undefined }), interval = this.input(s.intervalHours, 'number', { min: 0, max: 168 });
 		var allowHttp = this.input('', 'checkbox', { checked: s.allowHttp === true || undefined });
@@ -740,6 +743,7 @@ return view.extend({
 		this.modal(original ? '编辑订阅' : '添加订阅', [this.field('名称', name), this.field('订阅地址（敏感）', url), this.field('启用订阅', enabled),
 			this.field('更新间隔（小时）', interval, '0 表示仅手动更新；范围为 1–168 小时。'),
 			E('details', { 'class': 'ar-details' }, [E('summary', {}, ['更多选项']), this.field('允许此订阅使用未加密HTTP', allowHttp, '仅对此来源生效，HTTP 不加密传输。')])], function(next) {
+			if (!original && next.subscriptions.length >= subscriptionLimit) throw new Error('最多支持 ' + subscriptionLimit + ' 个订阅');
 			if (!name.value.trim()) throw new Error('名称必填');
 			var address = model.normalizeSubscriptionUrl(url.value, allowHttp.checked);
 			if (!/^\d+$/.test(interval.value) || Number(interval.value) > 168) throw new Error('更新间隔须为 0–168 的整数');
@@ -839,10 +843,11 @@ return view.extend({
 		next.groups = next.groups.filter(function(g) { return g.id !== group.id; });
 		return true;
 	},
-	ruleLimit: function(name, fallback) {
+	modelLimit: function(name, fallback) {
 		var value = this.capabilities && this.capabilities.limits && Number(this.capabilities.limits[name]);
 		return Number.isInteger(value) && value > 0 ? value : fallback;
 	},
+	ruleLimit: function(name, fallback) { return this.modelLimit(name, fallback); },
 	ruleValues: function(rule) {
 		if (Array.isArray(rule.values)) return rule.values.map(function(value) { return String(value); });
 		return rule.value == null ? [] : [String(rule.value)];
