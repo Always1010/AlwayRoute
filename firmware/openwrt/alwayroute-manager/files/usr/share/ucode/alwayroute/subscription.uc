@@ -109,7 +109,14 @@ function vmess(uri) {
  if(p.net=='ws')n.transport={type:'ws',path:p.path || '/',host:p.host || null};
  return n;
 };
-export function parse(content,source,hash) {
+// Use effective connection settings, excluding display names and local overrides.
+// Keep this explicit and ordered so input format/property order cannot change IDs.
+function identity(n) {
+ return sprintf('%J',[n.type,lc(n.server ?? ''),n.port,lc(n.uuid ?? ''),n.security ?? 'auto',n.alterId ?? 0,
+  n.tls?.enabled===true,n.tls?.enabled?lc(n.tls.serverName ?? n.server):null,
+  n.transport?.type ?? 'tcp',n.transport?n.transport.path ?? '/':null,n.transport?lc(n.transport.host ?? ''):null]);
+};
+export function parse(content,source,hash,previous) {
  if(type(content)!='string' || !length(content) || length(content)>131072)fail('INPUT_LIMIT','订阅必须为 1..128KiB');
  let body=trim(content), raw=[];
  if(substr(body,0,8)!='vmess://' && char(body,0)!='{' && !hasProxies(body))body=trim(decode(body));
@@ -117,9 +124,19 @@ export function parse(content,source,hash) {
  else if(hasProxies(body)) {for(let p in yaml(body))push(raw,clash(p));}
  else for(let line in split(body,'\n'))if(length(trim(line)))push(raw,vmess(trim(line)));
  if(!length(raw) || length(raw)>128)fail('INPUT_LIMIT','订阅节点数量必须为 1..128');
- let nodes=[],ids={};for(let n in raw) {
-  n.sourceKey=substr(hash(sprintf('%J',[n.type,lc(n.server ?? ''),n.port,lc(n.uuid ?? '')])),0,24);
+ // Older releases hashed only endpoint and UUID. Reuse IDs only after comparing
+ // all saved base connection settings, retaining overrides and selected/rule refs
+ // without accidentally merging distinct TLS or WebSocket connections.
+ let existing={};for(let n in previous ?? [])if(n.source==source) {
+  let key=identity(n);if(existing[key])existing[key]=false;else if(!(key in existing))existing[key]=n;
+ }
+ let nodes=[],ids={},connections={};for(let n in raw) {
+  let key=identity(n);
+  if(connections[key])fail('DUPLICATE_NODE','订阅包含重复连接身份');connections[key]=true;
+  n.sourceKey=substr(hash(key),0,24);
   n.id='s_'+source+'_'+n.sourceKey;n.source=source;n.enabled=true;node(n);
+  if(existing[key]===false)fail('MIGRATION_REQUIRED','多个现存节点具有相同连接身份，无法保留唯一节点引用');
+  if(existing[key]){n.id=existing[key].id;n.sourceKey=existing[key].sourceKey ?? n.sourceKey;}
   if(ids[n.id])fail('DUPLICATE_NODE','订阅包含重复连接身份');ids[n.id]=true;push(nodes,n);
  }
  return nodes;

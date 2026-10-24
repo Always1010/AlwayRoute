@@ -37,6 +37,20 @@ check(config.route.final=='Other' && outbound(config,'Other').default=='direct',
 check(config.route.rules[0].action=='hijack-dns' && config.route.rules[0].port==53 && config.route.rules[1].action=='sniff' && join(',',config.route.rules[1].sniffer)=='http,tls,quic','DNS hijack precedes only the hostname sniffers needed for routing');
 check(join(',',outbound(config,'Proxy').outbounds)=='direct,'+nodes[0].id && join(',',outbound(config,'OpenAI').outbounds)=='direct,'+nodes[0].id+',Proxy','every selector includes all effective nodes, even those not currently selected');
 source.ps='Renamed';check(parse('vmess://'+b64enc(sprintf('%J',source)),'demo',sha256)[0].id==nodes[0].id,'name changes keep stable IDs');
+let variants=[uri];
+for(let field,value in {scy:'aes-128-gcm',aid:'1',path:'/other',host:'other.invalid',sni:'tls.invalid',tls:''}) {let v=clone(source);v[field]=value;push(variants,'vmess://'+b64enc(sprintf('%J',v)));}
+let tcp=clone(source);tcp.net='tcp';push(variants,'vmess://'+b64enc(sprintf('%J',tcp)));
+let distinct=parse(join('\n',variants),'demo',sha256),distinctIds={};for(let n in distinct)distinctIds[n.id]=true;
+check(length(distinct)==8 && length(keys(distinctIds))==8,'security alterId WS path Host TLS SNI and transport each distinguish connection identities');
+rejected(()=>parse(uri+'\n'+'vmess://'+b64enc(sprintf('%J',source)),'demo',sha256),'renamed duplicate connections remain rejected');
+let legacyNodes=clone(nodes);legacyNodes[0].sourceKey=substr(sha256(sprintf('%J',['vmess',lc(source.add),443,lc(uuid)])),0,24);legacyNodes[0].id='s_demo_'+legacyNodes[0].sourceKey;
+let legacyRefresh=clone(m);legacyRefresh.nodes=legacyNodes;legacyRefresh.groups[0].selected=legacyNodes[0].id;legacyRefresh.overrides={};legacyRefresh.overrides[legacyNodes[0].id]={name:'Kept override',patch:{port:8443}};
+legacyRefresh.rules=[{id:'legacy_ref',enabled:true,type:'domain',value:'selected.invalid',outbound:legacyNodes[0].id}];
+legacyRefresh.nodes=parse(join('\n',variants),'demo',sha256,legacyNodes);
+check(validate(legacyRefresh).nodes[0].id==legacyNodes[0].id && legacyRefresh.nodes[0].sourceKey==legacyNodes[0].sourceKey && effective(legacyRefresh)[0].name=='Kept override' && effective(legacyRefresh)[0].port==8443,'upgrade reuses exact legacy identity preserving selection rule references and local overrides alongside new variants');
+let reordered=[];for(let i=length(variants)-1;i>=0;i--)push(reordered,variants[i]);
+check(parse(join('\n',reordered),'demo',sha256,legacyRefresh.nodes)[7].id==legacyNodes[0].id,'refresh ordering and display name changes retain migrated node identity');
+check(parse(uri,'other',sha256,legacyNodes)[0].id!='s_demo_'+legacyNodes[0].sourceKey,'identity reuse never crosses subscription ownership');
 check(parse(b64enc(uri),'demo',sha256)[0].id==nodes[0].id,'base64 subscription');
 m.overrides[nodes[0].id]={name:'Local',patch:{port:8443}};check(effective(m)[0].port==8443 && effective(m)[0].name=='Local','independent override');
 let yamlSample='proxies:\n  - name: Sample\n    type: vmess\n    server: example.invalid\n    port: 443\n    uuid: '+uuid+'\n    alterId: 0\n    cipher: auto\n    tls: true\n    network: ws\n    ws-opts:\n      path: /vmess\n      headers:\n        Host: example.invalid\n';
@@ -44,9 +58,10 @@ check(parse(yamlSample,'demo',sha256)[0].id==nodes[0].id,'strict YAML block impo
 rejected(()=>parse('proxies:\n  - { name: x, type: vmess }','demo',sha256),'incomplete flow node rejected');
 let flowFixture='port: 7890\nsocks-port: 7891\nredir-port: 7892\nallow-lan: true\nmode: global\nlog-level: debug\nexternal-controller: 0.0.0.0:9090\nsecret: synthetic-fixture-only\nproxies:\n  - { "name": "Sample, colon: value\\\"quoted", type: vmess, server: example.invalid, port: 443, uuid: '+uuid+', alterId: 0, cipher: auto, udp: true }\nproxy-groups:\n  - { name: dangerous, type: select, proxies: [DIRECT] }\nrules:\n  - MATCH,DIRECT\n';
 let flowNodes=parse(flowFixture,'demo',sha256);
-check(length(flowNodes)==1 && flowNodes[0].id==nodes[0].id,'complete Clash flow config extracts stable nodes only');
+check(length(flowNodes)==1 && flowNodes[0].id!=nodes[0].id,'complete Clash flow config extracts a distinct TCP connection without importing settings');
 check(flowNodes[0].name=='Sample, colon: value"quoted','flow scanner preserves quoted comma colon and escapes');
-let updated=clone(m);updated.nodes=flowNodes;check(effective(updated)[0].name=='Local' && effective(updated)[0].port==8443,'flow update preserves independent local override');
+let updated=clone(m);updated.nodes=flowNodes;updated.groups[0].selected=flowNodes[0].id;updated.overrides={};updated.overrides[flowNodes[0].id]={name:'Local',patch:{port:8443}};
+updated.nodes=parse(flowFixture,'demo',sha256,updated.nodes);check(effective(updated)[0].name=='Local' && effective(updated)[0].port==8443,'flow refresh preserves independent local override');
 check(index(sprintf('%J',generate(updated)),'synthetic-fixture-only')<0 && generate(updated).experimental.clash_api.external_controller=='127.0.0.1:9090','Clash system settings and credentials never pass through');
 check(length(parse(replace(flowFixture,'\n  - {','\n- {'),'demo',sha256))==1,'indentless flow sequence supported');
 rejected(()=>parse(replace(flowFixture,'cipher: auto','cipher: { nested: value }'),'demo',sha256),'nested flow structure rejected');
