@@ -5,7 +5,7 @@ import { sha256 } from 'digest';
 // networking, process execution, or persistent files are accessed by this suite.
 let files={},locked=false,active=false,checkFails=false,allChecksFail=false,failWrite=null,failRename=null,failUnlink=null,onLock=null,currentReads=0;
 let helperAvailable=true,stopFails=false,activateFails=false,guardCalls=0,stopCalls=0,delayCalls=0,forwardingMode='stopped',lastProxyReadLimit=0,lastProxyBodyLength=0,onDelay=null;
-let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null;
+let liveChoices={},restartCalls=0,putCalls=0,putFails=false,putMismatch=false,putFailAt=null,putAcceptedError=false;
 let fs={
  mkdir:()=>true,chmod:()=>true,
  readfile:function(path){if(path=='/proc/self/stat')return '123 (ucode)';if(path=='/proc/sys/kernel/random/uuid')return 'test-job';if(path=='/etc/alwayroute/current.json')currentReads++;return files[path] ?? null;},
@@ -30,7 +30,7 @@ let fs={
  }
 };
 function system(command){
- if(index(command,'--method PUT')>=0){putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;return 0;}
+ if(index(command,'--method PUT')>=0){putCalls++;if(putFails || putCalls==putFailAt){putFails=false;return 1;}let id=split(split(command,'/proxies/')[1],' ')[0],value=json(files['/tmp/alwayroute/selection.json']).name;if(!putMismatch)liveChoices[id]=value;if(putAcceptedError){putAcceptedError=false;return 1;}return 0;}
  if(index(command,'alwayroute-forwarding guard')>=0){guardCalls++;forwardingMode='guarded';}
  if(index(command,'alwayroute-forwarding stop')>=0){stopCalls++;if(stopFails)return 1;forwardingMode='stopped';}
  if(index(command,'alwayroute-forwarding activate')>=0){if(activateFails){activateFails=false;return 1;}forwardingMode='active';}
@@ -238,8 +238,9 @@ call('apply',{expectedRevision:12});work();r=call('get',{});
 let hotBase=clone(r.model),hotNext=clone(hotBase),hotTarget=hotBase.nodes[1].id;
 hotNext.groups[0].selected=hotTarget;
 let beforeRestarts=restartCalls,beforePuts=putCalls;
+putAcceptedError=true;
 call('configure',{expectedRevision:12,model:hotNext});work();r=call('get',{});
-check(call('job_status',{}).job.status=='succeeded' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls==beforeRestarts && putCalls==beforePuts+1,'proxy-to-proxy selection commits without restarting the live core');
+check(call('job_status',{}).job.status=='succeeded' && r.model.revision==13 && r.state.appliedRevision==13 && liveChoices.Proxy==hotTarget && restartCalls==beforeRestarts && putCalls==beforePuts+1,'lost PUT acknowledgement commits only after actual choice confirmation without restarting the live core');
 check(sprintf('%J',generate(r.model))==files['/tmp/alwayroute/runtime.json'] && json(files['/etc/alwayroute/lastgood.json']).revision==13 && !files['/etc/alwayroute/applying.json'],'hot switch commits runtime defaults and persistent recovery metadata together');
 hotBase=clone(r.model);
 for(let failure in ['put','readback','runtime','lastgood','current','marker','partial']) {

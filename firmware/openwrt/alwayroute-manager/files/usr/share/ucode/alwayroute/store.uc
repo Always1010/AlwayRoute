@@ -113,10 +113,20 @@ function choicesMatch(m,core) {
 }
 function putSelection(id,target) {
  // IDs are model-validated, and JSON is passed in a private file, never shell input.
- write(TMP+'/selection.json',{name:target=='block'?'direct':target});
- let ok=command('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id);
+ target=target=='block'?'direct':target;
+ write(TMP+'/selection.json',{name:target});
+ let status=system('/usr/libexec/alwayroute-timeout 3 /bin/uclient-fetch -q -T 2 --method PUT --header "Content-Type: application/json" --body-file /tmp/alwayroute/selection.json -O /dev/null http://127.0.0.1:9090/proxies/'+id+' >/dev/null 2>&1');
  fs.unlink(TMP+'/selection.json');
- if(!ok)fail('CORE_SELECT_FAILED','核心拒绝切换，正在恢复上一份配置');
+ if(status!=0) {
+  // A lost response does not prove that the PUT was rejected. Only this
+  // validated selector target may acknowledge an ambiguous transport result;
+  // switchSelections still confirms every group before committing anything.
+  for(let i=0;i<3;i++) {
+   if(running() && coreStatus().groups?.[id]?.now==target)return;
+   if(i<2)system('/bin/sleep 1');
+  }
+  fail('CORE_SELECT_FAILED','核心选择请求未确认（退出状态 '+status+'），正在恢复上一份配置');
+ }
 }
 function liveSelectionPlan(next) {
  let previous=model(),current=state(previous),good=lastGood();
