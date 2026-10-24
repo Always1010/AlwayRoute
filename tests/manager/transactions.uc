@@ -438,4 +438,20 @@ for(let diagnostic in ['/etc/alwayroute/subscription-status.json','/tmp/alwayrou
  check(!auxiliaryFailure.ok && auxiliaryFailure.error.code=='READ_FAILED' && auxiliaryFailure.error.details==null && files['/etc/alwayroute/current.json']==metadataCurrent,'corrupt auxiliary '+diagnostic+' does not advertise model recovery or replace valid current');
  if(previousDiagnostic==null)delete files[diagnostic];else files[diagnostic]=previousDiagnostic;
 }
+for(let damage in ['json','current','good']) {
+ let corruptJournal={previousRevision:json(metadataGood).revision,previousService:{enabled:true},previousGood:json(metadataGood)};
+ if(damage=='current')corruptJournal.previousCurrent=metadataInvalid;
+ if(damage=='good')corruptJournal.previousGood=metadataInvalid;
+ let journalBytes=damage=='json'?'broken journal':sprintf('%J',corruptJournal),currentBytes=damage=='good'?'broken':metadataCurrent;
+ files['/etc/alwayroute/current.json']=currentBytes;files['/etc/alwayroute/lastgood.json']=metadataGood;files['/etc/alwayroute/previous.json']=metadataHistory;files['/etc/alwayroute/applying.json']=journalBytes;
+ let journalFailure=call('get',{}),journalRevision=journalFailure.error.details.recoveryRevision,wanted=damage=='current'?json(metadataGood):json(metadataHistory);
+ check(!journalFailure.ok && journalFailure.error.details.canStop===true && journalRevision==wanted.revision,'journal '+damage+' damage advertises only a separately validated recovery copy');
+ let beforeJournalRestart=restartCalls;call('configure',{expectedRevision:json(metadataCurrent).revision,model:json(metadataCurrent)});work();
+ check(call('job_status',{}).job.status=='failed' && restartCalls==beforeJournalRestart && files['/etc/alwayroute/applying.json']==journalBytes && files['/etc/alwayroute/current.json']==currentBytes,'ordinary mutations cannot use untrusted journal '+damage+' damage to restart a core or replace metadata');
+ call('service',{action:'stop'});work();
+ check(call('job_status',{}).job.status=='succeeded' && !active && forwardingMode=='stopped' && !json(files['/etc/alwayroute/service.json']).enabled && files['/etc/alwayroute/applying.json']==journalBytes && files['/etc/alwayroute/current.json']==currentBytes && files['/etc/alwayroute/previous.json']==metadataHistory,'stop remains executable for journal '+damage+' damage without guessing or clearing interrupted metadata');
+ let replacementJournal=false;onRestart=function(){let pending=json(files['/etc/alwayroute/applying.json']);replacementJournal=pending.previousGood?.revision==journalRevision && pending.previousHistory==metadataHistory;};
+ call('rollback',{expectedRevision:journalRevision});work();onRestart=null;r=call('get',{});
+ check(call('job_status',{}).job.status=='succeeded' && replacementJournal && r.ok && r.model.revision==journalRevision+1 && r.model.nodes[0].name==wanted.nodes[0].name && r.state.appliedRevision==r.model.revision && active && !files['/etc/alwayroute/applying.json'],'rollback replaces journal '+damage+' damage with a complete atomic recovery transaction and restores the advertised model');
+}
 printf('PASS %d manager transaction checks\n',checks);

@@ -111,6 +111,14 @@ function recoveryCopy() {
  if(!good)try{good=normalized(read(DATA+'/previous.json',null));}catch(e){}
  return good;
 }
+function trustedJournal(pending) {
+ if(type(pending)!='object' || type(pending.previousService)!='object' || type(pending.previousService.enabled)!='bool' ||
+    pending.previousRevision!=null && (type(pending.previousRevision)!='int' || pending.previousRevision<0 || pending.previousRevision>2147483646) ||
+    pending.previousRunning!=null && type(pending.previousRunning)!='bool' ||
+    pending.previousHistory!=null && type(pending.previousHistory)!='string')fail('INVALID_MODEL','事务恢复标志无效');
+ if(pending.previousCurrent!=null)normalized(pending.previousCurrent);
+ if(pending.previousRevision!=null && !pendingGood(pending))fail('INVALID_MODEL','事务恢复副本无效');
+}
 function restoreMetadata(pending,good,service) {
  if(pending.previousCurrent)write(DATA+'/current.json',normalized(pending.previousCurrent));
  if(good)write(DATA+'/lastgood.json',good);
@@ -407,7 +415,15 @@ function execute(method,args) {
  if(method=='traffic')return trafficSnapshot();
  if(method=='logs') {let entries=read(TMP+'/events.json',[]),limit=int(args.limit ?? 20);if(limit<1 || limit>20)limit=20;return {ok:true,entries:slice(entries,-limit)};}
  if(method=='export')return {ok:true,model:args.includeSecrets?model():redact(model()),redacted:!args.includeSecrets};
- let interrupted=read(DATA+'/applying.json',null);
+ let interrupted=null,untrustedJournal=false,recoveryAction=method=='rollback' || method=='service' && args.action=='stop';
+ try{interrupted=read(DATA+'/applying.json',null);}catch(e) {
+  // A corrupt journal cannot describe a trusted interrupted transaction. Only
+  // explicit recovery actions may proceed; rollback replaces it atomically
+  // using a separately validated recovery copy, while stop preserves it.
+  if(!recoveryAction || !match(e.message ?? '',/^ALWAYROUTE:STORAGE_CORRUPT:/))die(e.message);
+  untrustedJournal=true;
+ }
+ if(interrupted)try{trustedJournal(interrupted);}catch(e){if(!recoveryAction)die(e.message);interrupted=null;untrustedJournal=true;}
  if(method=='check') {
   if(interrupted)fail('NOT_APPLIED','配置事务尚未恢复，请先确认服务状态');
   return checkNodes(args,model());
@@ -420,7 +436,7 @@ function execute(method,args) {
   write(TMP+'/state.json',{appliedRevision:recovery.restored?good.revision:null,healthy:'unverified'});
  }
  let m,damagedCurrent=null;
- try {m=model();}catch(e) {
+ try {if(untrustedJournal)fail('INVALID_MODEL','事务恢复标志无效');m=model();}catch(e) {
   // Stopping must not depend on the file being stopped. Recovery can use a
   // validated lastgood even when current cannot supply a revision or model.
   if(method=='service' && args.action=='stop')m={revision:null};
