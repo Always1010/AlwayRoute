@@ -1,0 +1,10 @@
+--- a/protocol/redirect/tproxy.go
++++ b/protocol/redirect/tproxy.go
+@@ -128,6 +128,7 @@
+ 		if w.destination == destination && conn != nil {
+ 			_, err := conn.WriteToUDPAddrPort(buffer.Bytes(), w.source)
+ 			if err != nil {
++				conn.Close()
+ 				w.conn = nil
+ 			}
+ 			return err

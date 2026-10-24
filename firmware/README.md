@@ -47,7 +47,7 @@ python3 firmware/tools/build-core.py --env /path/to/environment.json --device xi
 python3 firmware/tools/run-native-build.py --env /path/to/environment.json --device xiaomi-4a-gigabit
 ```
 
-上述核心命令默认关闭overlay和PGO；复现已部署优化核心仍须显式提供原有优化选项与匹配PGO。设备配方中的密码后端列表只是允许范围，不会自动启用实验。镜像检查同样接受 `--device`，原有 `--profile baseline|manager`仍表示内容检查类型，不表示硬件型号；其他必需输入继续按前述检查流程提供。
+上述核心命令默认应用资源释放修复 overlay，关闭实验密码 overlay 和 PGO；复现已部署优化核心仍须显式提供原有优化选项与匹配PGO。`011` TProxy 补丁在缓存 UDP 回写失败时显式关闭旧 socket，对所有后端生效；源码、补丁及输出哈希随核心记录，manager／release 检查要求该来源清单，定向测试见[资源释放回归](tests/resource-fixes/README.md)。设备配方中的密码后端列表只是允许范围，不会自动启用实验。镜像检查同样接受 `--device`，原有 `--profile baseline|manager`仍表示内容检查类型，不表示硬件型号；其他必需输入继续按前述检查流程提供。
 
 核心可用 `--architecture arm64`或`--architecture amd64`构建独立候选，基线分别固定为ARMv8.0和AMD64 v1，并隔离宿主CPU选项。它们只是架构构建入口，尚无新设备镜像或实机验证，不能与4A镜像混用；MIPS实验后端会在不兼容架构上被拒绝。
 

@@ -68,6 +68,9 @@ info, embedded, elf = load(args.candidate)
 backend = 'mipsle-asm-r2'
 verify(info, embedded, elf, backend)
 checks += 1
+wrong_resource = json.loads(json.dumps(info))
+wrong_resource['resource_fixes']['patch_sha256'] = '0' * 64
+rejected(lambda: verify(wrong_resource, embedded, elf, backend), 'core_resource_fixes_manifest')
 if info.get('tls_session_cache') is not None:
     wrong_tls = json.loads(json.dumps(info))
     wrong_tls['tls_session_cache']['capacity'] = 64
@@ -96,6 +99,11 @@ with tempfile.TemporaryDirectory(prefix='crypto-provenance-test-') as temporary:
     fixture_embedded = embedded.replace(str(original_stage), str(stage))
     verify(fixture, fixture_embedded, elf, backend)
     checks += 1
+    resource_source = stage / 'resource-tproxy.go'
+    original_resource = resource_source.read_bytes()
+    resource_source.write_bytes(original_resource.replace(b'\t\t\t\tconn.Close()\n', b''))
+    rejected(lambda: verify(fixture, fixture_embedded, elf, backend), 'core_resource_fixes_replacement')
+    resource_source.write_bytes(original_resource)
     if fixture.get('tls_session_cache') is not None:
         tls_source = stage / 'tls-session-std_client.go'
         original_tls = tls_source.read_bytes()

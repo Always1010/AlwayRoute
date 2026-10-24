@@ -150,8 +150,25 @@ def main(argv=None):
             overlay = json.loads(overlay_path.read_text())
         tls_sessions = helper.add_overlay(source, overlay_path.parent, overlay)
         overlay_path.write_text(json.dumps(overlay, indent=2) + '\n')
-        if crypto is not None:
-            crypto['overlay_sha256'] = hashlib.sha256(overlay_path.read_bytes()).hexdigest()
+    # Apply required correctness fixes to every backend, sharing the one Go
+    # overlay with the optional TLS and crypto replacements.
+    helper_path = Path(__file__).with_name('resource-fixes-overlay.py')
+    spec = importlib.util.spec_from_file_location('resource_fixes', helper_path)
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    if overlay_path is None:
+        stage = output.parent / (output.name + '.resource-stage')
+        if stage.exists():
+            raise SystemExit('Resource overlay stage already exists')
+        overlay_path = stage / 'overlay.json'
+        overlay = {'Replace': {}}
+        command += ['-overlay=' + str(overlay_path)]
+    else:
+        overlay = json.loads(overlay_path.read_text())
+    resource_fixes = helper.add_overlay(source, overlay_path.parent, overlay)
+    overlay_path.write_text(json.dumps(overlay, indent=2) + '\n')
+    if crypto is not None:
+        crypto['overlay_sha256'] = hashlib.sha256(overlay_path.read_bytes()).hexdigest()
     command += ['-gcflags='+flag for flag in gcflags]
     command += ['-ldflags', '-s -w -buildid= -X internal/godebug.defaultGODEBUG=multipathtcp=0 '
                 '-checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.13.21-alwayroute-router',
@@ -169,6 +186,7 @@ def main(argv=None):
                 'registry_patch_sha256': None, 'command': command,
                 'crypto_candidate': crypto,
                 'tls_session_cache': tls_sessions,
+                'resource_fixes': resource_fixes,
                 'build_environment': {k: env[k] for k in ['GOFLAGS','GOENV','GOWORK','GOEXPERIMENT','GOROOT','GOTOOLCHAIN','GOPROXY']},
                 'pgo_sha256': hashlib.sha256(args.pgo.read_bytes()).hexdigest() if args.pgo else None,
                 'embedded_build_info': subprocess.check_output([str(go), 'version', '-m', str(output)], env=env, text=True),

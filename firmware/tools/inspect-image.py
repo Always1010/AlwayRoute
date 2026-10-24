@@ -36,17 +36,22 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
     overlay_flags = [str(flag) for flag in command if str(flag).startswith(('-overlay', '-modfile'))]
     candidate = build_info.get('crypto_candidate')
     tls_sessions = build_info.get('tls_session_cache')
-    tls_target = None
-    if tls_sessions is not None:
-        tls_flags = [s for s in overlay_flags if s.startswith('-overlay=')]
-        check('core_tls_session_cache_overlay_argument', len(tls_flags) == 1)
-        tls_overlay_path = pathlib.Path(tls_flags[0].split('=', 1)[1])
-        check('core_tls_session_cache_overlay_available', tls_overlay_path.is_absolute() and tls_overlay_path.is_file())
-        tls_overlay = json.loads(tls_overlay_path.read_text())
-        spec = importlib.util.spec_from_file_location('tls_session_candidate', pathlib.Path(__file__).with_name('tls-session-overlay.py'))
-        tls_helper = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(tls_helper)
-        tls_target = tls_helper.validate_overlay(pinned, tls_overlay, tls_sessions, check)
+    reviewed_replacements = {}
+    for metadata, filename, module_name in (
+            (build_info.get('resource_fixes'), 'resource-fixes-overlay.py', 'resource_fixes'),
+            (tls_sessions, 'tls-session-overlay.py', 'tls_session_cache')):
+        if metadata is None:
+            continue
+        flags = [s for s in overlay_flags if s.startswith('-overlay=')]
+        check('core_' + module_name + '_overlay_argument', len(flags) == 1)
+        path = pathlib.Path(flags[0].split('=', 1)[1])
+        check('core_' + module_name + '_overlay_available', path.is_absolute() and path.is_file())
+        overlay = json.loads(path.read_text())
+        spec = importlib.util.spec_from_file_location(module_name, pathlib.Path(__file__).with_name(filename))
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        target = helper.validate_overlay(pinned, overlay, metadata, check)
+        reviewed_replacements[target] = overlay['Replace'][target]
     dependencies, current = [], None
     settings = {}
     for line in embedded.splitlines():
@@ -65,8 +70,8 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
     dependency = crypto_deps[0]
     checksum = 'h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts='
     if not backend:
-        check('core_no_explicit_overlay', not candidate and (not overlay_flags if tls_target is None else
-              len(overlay_flags) == 1 and tls_overlay == {'Replace': {tls_target: tls_overlay['Replace'][tls_target]}}))
+        check('core_no_explicit_overlay', not candidate and (not overlay_flags if not reviewed_replacements else
+              len(overlay_flags) == 1 and overlay == {'Replace': reviewed_replacements}))
         check('core_crypto_standard_dependency', dependency['replacement'] is None and dependency['checksum'] == checksum)
         check('core_crypto_standard_assembler', '-asmflags' not in settings
               and not any(str(flag).startswith('-asmflags') for flag in command))
@@ -123,8 +128,7 @@ def validate_crypto_provenance(build_info, embedded, core, backend, pinned, chec
         expected_manifest = json.loads((stage / name).read_text())
         check('core_crypto_exact_generated_sources', manifest.get('output_sha256') == expected_manifest['output_sha256'])
         expected_overlay = json.loads((stage / 'overlay.json').read_text().replace(str(stage), str(original_stage)))
-        if tls_target is not None:
-            expected_overlay['Replace'][tls_target] = tls_overlay['Replace'][tls_target]
+        expected_overlay['Replace'].update(reviewed_replacements)
         check('core_crypto_exact_overlay_scope', json.loads(overlay_path.read_text()) == expected_overlay)
         check('core_crypto_generated_files_unchanged', all(
             hashlib.sha256((original_stage / name).read_bytes()).hexdigest() == digest
@@ -314,6 +318,7 @@ def main(argv=None):
                                module_root=context['cache_root'] / 'gomodcache/golang.org/x/crypto@v0.48.0',
                                go_root=context['go_root'])
     if args.profile in ('manager', 'release'):
+        check('core_required_resource_fixes', isinstance(build_info.get('resource_fixes'), dict))
         tags = 'with_quic,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0'
         check('core_full_cli', build_info.get('cli_profile') == 'full' and build_info.get('entry_package') == './cmd/sing-box')
         check('core_full_registry', build_info.get('registry_profile') == 'upstream' and build_info.get('registry_patch_sha256') is None)
