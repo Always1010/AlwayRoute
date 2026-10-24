@@ -22,8 +22,8 @@ function validCore(value) {return type(value?.groups)=='object' && (value.status
 function validForwarding(value) {return value?.status=='unknown' && value.available===null && value.running===null || value?.status=='current' && type(value.available)=='bool' && (value.available===false && value.running===null || value.available===true && type(value.running)=='bool');}
 function boundedJson(command,limit) {
  let p=fs.popen('/usr/libexec/alwayroute-timeout 3 '+command+' 2>/dev/null','r');if(!p)return null;
- let body=p.read(limit+1);p.close();if(!body || length(body)>limit)return null;
- try{return json(trim(body));}catch(e){return null;}
+ let body=p.read(limit+1),status=p.close();if(status!=0 || !body || length(body)>limit)return null;
+ try{return {value:json(trim(body))};}catch(e){return null;}
 }
 function statusProcessIdentity(pid) {
  if(type(pid)!='int' || pid<=0)return null;
@@ -32,14 +32,19 @@ function statusProcessIdentity(pid) {
  return match(started ?? '',/^[0-9]+$/)?sprintf('%d:%s',pid,started):null;
 }
 function sampleService() {
- let response=boundedJson("ubus call service list '{\"name\":\"alwayroute\"}'",8192),instances=response?.alwayroute?.instances;
- if(type(instances)!='object')return {service:unknownService(),coreEpoch:null,pid:null};
+ let result=boundedJson("ubus call service list '{\"name\":\"alwayroute\"}'",8192);
+ if(!result || type(result.value)!='object')return {service:unknownService(),coreEpoch:null,pid:null};
+ let response=result.value,entry=response.alwayroute;
+ if(entry==null)return {service:{status:'current',running:false},coreEpoch:null,pid:null};
+ let instances=entry?.instances;
+ if(type(entry)!='object' || type(instances)!='object')return {service:unknownService(),coreEpoch:null,pid:null};
  let found=null;
  for(let name,instance in instances)if(instance.command?.[0]=='/usr/bin/sing-box') {
   if(found)return {service:unknownService(),coreEpoch:null,pid:null};
   found=instance;
  }
- if(!found || type(found.running)!='bool')return {service:unknownService(),coreEpoch:null,pid:null};
+ if(!found)return {service:{status:'current',running:false},coreEpoch:null,pid:null};
+ if(type(found.running)!='bool')return {service:unknownService(),coreEpoch:null,pid:null};
  if(!found.running)return {service:{status:'current',running:false},coreEpoch:null,pid:null};
  let identity=statusProcessIdentity(found.pid);
  return identity?{service:{status:'current',running:true},coreEpoch:identity,pid:found.pid}:{service:unknownService(),coreEpoch:null,pid:null};
@@ -47,14 +52,14 @@ function sampleService() {
 function sampleCore(service) {
  if(service.service.status!='current')return unknownCore();
  if(!service.service.running)return {status:'current',available:false,groups:{}};
- let response=boundedJson("/bin/uclient-fetch -q -T 2 -O - 'http://127.0.0.1:9090/proxies'",262144),groups={};
+ let response=boundedJson("/bin/uclient-fetch -q -T 2 -O - 'http://127.0.0.1:9090/proxies'",262144)?.value,groups={};
  if(!response?.proxies)return unknownCore();
  for(let tag,proxy in response.proxies)if(proxy?.type=='Selector' && type(proxy.now)=='string')groups[tag]={now:proxy.now};
  return {status:'current',available:true,groups};
 }
 function sampleForwarding() {
  if(!fs.access('/usr/libexec/alwayroute-forwarding','x'))return {status:'current',available:false,running:null,guarded:null,scope:'unverified'};
- let result=boundedJson('/usr/libexec/alwayroute-forwarding status',8192);
+ let result=boundedJson('/usr/libexec/alwayroute-forwarding status',8192)?.value;
  if(type(result?.available)!='bool' || type(result?.running)!='bool')return unknownForwarding();
  result.status='current';return result;
 }

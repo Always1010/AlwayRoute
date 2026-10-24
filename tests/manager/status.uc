@@ -2,6 +2,7 @@
 // Runtime status probes run only in the detached sampler, never in the RPC call.
 let files={},sampling=false,now=100,epochCounter=0,launches=0,serviceProbes=0,coreProbes=0,forwardingProbes=0;
 let coreStart='700',coreReply=true,onCoreProbe=null,uuidAvailable=true;
+let serviceReply={alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/bin/sing-box','run']}}}},serviceExit=0;
 function time(){return now;}
 function processStat() {let fields=['S'];for(let i=1;i<20;i++)push(fields,i==19?coreStart:'0');return '700 (sing-box) '+join(' ',fields);}
 function system(command){assert(index(command,'alwayroute-status </dev/null >/dev/null 2>&1 &')>=0,'status sampler detaches all RPC descriptors');launches++;return 0;}
@@ -17,10 +18,10 @@ let fs={
  popen:function(command){
   assert(index(command,'alwayroute-timeout 3')>=0,'every status probe has an external deadline');
   let body;
-  if(index(command,'ubus call service list')>=0){serviceProbes++;body=sprintf('%J',{alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/bin/sing-box','run']}}}});}
+  if(index(command,'ubus call service list')>=0){serviceProbes++;body=sprintf('%J',serviceReply);}
   else if(index(command,'/proxies')>=0){coreProbes++;if(onCoreProbe)onCoreProbe();body=coreReply?'{"proxies":{"Proxy":{"type":"Selector","now":"n1"}}}':'{}';}
   else {forwardingProbes++;body='{"available":true,"running":true,"scope":"test"}';}
-  return {read:()=>body,close:()=>0};
+  return {read:()=>body,close:()=>index(command,'ubus call service list')>=0?serviceExit:0};
  }
 };
 // STATUS_SOURCE
@@ -46,6 +47,13 @@ onCoreProbe=function(){coreStart='701';};sampleStatus();onCoreProbe=null;
 check(files[STATUS_ROOT+'/status.json']==null,'sample crossing an unannounced core process restart is discarded');
 coreStart='700';invalidateStatus();delete files[STATUS_ROOT+'/status.json'];coreReply=false;sampleStatus();reply=statusSnapshot();
 check(reply.snapshot.status=='current' && reply.service.running===true && reply.core.status=='unknown' && reply.core.available===null,'failed core HTTP sample remains explicitly unknown while known service state is preserved');
+coreReply=true;serviceReply={};serviceExit=0;invalidateStatus();delete files[STATUS_ROOT+'/status.json'];sampleStatus();reply=statusSnapshot();
+check(reply.service.status=='current' && reply.service.running===false && reply.core.available===false,'successful empty service list confirms that the core is stopped');
+serviceReply={alwayroute:{instances:{}}};invalidateStatus();delete files[STATUS_ROOT+'/status.json'];sampleStatus();reply=statusSnapshot();
+check(reply.service.status=='current' && reply.service.running===false,'successful service entry with no instances confirms that the core is stopped');
+serviceReply={alwayroute:{instances:{instance1:{running:true,pid:700,command:['/usr/bin/sing-box','run']}}}};serviceExit=1;invalidateStatus();delete files[STATUS_ROOT+'/status.json'];sampleStatus();reply=statusSnapshot();
+check(reply.service.status=='unknown' && reply.service.running===null && reply.core.status=='unknown','nonzero service probe exit remains unknown even when stdout resembles a valid reply');
+serviceExit=0;
 sampling=true;let before=serviceProbes;sampleStatus();sampling=false;
 check(serviceProbes==before,'concurrent status samplers cannot overlap');
 check(serviceProbes>0 && coreProbes>0 && forwardingProbes>0,'only the background sampler executes bounded external probes');
