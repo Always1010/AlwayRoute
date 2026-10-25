@@ -69,10 +69,11 @@ export function call(method,args,inline) {
   if(method!='external_save' && index(EXTERNAL_ACTIONS,method)<0)jobFail('UNSUPPORTED','纯外接包只支持外部配置、状态、应用与关闭');
   // A close request must survive BUSY and cancel an in-flight recovery. Its
   // separate durable marker never races the transaction's intent.new file.
-  if(method=='external_disable')cancelExternalRecovery();
+  let cancelError=null;
+  if(method=='external_disable')try{cancelExternalRecovery();}catch(e){cancelError=safeError(e);}
   let cancelToken=method=='external_apply'?(inline && 'cancelToken' in args?args.cancelToken:externalCancelToken()):null;
   lock=jobLock();
-  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有外接事务进行中，请稍后重试'}};}
+  if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:cancelError ?? {code:'BUSY',message:'已有外接事务进行中，请稍后重试'}};}
   if(method=='external_apply') {
    let peer=args.peer ?? {};
    if(type(peer)!='object' || length(sprintf('%J',peer))>2048)jobFail('INPUT_LIMIT','对端观察须为不超过2KiB的对象');

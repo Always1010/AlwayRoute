@@ -39,3 +39,7 @@ probeLock=false;let busyClose=call('external_disable',{},true);
 check(!busyClose.ok && busyClose.error.code=='BUSY' && metadata['/etc/alwayroute/external-stop-request.json']!=null,'close intent persists even while the manager lock is BUSY');
 probeLock=true;let resumeAfterBusy=call('external_resume',{event:true},true);
 check(resumeAfterBusy.ok && networkMode=='inactive' && !json(runtimeFiles['/etc/alwayroute/external-intent.json']).enabled,'single worker performs the pending close once the busy transaction releases');
+
+metadata['/etc/alwayroute/external-stop-request.json'].mode=0644;
+let unsafeMarkerClose=call('external_disable',{},true);
+check(unsafeMarkerClose.ok && unsafeMarkerClose.state.phase=='disabled' && metadata['/etc/alwayroute/external-stop-request.json'].mode==0644,'unsafe cancellation marker cannot prevent independent close or be silently repaired');
