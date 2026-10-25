@@ -24,6 +24,8 @@ suites = [bundle(['external-model.uc']) + '\n' + model_test,
 storage = (ROOT / 'firmware/openwrt/alwayroute-manager/files/usr/libexec/alwayroute-storage-init').read_text(encoding='utf-8')
 storage = '\n'.join(line for line in storage.splitlines() if not line.startswith(('#!', 'import ')) and line != 'prepareExternalStorage();')
 suites.append((ROOT / 'tests/manager/external-storage.uc').read_text(encoding='utf-8').replace('// EXTERNAL_STORAGE_SOURCE', storage))
+suites.append((ROOT / 'tests/manager/external-runtime.uc').read_text(encoding='utf-8').replace(
+    '// EXTERNAL_RUNTIME_SOURCE', bundle(['external-model.uc', 'external-controller.uc', 'external.uc'])))
 for suite in suites:
     result = subprocess.run(command, input=suite.encode('utf-8'), check=False)
     if result.returncode:

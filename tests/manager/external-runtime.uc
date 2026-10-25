@@ -1,6 +1,6 @@
 'use strict';
 // Exercises the real filesystem/command adapter with private in-memory paths.
-let runtimeFiles={},metadata={},networkMode='inactive',dnsLive=false,legacyLive=false,commands=[],dnsSocketMissing=false;
+let runtimeFiles={},metadata={},networkMode='inactive',dnsLive=false,legacyLive=false,commands=[],dnsSocketMissing=false,registeredEmpty=false;
 let fs={
  lstat:function(path){return metadata[path] ?? null;},
  mkdir:function(path,mode){metadata[path]={type:'directory',uid:0,mode};return true;},
@@ -17,6 +17,7 @@ let fs={
   if(index(command,'alwayroute-external-forwarding status')>=0)body={available:true,running:networkMode=='active',guarded:networkMode=='guarded',residual:networkMode!='inactive'};
   else if(index(command,'ubus call service list')>=0) {
    body={};let name=index(command,'alwayroute-external-dns')>=0?'alwayroute-external-dns':'alwayroute';
+   if(registeredEmpty)body[name]={};
    if(name=='alwayroute-external-dns' && dnsLive)body[name]={instances:{external_dns:{running:true,command:['/usr/sbin/dnsmasq','-k','--conf-file=/tmp/alwayroute/external-dns.conf']}}};
    if(name=='alwayroute' && legacyLive)body[name]={instances:{core:{running:true,command:['/usr/bin/sing-box']}}};
   }else die('unexpected command');
@@ -39,6 +40,11 @@ function system(command) {
 // EXTERNAL_RUNTIME_SOURCE
 let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
+registeredEmpty=true;
+let inactive=executeExternal('external_status',{});
+check(inactive.state.dns.running===false,'registered procd service without instances is stopped');
+check(extService('alwayroute')===false,'empty legacy procd service cannot prevent first external application');
+registeredEmpty=false;commands=[];
 let config={schema:1,revision:0,enabled:true,family:'ipv4',faultPolicy:'block',link:{interface:'br-lan',routerAddress:'192.0.2.1',gatewayAddress:'192.0.2.2',gatewayMac:'02:00:00:00:00:02'},clients:[{address:'192.0.2.3',mac:'02:00:00:00:00:03'}],dns:{gatewayPort:1053,listenPort:1053,localDomains:['lan']},bypass4:[]};
 executeExternal('external_save',{expectedRevision:0,config});
 check(length(commands)==1 && commands[0]=='/bin/sync','external save has no core or network calls');

@@ -41,6 +41,9 @@ function extService(name) {
  let result=extJson("ubus call service list '{\"name\":\""+name+"\"}'");
  if(type(result)!='object')return null;
  if(!(name in result))return false;
+ if(type(result[name])!='object')return null;
+ // procd keeps a registered service as {} after its last instance stops.
+ if(!('instances' in result[name]))return false;
  if(type(result[name]?.instances)!='object')return null;
  for(let id,instance in result[name].instances)if(instance.running===true) {
   if(name=='alwayroute-external-dns' && sprintf('%J',instance.command)!=sprintf('%J',['/usr/sbin/dnsmasq','-k','--conf-file='+EXT_TMP+'/external-dns.conf']))return null;

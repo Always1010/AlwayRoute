@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=15
+PKG_RELEASE:=16
 PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
 PKG_BUILD_DEPENDS:=luci-base/host
