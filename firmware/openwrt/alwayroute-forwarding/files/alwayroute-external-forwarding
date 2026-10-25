@@ -82,7 +82,7 @@ EOF
     [ "${#TOKEN}" -eq 36 ] || fail 'Invalid ownership token'
 }
 priority_rules() { ip -4 rule show | awk -v key="$PRIORITY:" '$1 == key'; }
-table_routes() { ip -4 route show table "$TABLE" 2>/dev/null || true; }
+table_routes() { ip -4 route show table "$TABLE" 2>/dev/null | awk '{ sub(/[[:blank:]]+$/, ""); print }'; }
 owned_rule() { [ "$(priority_rules)" = "$PRIORITY:$(printf '\t')from all fwmark $MARK lookup $TABLE" ] || [ "$(priority_rules)" = "$PRIORITY: from all fwmark $MARK lookup $TABLE" ]; }
 owned_route() { [ "$(table_routes)" = "default via $SAVED_GATEWAY dev $SAVED_LAN onlink" ]; }
 has_table() { nft -s list table inet alwayroute_external >/dev/null 2>&1; }

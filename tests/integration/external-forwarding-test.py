@@ -70,8 +70,10 @@ elif name == 'ip':
         if s.get('foreign_rule'): print('10232: from all fwmark 0x43000000/0xff000000 lookup 20233')
         elif s.get('rule'): print('10232:\tfrom all fwmark 0x42000000/0xff000000 lookup 20232')
     elif a[:4] == ['-4', 'route', 'show', 'table']:
-        if s.get('foreign_route'): print('default via 198.51.100.1 dev wan onlink')
-        elif s.get('route'): print('default via 192.0.2.2 dev br-lan onlink')
+        if s.get('foreign_route'): print('default via 198.51.100.1 dev wan onlink'+s.get('route_suffix', ''))
+        elif s.get('route'):
+            print('default via 192.0.2.2 dev br-lan onlink'+s.get('route_suffix', ''))
+            if s.get('extra_route'): print('198.51.100.0/24 dev wan  ')
     elif a[:3] == ['-4', 'route', 'add']:
         if s.get('fail_route_add'): rc = 1
         else: s['route'] = True
@@ -219,6 +221,31 @@ class ExternalForwardingTest(unittest.TestCase):
         self.assertFalse(self.read_state().get("table"))
         self.assertFalse((self.private / "external-forwarding.owner").exists())
         self.assertFalse(json.loads(self.run_adapter("status").stdout)["residual"])
+
+    def test_route_trailing_whitespace_preserves_status_and_exact_cleanup(self):
+        for suffix in (" ", "   \t "):
+            with self.subTest(suffix=suffix):
+                self.update(route_suffix=suffix)
+                self.run_adapter("activate")
+                self.assertTrue(json.loads(self.run_adapter("status").stdout)["running"])
+                self.run_adapter("stop")
+                self.assertFalse(self.read_state().get("route"))
+                self.assertFalse(json.loads(self.run_adapter("status").stdout)["residual"])
+
+    def test_trailing_whitespace_does_not_allow_foreign_or_extra_route_semantics(self):
+        for change in ({"foreign_route": True, "route_suffix": "  "},
+                       {"extra_route": True}, {"route_suffix": " metric 20 "}):
+            with self.subTest(change=change):
+                self.state.write_text("{}")
+                self.run_adapter("activate")
+                self.update(**change)
+                self.run_adapter("status", False)
+                self.run_adapter("stop", False)
+                self.assertTrue(self.read_state()["table"])
+                self.assertTrue(self.read_state()["route"])
+                self.assertTrue((self.private / "external-forwarding.owner").exists())
+                self.update(foreign_route=False, extra_route=False, route_suffix="")
+                self.run_adapter("stop")
 
     def test_activation_failure_retains_guard_and_cleanup_is_retryable(self):
         for fault in ("fail_route_add", "fail_rule_add", "fail_active"):
