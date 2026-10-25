@@ -12,10 +12,17 @@ TABLE=20232
 PRIORITY=10232
 MARK=0x42000000/0xff000000
 fail() { printf '%s\n' "$1" >&2; exit 1; }
-private_file() { [ ! -L "$1" ] && [ "$(stat -c '%F:%u:%a' "$1" 2>/dev/null)" = 'regular file:0:600' ]; }
+private_path() {
+    AR_EXTERNAL_PATH=$1 AR_EXTERNAL_KIND=$2 AR_EXTERNAL_MODE=$3 ucode -e '
+import * as fs from "fs";
+let st=fs.lstat(getenv("AR_EXTERNAL_PATH"));
+if(!st || st.type!=getenv("AR_EXTERNAL_KIND") || st.uid!=0 || st.mode!=int(getenv("AR_EXTERNAL_MODE")))exit(1);
+'
+}
+private_file() { private_path "$1" file 384; }
 init() {
-    for tool in nft ip ucode stat cmp; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
-    [ ! -L "$STATE" ] && [ "$(stat -c '%F:%u:%a' "$STATE" 2>/dev/null)" = 'directory:0:700' ] || fail 'Runtime directory must be root private'
+    for tool in nft ip ucode cmp; do command -v "$tool" >/dev/null || fail "Missing tool: $tool"; done
+    private_path "$STATE" directory 448 || fail 'Runtime directory must be root private'
     for path in "$OWNER" "$SNAPSHOT" "$RULES" "$PHASE"; do
         if [ -e "$path" ] || [ -L "$path" ]; then private_file "$path" || fail 'Unsafe ownership state'; fi
     done

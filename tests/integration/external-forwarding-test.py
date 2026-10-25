@@ -1,6 +1,7 @@
 """Isolated external adapter ownership, fail-closed and source-scope checks.
 
-Uses the real shell and ucode validator, with nft/ip/stat command doubles.
+Uses the real shell and ucode/fs metadata validator, with nft/ip command doubles.
+The isolated build user's UID substitutes for root in the test copy only.
 Does not validate nft syntax against a kernel or claim terminal acceptance.
 Run on a host with existing POSIX sh, Python 3 and ucode/fs; installs nothing.
 """
@@ -32,14 +33,7 @@ name, a = pathlib.Path(sys.argv[0]).name, sys.argv[1:]
 with pathlib.Path(str(p)+'.log').open('a') as f:
     f.write(name+' '+repr(a)+'\n')
 rc = 0
-if name == 'stat':
-    try:
-        value = pathlib.Path(a[-1]).stat()
-        kind = 'directory' if stat.S_ISDIR(value.st_mode) else 'regular file'
-        # A non-root build host can exercise the device's root-owned contract.
-        print(kind+':0:'+format(stat.S_IMODE(value.st_mode), 'o'))
-    except OSError: rc = 1
-elif name == 'nft':
+if name == 'nft':
     if a[:1] == ['-s']: a = a[1:]
     if a == ['list', 'tables']:
         rc = 1 if s.get('query_failed') else 0
@@ -112,12 +106,18 @@ class ExternalForwardingTest(unittest.TestCase):
         self.state.write_text("{}")
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        for name in ("nft", "ip", "stat"):
+        for name in ("nft", "ip"):
             command = self.bin / name
             command.write_text(DOUBLE, encoding="utf-8")
             command.chmod(0o755)
         self.script = self.root / "adapter.sh"
-        self.script.write_text(ADAPTER.read_text(encoding="utf-8").replace("/tmp/alwayroute", self.private.as_posix()), encoding="utf-8")
+        # A stat executable is intentionally unusable, as on the target image.
+        (self.bin / "stat").write_text("#!/bin/sh\nexit 91\n")
+        (self.bin / "stat").chmod(0o755)
+        source = ADAPTER.read_text(encoding="utf-8")
+        self.assertIn("st.uid!=0", source)
+        self.script.write_text(source.replace("/tmp/alwayroute", self.private.as_posix())
+                               .replace("st.uid!=0", "st.uid!="+str(os.getuid())), encoding="utf-8")
         if not os.access(UCODE, os.X_OK):
             raise RuntimeError("Configured existing host ucode is not executable")
         self.env = {**os.environ, "PATH": str(self.bin)+os.pathsep+str(Path(UCODE).parent)+os.pathsep+os.environ["PATH"],
@@ -157,6 +157,20 @@ class ExternalForwardingTest(unittest.TestCase):
                 self.state.write_text(json.dumps(failure))
                 self.run_adapter("prepare", False)
                 self.assertFalse(self.read_state().get("table"))
+
+    def test_private_metadata_needs_no_stat_and_rejects_public_files_and_links(self):
+        self.run_adapter("prepare")
+        self.runtime.chmod(0o644)
+        self.run_adapter("prepare", False)
+        self.runtime.chmod(0o600)
+        saved = self.private / "original.json"
+        self.runtime.rename(saved)
+        self.runtime.symlink_to(saved)
+        self.run_adapter("prepare", False)
+        self.runtime.unlink()
+        saved.rename(self.runtime)
+        self.private.chmod(0o755)
+        self.run_adapter("status", False)
 
     def test_active_scope_dns_loop_and_wan_leak_prevention(self):
         self.run_adapter("activate")
