@@ -1,5 +1,7 @@
 # 外接分支后端
 
+新部署先阅读[OpenWrt 外接模式部署](external-deployment.md)，核对匹配固件/包集、依赖、两端参数及当前单 IPv4 来源硬限制，再进入本文的已安装后操作。
+
 适用 `feat/external-proxy`。包含后端、LuCI 管理源码与隔离测试；各部署仍须实测来源、回程与真实终端出口。最小配置与双方责任见 [external v1 契约](../contracts/external-v1.md)。最终镜像精简属于后续工作。
 
 ## 配置、应用与状态

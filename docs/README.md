@@ -4,6 +4,7 @@
 
 | 目的 | 入口 |
 | --- | --- |
+| 在 OpenWrt 部署外接网关模式 | [外接模式部署](external-deployment.md)：能力/包集边界、双端参数、单终端启用与关闭/升级/卸载 |
 | 下载并刷入4A固件 | [4A简明刷机指南](devices/xiaomi-4a-flashing.md)，包含原厂首刷及OpenWrt升级 |
 | 了解范围及剩余工作 | [需求与A1–A9验收](requirements.md)、[实施计划](implementation-plan.md) |
 | 修改自有代码 | [仓库结构](repository-structure.md)、[接口契约](../contracts/v1.md)、[测试入口](../tests/README.md) |
