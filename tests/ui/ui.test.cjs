@@ -131,55 +131,34 @@ test('external saves draft without applying and keeps saved intent separate from
   assert.equal(view.dirty, false); assert.match(text(view.root), /草稿已保存，网络未改变/);
 });
 
-test('external operator observation starts empty and never fabricates confirmations', () => {
-  const { view, ui } = externalHarness(async () => { throw new Error('no RPC expected'); });
-  view.openObservation();
-  const fields = ui.modal.children, all = { children: fields };
-  assert.equal(fieldInput(fields, '网关 generation').value, '');
-  const checkboxes = [];
-  function visit(n) { if (!n || typeof n !== 'object') return; if (n.tag === 'input' && n.attrs.type === 'checkbox') checkboxes.push(n); (n.children || []).forEach(visit); }
-  visit(all); assert.equal(checkboxes.length, 6); assert.ok(checkboxes.every(n => n.checked === false));
-  const checks = Object.fromEntries(['coreReady', 'captureReady', 'dnsReady', 'egressViaRouter', 'returnViaRouter', 'sourcePreserved'].map((key, i) => [key, checkboxes[i]]));
-  assert.throws(() => view.readObservation(view.config, { value: 'actual-generation' }, checks), /尚未现场确认/);
-  checkboxes.forEach(n => { n.checked = true; });
-  const peer = view.readObservation(view.config, { value: 'actual-generation' }, checks);
-  assert.equal(peer.gateway, '192.0.2.2'); assert.equal(peer.revision, 4); assert.equal(peer.observedAt, undefined);
-  assert.equal(peer.method, undefined); // Server stamps operator; frontend cannot claim automatic evidence.
-  view.dirty = true; assert.throws(() => view.openObservation(), /先保存/);
-});
-
-test('external observation refuses missing router clock before submitting apply', async () => {
-  const calls = [];
-  const { view, ui } = externalHarness(async method => { calls.push(method); return { state: { observedAt: null } }; });
-  view.openObservation();
-  const fields = ui.modal.children;
-  fieldInput(fields, '网关 generation').value = 'g1';
-  const boxes = { children: fields };
-  function checkAll(n) { if (!n || typeof n !== 'object') return; if (n.tag === 'input' && n.attrs.type === 'checkbox') n.checked = true; (n.children || []).forEach(checkAll); }
-  checkAll(boxes);
-  find(boxes, n => n.attrs && n.attrs['aria-label'] === '提交观察并应用').events.click({ preventDefault() {} });
-  await new Promise(setImmediate);
-  assert.deepEqual(calls, ['external_status']); assert.ok(ui.modal); assert.match(text(boxes), /路由器时钟不可用/);
-});
-
-test('external explicit operator submission stamps fresh router clock and binds saved target', async () => {
+test('external ordinary apply submits saved revision without fabricated peer or manual form', async () => {
   const calls = [];
   const { view, ui } = externalHarness(async (method, args) => {
     calls.push([method, args]);
-    return { state: { savedRevision: 4, appliedRevision: method === 'external_apply' ? 4 : null, observedAt: 1000, phase: 'active' } };
+    return { state: { savedRevision: 4, appliedRevision: 4, observedAt: 1000, phase: 'active',
+      applicationMethod: 'gateway-dns', gatewayDns: { status: 'reachable', observedAt: 1000, cacheSeconds: 60 }, peer: { status: 'unknown' } } };
   });
-  view.openObservation();
-  fieldInput(ui.modal.children, '网关 generation').value = 'live-generation-7';
-  function confirm(n) { if (!n || typeof n !== 'object') return; if (n.tag === 'input' && n.attrs.type === 'checkbox') n.checked = true; (n.children || []).forEach(confirm); }
-  const modal = { children: ui.modal.children }; confirm(modal);
-  find(modal, n => n.attrs && n.attrs['aria-label'] === '提交观察并应用').events.click({ preventDefault() {} });
-  await new Promise(setImmediate);
-  assert.deepEqual(calls.map(c => c[0]), ['external_status', 'external_apply', 'external_status']);
-  const [revision, peer] = calls[1][1];
-  assert.equal(revision, 4); assert.equal(peer.revision, 4); assert.equal(peer.gateway, '192.0.2.2');
-  assert.equal(peer.observedAt, 1000); assert.equal(peer.generation, 'live-generation-7');
-  assert.equal(peer.sourcePreserved, true); assert.equal(peer.returnViaRouter, true);
-  assert.equal(ui.modal, null); assert.match(text(view.root), /端到端出口：未验证/);
+  assert.ok(find(view.root, n => n.attrs && n.attrs['aria-label'] === '应用已保存版本'));
+  assert.doesNotMatch(text(view.root), /网关 generation|人工观察并应用|提交观察/);
+  await view.apply();
+  assert.deepEqual(calls.map(c => c[0]), ['external_apply', 'external_status']);
+  assert.deepEqual(calls[0][1], [4]); assert.equal(ui.modal, undefined);
+  assert.match(text(view.root), /网关 UDP DNS 可达性/); assert.match(text(view.root), /仅证明 UDP 查询/);
+  assert.match(text(view.root), /端到端出口：未验证/); assert.match(text(view.root), /未验证/);
+  view.dirty = true; assert.throws(() => view.apply(), /先保存/);
+});
+
+test('external DNS failure is separate from local application and never disables routing implicitly', async () => {
+  const calls = [];
+  const { view } = externalHarness(async method => {
+    calls.push(method); return { state: { savedRevision: 4, appliedRevision: 4, desiredEnabled: true,
+      phase: 'degraded', gatewayDns: { status: 'unreachable', observedAt: 1060, cacheSeconds: 60 },
+      localForwarding: { running: true, guarded: false, residual: true }, dns: { running: true } } };
+  });
+  await view.refreshStatus();
+  assert.deepEqual(calls, ['external_status']);
+  assert.match(text(view.root), /查询失败/); assert.match(text(view.root), /转发：运行/);
+  assert.match(text(view.root), /端到端出口：未验证/);
 });
 
 test('external independent disable survives unreadable config and waits for matching job completion', async () => {
@@ -215,7 +194,7 @@ test('external failed jobs retain input and block repeated apply while leaving i
   view.inputs.gatewayAddress.value = '192.0.2.20';
   await view.operate('external_apply', [4, {}]);
   assert.equal(view.uncertain, true); assert.equal(view.inputs.gatewayAddress.value, '192.0.2.20');
-  assert.equal(find(view.root, n => n.attrs['aria-label'] === '人工观察并应用已保存版本').disabled, true);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '应用已保存版本').disabled, true);
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '关闭外部代理，恢复普通直连').disabled, false);
   assert.match(text(view.root), /EXTERNAL_APPLY_FAILED/);
 });

@@ -38,11 +38,17 @@
 
 ## 管理与状态
 
-新增认证 RPC：`external_get`、`external_status`、`external_save(expectedRevision, config)`、`external_apply(expectedRevision, peer)`、`external_disable`。保存只递增 revision，不触网；应用以保存版本做 CAS。耗时应用/关闭沿用后台 job 和 manager 锁，外部操作不生成、不校验、不启动本机代理核心。
+新增认证 RPC：`external_get`、`external_status`、`external_save(expectedRevision, config)`、`external_apply(expectedRevision, peer?)`、`external_disable`。保存只递增 revision，不触网；应用以保存版本做 CAS。耗时应用/关闭沿用后台 job 和 manager 锁，外部操作不生成、不校验、不启动本机代理核心。
 
-首轮不发明跨设备控制 API。`peer` 是管理员现场核验后提交的短期观察，必须匹配 gateway、所请求 revision 和对端 generation，携带 `observedAt`；应用时最多 30 秒。观察明确声明 `coreReady`、`captureReady`、`dnsReady`、`egressViaRouter`、`returnViaRouter` 以及 `sourcePreserved`。所有值必须为 true；ping、端口可连、显式代理成功均不能代替这些观察。该观察标记为 `operator`，不会被描述为机器独立证实或终端已验收。重启后旧观察不再用于自动激活；先恢复阻断，再重新观察和显式应用。
+日常应用只提交 `expectedRevision`，缺省或空对象 `peer` 使用网关 UDP DNS 预检：从已校验配置读取 gateway IPv4 和 `dns.gatewayPort`，用现有 nslookup 向该入口查询固定的 `example.com`，由既有超时工具限制为 3 秒。每次应用强制新查询，不复用状态缓存；无新依赖、网关控制 API 或后台监控服务。查询失败发生在转发预备与网络修改之前，保留原状态；原已开启状态继续保留既有转发与故障阻断语义，绝不自动切直连。缺少兼容的 nslookup 或超时工具同样视为预检失败。
 
-状态区分 `savedRevision`、`desiredEnabled`、`appliedRevision`、`phase`、`localForwarding`、`dns`、`peer` 和 `lastError`，带 `observedAt`。本地规则存在、DNS 进程存活、对端观察与真实终端出口分别报告；`endToEnd` 始终保持 `unverified`，由联合验收记录证明，不能由 RPC 自行写成通过。对端观察过期时报告 unknown/degraded，不能继续显示健康。首版没有跨设备自动监测协议。
+UDP 查询成功仅证明当时该入口能回答这次 UDP DNS 查询，不证明 TCP DNS、网关核心、流量接管、真实来源、出站或回程。不得据此填入人工观察六项 true、生成 generation 或宣称端到端通过。网关策略和路径仍需按联合验收门槛实测。
+
+兼容保留非空 `peer` 的人工观察路径：必须匹配 gateway、所请求 revision 和对端 generation，携带 `observedAt`，应用前后最多 30 秒。`coreReady`、`captureReady`、`dnsReady`、`egressViaRouter`、`returnViaRouter`、`sourcePreserved` 均需基于实测为 true。此路径标记为 `operator`，不会描述为机器独立证实或终端已验收；网页的正常保存/应用流程不要求填写此表。
+
+状态区分 `savedRevision`、`desiredEnabled`、`appliedRevision`、`phase`、`applicationMethod`、`localForwarding`、`dns`、`gatewayDns`、`peer` 和 `lastError`。`applicationMethod:gateway-dns` 与 `operator` 分别记录应用依据；本地应用、专用 DNS 进程/监听、网关 UDP DNS 观察和端到端出口分开报告。`gatewayDns` 带 `method:udp-query`、`status`（`reachable` / `unreachable` / `unknown`）、`observedAt`、`ageSeconds` 和 `cacheSeconds:60`。`external_status` 仅对正常活动的 DNS 应用模式观察已应用配置，独立 `/tmp` 私有缓存每 60 秒至多发起一次新观察并刷新缓存，轮询不改事务状态；缓存过期而锁忙或缓存不可用时报告 unknown，不能沿用旧值声称当前健康。缓存损坏或不安全不阻止显式应用/关闭，不修复未知权限或链接。`external_get` 只返回已有快照，不发出查询。
+
+`phase:active` 只表示本地应用及该模式的有界观察符合条件，绝不代表完整路径通过。DNS 模式不受人工观察的 30 秒期限影响；DNS 失败/未知或本地检查失败报告 degraded，保留开启意图与转发。兼容人工观察过期仍报告 unknown/degraded。`endToEnd` 与 `baseConnectivity` 始终为 `unverified`，由实际终端验收证明，不能由 RPC 写成通过。重启与事件恢复仍先阻断、再显式重新应用，不复用旧观察自动激活。
 
 ## 事务、关闭与恢复
 
@@ -50,7 +56,7 @@
 
 独立关闭不读取旧节点模型、不依赖外部设备在线，不因配置损坏失去入口；先停止重建意图，再核对并撤销自有资源，失败保留残留并允许重试。仅清理与本地基础条件确认成功后报告 `disabled`；WAN、DNS 与真实终端直连仍需联合验收。不会清空全局防火墙、路由表或 conntrack。
 
-启动、网络及 firewall 事件使用同一个锁和持久意图。开启意图下先建立阻断，重新观察后显式应用；关闭不复活代理。与本机核心共存或资源归属不明时拒绝开启，先使用已有本机停止入口退出本机模式，不隐式切换旧配置。
+启动、网络及 firewall 事件使用同一个锁和持久意图。开启意图下先建立阻断，重新预检后显式应用；关闭不复活代理。与本机核心共存或资源归属不明时拒绝开启，先使用已有本机停止入口退出本机模式，不隐式切换旧配置。
 
 ## 联合验收门槛
 

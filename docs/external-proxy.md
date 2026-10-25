@@ -1,6 +1,6 @@
 # 外接分支后端
 
-适用 `feat/external-proxy`。本轮交付后端、LuCI 管理源码与隔离测试，尚未经过真实内核或终端联合验收。最小配置与双方责任见 [external v1 契约](../contracts/external-v1.md)。最终镜像精简属于后续工作。
+适用 `feat/external-proxy`。包含后端、LuCI 管理源码与隔离测试；各部署仍须实测来源、回程与真实终端出口。最小配置与双方责任见 [external v1 契约](../contracts/external-v1.md)。最终镜像精简属于后续工作。
 
 ## 配置、应用与状态
 
@@ -10,15 +10,19 @@
 | --- | --- |
 | `external_get` | 返回独立外部配置和缓存状态，不读取旧节点模型 |
 | `external_save` | `{expectedRevision, config}`；校验并递增保存版本，不修改网络 |
-| `external_apply` | `{expectedRevision, peer}`；进入后台 job；保存配置的 `enabled:false` 转为独立关闭 |
-| `external_status` | 有界检查自有转发、专用 DNS 进程与 UDP/TCP 监听；外部观察过期显示 unknown/degraded |
+| `external_apply` | `{expectedRevision, peer?}`；日常只需版本，进入后台 job；保存配置的 `enabled:false` 转为独立关闭 |
+| `external_status` | 有界检查自有转发、专用 DNS 进程与 UDP/TCP 监听；DNS 应用模式按 60 秒间隔缓存网关 UDP DNS 观察 |
 | `external_disable` | 无参数；后台关闭，不要求当前配置可读、对端在线或旧节点有效 |
 
 应用与关闭沿用 `job_status`，按 job id 等待终态，再重新读取外部状态。`external_get/save/apply/disable` 需要管理写权限；只有 `external_status` 开放给现有只读管理权限。
 
-`peer` 由操作者在现场检查后填写，包含目标 gateway、路由器 revision、网关 generation、当前路由器时钟下的 observedAt，以及核心、接管、DNS、来源保留和经路由器出站/回程的明确确认。观察最多 30 秒，应用前后都复核；标记为 operator，不能当作已经实现跨设备自动探测。不要从合成测试复制 true 值去绕过现场检查。
+普通 `external_apply` 不提交 `peer`（rpcd 默认空对象也视为未提交）。后端先用现有 `/usr/libexec/alwayroute-timeout 3` 运行 `nslookup -port=<gatewayPort> example.com <gatewayAddress>`；地址和端口只来自已严格校验的配置，固定查询名，不插入任意命令片段。每次应用强制新查，失败时不进入转发预备或修改网络；原已开启则继续保留既有故障阻断路径。不安装依赖、不控制网关。目标须已有支持指定端口的 nslookup，缺少命令同样会拒绝开启。
 
-`phase:active` 表示本地应用已确认，不代表节点、所有 DNS 业务或终端出口已经通过。`endToEnd` 与 `baseConnectivity` 保持 `unverified`。关闭的 disabled 仅确认自有接管、专用 DNS 与本机核心已清理；真实普通直连仍需单终端验收。
+成功只说明网关当时回答了一次 UDP DNS 查询。`applicationMethod:gateway-dns`、`gatewayDns.status:reachable`、本地 `phase:active` 分开报告，不能据此确认 TCP DNS、核心、接管、原始来源、实际 WAN 出口或回程；`peer` 保持 unknown，不伪造 generation 或六项 true。`endToEnd` 与 `baseConnectivity` 保持 `unverified`。关闭的 disabled 仅确认自有接管、专用 DNS 与本机核心已清理，真实普通直连仍需单终端验收。
+
+`external_status` 对 DNS 应用模式的已应用配置进行有界观察，`gatewayDns` 展示 UDP 范围、`observedAt`、观察年龄 `ageSeconds` 与 `cacheSeconds:60`。观察结果只在 `/tmp` 的独立私有缓存保存，每 60 秒至多发起一次新观察并刷新缓存，5 秒页面轮询不重复发查询或写事务状态；`external_get` 不查询。缓存到期时重新查询；失败为 unreachable，锁忙或不能取新观察则为 unknown，均显示 degraded，保留开启意图和既有转发。DNS 应用模式不因不存在人工观察而在 30 秒后无条件降级。缓存损坏不成为应用或关闭前提，未知文件权限/链接不会自动修复。
+
+兼容 API 可显式提供非空 `peer`，由操作者提交实测的目标 gateway、revision、generation、路由器时钟 observedAt 与六项确认，应用前后不超过 30 秒，标记为 operator。该兼容路径仍会在观察过期时显示 unknown/degraded。网页正常应用不再提供或要求人工表；合成测试值不能代替现场证据。
 
 ## LuCI 操作
 
@@ -26,10 +30,10 @@
 
 1. 首次切换前，展开“首次从本机代理切换”，显式停止当前代理服务。该操作只停止，不会开启外部代理；已经处于外接模式时会关闭外部接管。
 2. 填写单终端的链路、来源与 DNS，选择“保存为开启”，保存草稿。页面分别展示已保存开关/版本、持久期望和实际应用；保存成功只表示草稿递增版本，不改变网络。可保存关闭草稿，但立即关闭应使用独立关闭按钮。
-3. 在现场实测网关核心、接管、DNS、来源保留和经路由器出站/回程后，打开“人工观察并应用已保存版本”。填写真实网关运行 generation，逐项确认事实；各项默认不勾选，也不从旧状态回填。勾选本身不是路径证据，ping、端口可连或显式代理成功不能替代实测。
-4. 提交时页面读取最新 `external_status.state.observedAt`，将路由器时钟作为本次明确人工确认的时刻；无有效时钟则拒绝提交。目标与 revision 绑定已保存配置，后端仍在应用前后校验观察的 30 秒有效期。页面不会探测或控制网关，也不会用本地电脑时间或旧观察代替。
-5. 应用/关闭等待匹配 job id 的后台终态，然后重新读取实际状态。失败或结果未确认时暂停常规写操作，保留输入，使用重新读取核对状态。刷新页面发现运行中任务时可通过重新读取接回等待。故障、观察过期和读取失败均单独显示；轮询只更新状态区，不覆盖编辑中的表单。
-6. “关闭外部代理，恢复普通直连”是独立恢复入口，即使外部配置不可读仍可调用，也不要求对端在线。关闭失败可重试；`disabled` 只确认本地自有资源清理，真实终端普通直连仍须验收。只读账户只查询状态与后台任务，不读取管理配置或提供可写操作。
+3. 选择“应用已保存版本”。页面只提交版本，不要求填写 generation 或勾选人工确认。后端以网关 UDP DNS 新查询预检，再应用本地来源防护、专用 DNS 与转发；保存了关闭草稿时，此应用走独立关闭。
+4. 应用/关闭等待匹配 job id 的后台终态，然后重新读取实际状态。失败或结果未确认时暂停常规写操作，保留输入，使用重新读取核对状态。刷新页面发现运行中任务时可重新读取接回等待。DNS 失败/未知、人工观察过期和读取失败分别展示；轮询只更新状态区，不覆盖编辑中的表单。
+5. 确认“本地已应用”和“网关 UDP DNS 可达”后，仍需实测终端出口、来源保留、出站与回程。页面始终标注端到端未验证，不把 DNS 成功提升为核心或整条路径通过。
+6. “关闭外部代理，恢复普通直连”是独立恢复入口，即使外部配置不可读仍可调用，也不要求对端在线、人工观察或缓存有效。关闭失败可重试；`disabled` 只确认本地自有资源清理，真实终端普通直连仍须验收。只读账户只查询状态与后台任务，不读取管理配置或提供可写操作。
 
 前端关键逻辑可使用已有 Node 执行 `node --test tests/ui/ui.test.cjs`；RPC/ACL/入口契约执行 `python3 tests/integration/check-contract.py`。合成 DOM 和 RPC 测试不等于固定 LuCI 实机渲染、认证、内核或端到端验收。
 
@@ -41,7 +45,7 @@
 
 旧 Rule/Global/Direct 不自动迁移为外部启用。首次外部应用要求本机代理已显式停止。外部模式的旧节点应用、检测和核心启动会被拒绝，capabilities 如实关闭这些能力；包安装依赖暂时保留，最终镜像再精简。
 
-应用顺序为：预检 → 持久 journal → guard → 专用 DNS → 外部路由/nft → 本地确认 → committed journal → 元数据提交与清理。committed 是提交点，后续元数据错误不会把已提交目标当作未提交回滚。旧状态开启而应用失败时恢复原来源阻断，重新观察后显式应用。链路、来源、LAN 前缀或 DNS 监听端口变化必须先关闭旧范围。
+应用顺序为：预检 → 持久 journal → guard → 专用 DNS → 外部路由/nft → 本地确认 → committed journal → 元数据提交与清理。committed 是提交点，后续元数据错误不会把已提交目标当作未提交回滚。旧状态开启而应用失败时恢复原来源阻断，重新预检后显式应用。链路、来源、LAN 前缀或 DNS 监听端口变化必须先关闭旧范围。
 
 独立维护入口：
 

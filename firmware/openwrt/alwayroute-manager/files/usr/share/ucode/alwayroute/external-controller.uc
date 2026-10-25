@@ -23,9 +23,16 @@ export function externalController(io) {
   let config=readConfig(),desired=intent(),runtime=io.read('state') ?? {},pending=journal(),peer=runtime.peer ?? null;
   let fresh=peer!=null && type(peer.observedAt)=='int' && peer.observedAt<=io.now() && io.now()-peer.observedAt<=30;
   let phase=pending?'recovering':(runtime.phase ?? (desired.enabled?'unknown':'disabled'));
-  if(phase=='active' && !fresh)phase='degraded';
+  let method=runtime.applicationMethod ?? (peer?'operator':'unknown'),gatewayDns=runtime.gatewayDns ?? null;
+  if(inspection && phase=='active' && desired.enabled && method=='gateway-dns' && !pending) {
+   // Observe the applied target, never a newly saved draft. The adapter caches
+   // this separately from transaction state, since status readers do not lock.
+   gatewayDns=io.gatewayDns(validateExternal(io.read('good')),false);
+  }
+  let dnsFresh=gatewayDns!=null && type(gatewayDns.observedAt)=='int' && gatewayDns.observedAt<=io.now() && io.now()-gatewayDns.observedAt<60;
+  if(phase=='active' && (method=='operator' && !fresh || method=='gateway-dns' && (!dnsFresh || gatewayDns.reachable!==true)))phase='degraded';
   if(inspection && phase=='active' && desired.enabled && (inspection.network?.running!==true || inspection.dns?.running!==true))phase='degraded';
-  return {savedRevision:config.revision,desiredEnabled:desired.enabled,desiredRevision:desired.revision,appliedRevision:pending?null:(runtime.appliedRevision ?? null),phase,localForwarding:inspection?.network ?? {status:'unknown'},dns:inspection?.dns ?? {status:'unknown'},peer:peer?{method:'operator',generation:peer.generation,observedAt:peer.observedAt,status:fresh?'reported':'unknown'}:{status:'unknown'},lastError:runtime.lastError ?? null,observedAt:inspection?io.now():null,endToEnd:'unverified',baseConnectivity:'unverified'};
+  return {savedRevision:config.revision,desiredEnabled:desired.enabled,desiredRevision:desired.revision,appliedRevision:pending?null:(runtime.appliedRevision ?? null),phase,applicationMethod:method,localForwarding:inspection?.network ?? {status:'unknown'},dns:inspection?.dns ?? {status:'unknown'},gatewayDns:{method:'udp-query',status:dnsFresh && gatewayDns.reachable!=null?(gatewayDns.reachable===true?'reachable':'unreachable'):'unknown',observedAt:gatewayDns?.observedAt ?? null,ageSeconds:gatewayDns?.observedAt!=null && gatewayDns.observedAt<=io.now()?io.now()-gatewayDns.observedAt:null,cacheSeconds:60},peer:peer?{method:'operator',generation:peer.generation,observedAt:peer.observedAt,status:fresh?'reported':'unknown'}:{status:'unknown'},lastError:runtime.lastError ?? null,observedAt:inspection?io.now():null,endToEnd:'unverified',baseConnectivity:'unverified'};
  }
  function get() {return {ok:true,config:readConfig(),state:state()};}
  function status() {return {ok:true,state:state(io.inspect())};}
@@ -36,8 +43,8 @@ export function externalController(io) {
   if(next.revision!==current.revision || next.revision>=2147483645)externalError('REVISION_CONFLICT','外部候选版本不匹配或已达上限');
   next.revision++;io.write('config',next);io.sync();return get();
  }
- function remember(phase,config,peer,error) {
-  io.write('state',{phase,appliedRevision:phase=='active'?config.revision:null,peer:peer ?? null,lastError:error ?? null});
+ function remember(phase,config,peer,error,gatewayDns) {
+  io.write('state',{phase,appliedRevision:phase=='active'?config.revision:null,applicationMethod:gatewayDns?'gateway-dns':peer?'operator':'unknown',gatewayDns:gatewayDns ?? null,peer:peer ?? null,lastError:error ?? null});
  }
  function removeJournal() {io.remove('journal');io.sync();}
  function disable() {
@@ -74,12 +81,19 @@ export function externalController(io) {
   if(journal())externalError('RECOVERY_REQUIRED','存在未完成外部事务，请先恢复或关闭');
   let config=readConfig();checked(args.expectedRevision,config);
   if(!config.enabled)return disable();
-  let peer=validateExternalPeer(args.peer,config,io.now());
+  // rpcd supplies {} for an omitted object argument. Only an actually supplied
+  // nonempty observation selects the compatibility operator path.
+  let automated=args.peer==null || type(args.peer)=='object' && length(keys(args.peer))==0;
+  let peer=automated?null:validateExternalPeer(args.peer,config,io.now()),gatewayDns=null;
   let previous=io.read('good');if(previous!=null)previous=validateExternal(previous);
   if(io.read('state')?.lastError=='EXTERNAL_STOP_FAILED')externalError('RECOVERY_REQUIRED','上次关闭未完成，请先重试关闭');
   function scope(c) {return sprintf('%J',[c.link.interface,c.link.routerAddress,c.link.gatewayAddress,c.link.gatewayMac,c.clients,c.dns.listenPort]);}
   if(previous?.enabled && scope(previous)!=scope(config))externalError('SCOPE_CHANGE_REQUIRES_DISABLE','变更链路或终端前须先显式关闭旧接管范围');
   if(io.localCore())externalError('LOCAL_CORE_ACTIVE','请先显式停止本机代理，再启用外部代理');
+  if(automated) {
+   gatewayDns=io.gatewayDns(config,true);
+   if(gatewayDns?.reachable!==true)externalError('EXTERNAL_PREFLIGHT_FAILED','网关DNS有界查询失败，原状态保持；未证明核心或端到端路径');
+  }
   // Preflight can prepare private files but cannot commit network state.
   try{io.prepare(config);}catch(e){if(previous?.enabled)io.runtime(previous);else io.clearRuntime();externalError('EXTERNAL_PREFLIGHT_FAILED','外部网络或专用DNS预检失败，原状态保持');}
   let pending={schema:1,phase:'applying',target:config,previous};
@@ -88,7 +102,7 @@ export function externalController(io) {
    io.write('intent',{enabled:true,revision:config.revision});io.sync();
    io.guard(config);io.startDns(config);io.activate(config);
    // A slow activation may outlive its observation. Never commit stale proof.
-   peer=validateExternalPeer(args.peer,config,io.now());
+   if(!automated)peer=validateExternalPeer(args.peer,config,io.now());
    let actual=io.inspect();
    if(actual.network?.running!==true || actual.network?.guarded!==false || actual.dns?.running!==true || actual.localCore!==false)externalError('EXTERNAL_CONFIRM_FAILED','外部本地应用未确认');
   }catch(e) {
@@ -104,7 +118,7 @@ export function externalController(io) {
   pending.phase='committed';pending.peer=peer;
   io.write('journal',pending);io.sync(); // unique durable commit point
   // Once committed, metadata cleanup errors must not roll the target back.
-  io.write('good',config);remember('active',config,peer);io.sync();removeJournal();
+  io.write('good',config);remember('active',config,peer,null,gatewayDns);io.sync();removeJournal();
   return status();
  }
  function reconcile() {

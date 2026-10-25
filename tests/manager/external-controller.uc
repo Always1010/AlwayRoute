@@ -1,7 +1,7 @@
 'use strict';
 // EXTERNAL_SOURCE
 
-let files={},network='inactive',dns=false,localCore=false,now=100,operations=[],failAt=null,failWrite=null,failRemove=null,failSequence=[],guardedConfig=null;
+let files={},network='inactive',dns=false,localCore=false,now=100,operations=[],failAt=null,failWrite=null,failRemove=null,failSequence=[],guardedConfig=null,gatewayReachable=true;
 function copy(value) {return value==null?null:json(sprintf('%J',value));}
 function operation(name) {push(operations,name);if(name==failSequence[0]){shift(failSequence);die('injected sequential failure');}if(name==failAt){failAt=null;die('injected operational failure');}}
 let io={
@@ -9,6 +9,7 @@ let io={
  write:function(key,value){if(key==failWrite){failWrite=null;die('injected storage failure');}files[key]=copy(value);},
  remove:function(key){if(key==failRemove){failRemove=null;die('injected unlink failure');}delete files[key];},
  now:()=>now,sync:()=>operation('sync'),runtime:function(config){operation('runtime');},clearRuntime:()=>operation('clear'),localCore:()=>localCore,
+ gatewayDns:function(config,force){operation('gatewayDns');return {gateway:config.link.gatewayAddress,port:config.dns.gatewayPort,reachable:gatewayReachable,observedAt:now};},
  prepare:function(config){operation('prepare');},guard:function(config){operation('guard');network='guarded';guardedConfig=copy(config);},
  startDns:function(config){operation('dns');dns=true;},activate:function(config){operation('activate');network='active';},
  stopDns:function(){operation('stopDns');dns=false;},stop:function(){operation('stop');network='inactive';dns=false;localCore=false;},
@@ -17,7 +18,7 @@ let io={
 let engine=externalController(io),checks=0;
 function check(ok,message) {checks++;assert(ok,message);}
 function fails(callback,code) {let error=null;try{callback();}catch(e){error=e.message;}check(error!=null && (code==null || index(error,'ALWAYROUTE:'+code+':')==0),'expected '+(code ?? 'failure')+', got '+(error ?? 'success'));}
-function reset() {files={};network='inactive';dns=false;localCore=false;now=100;operations=[];failAt=null;failWrite=null;failRemove=null;failSequence=[];guardedConfig=null;}
+function reset() {files={};network='inactive';dns=false;localCore=false;now=100;operations=[];failAt=null;failWrite=null;failRemove=null;failSequence=[];guardedConfig=null;gatewayReachable=true;}
 function config() {return {schema:1,revision:0,enabled:true,family:'ipv4',faultPolicy:'block',link:{interface:'br-lan',routerAddress:'192.0.2.1',gatewayAddress:'192.0.2.2',gatewayMac:'02:00:00:00:00:02'},clients:[{address:'192.0.2.3',mac:'02:00:00:00:00:03'}],dns:{gatewayPort:1053,listenPort:1053,localDomains:['lan']},bypass4:[]};}
 function save() {return engine.save({expectedRevision:0,config:config()});}
 function peer() {return {gateway:'192.0.2.2',revision:files.config.revision,generation:'synthetic-generation',observedAt:now,coreReady:true,captureReady:true,dnsReady:true,egressViaRouter:true,returnViaRouter:true,sourcePreserved:true};}
@@ -69,4 +70,20 @@ reset();save();apply();let wider=copy(files.config);wider.bypass4=['203.0.113.0/
 failSequence=['activate','stopDns'];fails(apply,'EXTERNAL_RECOVERY_FAILED');
 check(files.journal!=null && network=='guarded' && length(guardedConfig.bypass4)==0,'failed recovery never broadens bypass to an uncommitted candidate');
 engine.reconcile();check(files.journal==null && files.intent.enabled && network=='guarded','partial recovery remains retryable with previous confirmed scope');
+
+reset();save();gatewayReachable=false;operations=[];
+fails(()=>engine.apply({expectedRevision:1}),'EXTERNAL_PREFLIGHT_FAILED');
+check(network=='inactive' && files.intent==null && files.journal==null && index(operations,'prepare')<0 && index(operations,'guard')<0,'failed DNS preflight never prepares or mutates forwarding');
+gatewayReachable=true;let automatic=engine.apply({expectedRevision:1,peer:{}});
+check(automatic.state.phase=='active' && automatic.state.applicationMethod=='gateway-dns' && automatic.state.gatewayDns.status=='reachable','omitted rpcd peer selects bounded DNS preflight');
+check(files.state.peer==null && automatic.state.peer.status=='unknown' && automatic.state.endToEnd=='unverified','DNS success cannot fabricate operator or end-to-end evidence');
+now=131;check(engine.status().state.phase=='active','DNS mode has no artificial 30 second operator expiry');
+gatewayReachable=false;let before=copy(files.state);operations=[];
+fails(()=>engine.apply({expectedRevision:1}),'EXTERNAL_PREFLIGHT_FAILED');
+check(network=='active' && sprintf('%J',files.state)==sprintf('%J',before) && index(operations,'guard')<0,'failed enabled preflight preserves applied forwarding and state');
+check(engine.status().state.phase=='degraded' && files.intent.enabled && network=='active','DNS failure reports degradation while retaining the selected fail-closed route');
+gatewayReachable=true;check(engine.status().state.phase=='active','fresh DNS success can recover observation without reapplying forwarding');
+dns=false;check(engine.status().state.phase=='degraded' && network=='active','local DNS fault also degrades without opening direct access');
+files.config='corrupt';files.good='corrupt';operations=[];engine.disable();
+check(network=='inactive' && index(operations,'gatewayDns')<0,'independent close never probes gateway or reads the applied configuration');
 print(sprintf('PASS external transaction and independent close: %d checks\n',checks));

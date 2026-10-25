@@ -1,9 +1,10 @@
 'use strict';
 import * as fs from 'fs';
 import { externalController } from 'alwayroute.external-controller';
+import { externalIPv4 } from 'alwayroute.external-model';
 
 const EXT_DATA='/etc/alwayroute',EXT_TMP='/tmp/alwayroute';
-const EXT_FILES={config:'external-config.json',intent:'external-intent.json',good:'external-lastgood.json',journal:'external-journal.json',mode:'external-mode.json',state:'external-state.json'};
+const EXT_FILES={config:'external-config.json',intent:'external-intent.json',good:'external-lastgood.json',journal:'external-journal.json',mode:'external-mode.json',state:'external-state.json',dnsProbe:'external-dns-probe.json'};
 function extFail(code,message) {die('ALWAYROUTE:'+code+':'+message);}
 function extPrivate(path,kind,mode) {let st=fs.lstat(path);return st?.type==kind && st.uid==0 && st.mode==mode;}
 function extInit() {
@@ -12,7 +13,7 @@ function extInit() {
   if(!extPrivate(path,'directory',0700))extFail('STORAGE_ERROR','外部配置目录不是root私有真实目录');
  }
 };
-function extPath(key) {if(!EXT_FILES[key])extFail('STORAGE_ERROR','外部存储键无效');return (key=='state'?EXT_TMP:EXT_DATA)+'/'+EXT_FILES[key];}
+function extPath(key) {if(!EXT_FILES[key])extFail('STORAGE_ERROR','外部存储键无效');return (key=='state' || key=='dnsProbe'?EXT_TMP:EXT_DATA)+'/'+EXT_FILES[key];}
 function extRead(key) {
  let path=extPath(key),info=fs.lstat(path);if(!info)return null;
  if(!extPrivate(path,'file',0600) || info.size>32768)extFail('STORAGE_CORRUPT','外部配置文件不私有或超过大小限制');
@@ -31,6 +32,36 @@ function extRemovePath(path) {
  if(!extPrivate(path,'file',0600) || !fs.unlink(path))extFail('STORAGE_ERROR','外部文件删除失败或归属不明');
 };
 function extCommand(command) {return system('/usr/libexec/alwayroute-timeout 20 '+command+' >/dev/null 2>&1')==0;}
+function extGatewayDns(config,force) {
+ let gateway=config?.link?.gatewayAddress,port=config?.dns?.gatewayPort;
+ // These are the only interpolated values; neither can contain shell syntax.
+ if(!externalIPv4(gateway) || type(port)!='int' || port<1 || port>65535)return null;
+ function probe() {return {gateway,port,observedAt:time(),reachable:system('/usr/libexec/alwayroute-timeout 3 nslookup -port='+port+' example.com '+gateway+' >/dev/null 2>&1')==0};}
+ function cached() {
+  let value=null;try{value=extRead('dnsProbe');}catch(ignored){}
+  return value?.gateway==gateway && value.port===port && (type(value.reachable)=='bool' || value.reachable===null) && type(value.observedAt)=='int' && value.observedAt<=time() && time()-value.observedAt<60?value:null;
+ }
+ for(let candidate in [extPath('dnsProbe'),extPath('dnsProbe')+'.new'])if(fs.lstat(candidate) && !extPrivate(candidate,'file',0600))return force?probe():null;
+ if(!force) {let value=cached();if(value)return value;}
+ // Status is read without manager.lock. Serialize only the expendable /tmp
+ // observation cache, never transaction state. A bad cache cannot block apply.
+ let path=EXT_TMP+'/external-dns-probe.lock';
+ if(fs.lstat(path) && !extPrivate(path,'file',0600))return force?probe():null;
+ let lock=fs.open(path,'ae',0600);
+ if(!lock || !lock.lock('xn')) {lock?.close();return force?probe():null;}
+ let value=null;
+ try {
+  if(!force)value=cached();
+  if(value==null) {
+   // Reserve this interval before querying. If storage cannot cache a result,
+   // status must not turn every page poll into another external DNS request.
+   if(!force)extWrite('dnsProbe',{gateway,port,observedAt:time(),reachable:null});
+   value=probe();
+   try{extWrite('dnsProbe',value);}catch(ignored){} // Cache is never a prerequisite.
+  }
+ }catch(ignored){lock.close();return null;}
+ lock.close();return value;
+};
 function extJson(command) {
  let stream=fs.popen('/usr/libexec/alwayroute-timeout 3 '+command+' 2>/dev/null','r');if(!stream)return null;
  let raw=stream.read(32769),code=stream.close();
@@ -93,6 +124,7 @@ export function executeExternal(method,args) {
  let engine=externalController({
   read:extRead,write:extWrite,remove:function(key){extRemovePath(extPath(key));},
   now:time,
+  gatewayDns:extGatewayDns,
   sync:function(){if(system('/bin/sync')!=0)extFail('STORAGE_ERROR','外部配置同步失败');},
   runtime:extRuntime,
   clearRuntime:function(){extRemovePath(EXT_TMP+'/external-runtime.json');extRemovePath(EXT_TMP+'/external-dns.conf');},

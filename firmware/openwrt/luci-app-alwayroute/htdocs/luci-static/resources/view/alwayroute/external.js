@@ -1,14 +1,9 @@
 'use strict';
 'require view';
-'require ui';
 'require poll';
 'require alwayroute.api as api';
 
 /* External v1 is a separate model. Never read or populate legacy node data. */
-var observations = {
-	coreReady: '网关核心已就绪', captureReady: '网关已接管该终端流量', dnsReady: '网关 UDP/TCP DNS 已就绪',
-	egressViaRouter: '网关出站经过路由器 WAN', returnViaRouter: '回程经过路由器', sourcePreserved: '网关实际看到终端原 IPv4 来源'
-};
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 function errorText(error) { return (error && error.message || '操作失败') + (error && error.code ? ' [' + error.code + ']' : ''); }
 function show(value) { return value == null ? '未知' : typeof value === 'object' ? JSON.stringify(value) : String(value); }
@@ -71,26 +66,28 @@ return view.extend({
 	},
 	paintStatus: function() {
 		if (!this.statusNode) return;
-		var s = this.state || {}, phase = { active: '本地已应用', disabled: '自有资源已关闭', guarded: '来源阻断，等待重新核验', degraded: '异常或对端观察过期', recovering: '事务待恢复', fault: '故障', unknown: '未知' };
-		var forwarding = s.localForwarding || {}, dns = s.dns || {}, peer = s.peer || {};
+		var s = this.state || {}, phase = { active: '本地已应用', disabled: '自有资源已关闭', guarded: '来源阻断，等待重新核验', degraded: '异常或观察不可用', recovering: '事务待恢复', fault: '故障', unknown: '未知' };
+		var forwarding = s.localForwarding || {}, dns = s.dns || {}, peer = s.peer || {}, gateway = s.gatewayDns || {};
 		var fields = [
 			['已保存版本', s.savedRevision], ['已保存开关', this.config ? (this.config.enabled ? '开启草稿' : '关闭草稿') : '无法读取 / 只读'],
 			['持久期望', s.desiredEnabled === true ? '开启' : s.desiredEnabled === false ? '关闭' : '未知'], ['期望版本', s.desiredRevision],
 			['实际应用版本', s.appliedRevision], ['实际阶段', (phase[s.phase] || '未知') + ' (' + (s.phase || 'unknown') + ')'],
 			['本地转发检查', '转发：' + flag(forwarding.running, '运行', '未运行') + '；来源防护：' + flag(forwarding.guarded, '阻断', '未阻断') + '；残留：' + flag(forwarding.residual, '存在', '未发现')],
 			['专用 DNS 检查', flag(dns.running, '本地进程及 UDP/TCP 监听已确认', '未运行')],
+			['网关 UDP DNS 可达性', (this.statusError ? '未知' : { reachable: '可达', unreachable: '查询失败', unknown: '未知' }[gateway.status] || '未知') + '；观察时间：' + show(gateway.observedAt) + '；观察年龄：' + show(gateway.ageSeconds) + ' 秒；最多缓存 ' + show(gateway.cacheSeconds) + ' 秒；仅证明 UDP 查询'],
+			['应用依据', { 'gateway-dns': '网关 UDP DNS 预检', operator: '人工观察（兼容接口）', unknown: '未知' }[s.applicationMethod] || '未知'],
 			['对端人工观察', (peer.status === 'reported' && !this.statusError ? '短期人工报告（operator），尚非独立探测' : '未知或观察已过期') + '；代次：' + show(peer.generation) + '；观察时间：' + show(peer.observedAt)],
 			['最近故障', s.lastError || '无已报告故障'], ['路由器检查时间（Unix 秒）', s.observedAt]
 		];
 		var content = [E('h3', {}, ['外部代理状态']), E('dl', {}, fields.reduce(function(nodes, row) {
 			return nodes.concat([E('dt', {}, [row[0]]), E('dd', { 'class': 'ar-block' }, [show(row[1])])]);
-		}, [])), E('p', { 'class': 'ar-alert ar-warning' }, ['端到端出口：未验证。基础直连：未验证。本地就绪与人工观察不能代替真实终端验收；关闭成功后仍需检查普通直连。'])];
+		}, [])), E('p', { 'class': 'ar-alert ar-warning' }, ['端到端出口：未验证。基础直连：未验证。本地就绪、DNS 可达与人工观察不能证明网关核心、流量接管、来源及回程；请进行真实终端验收。关闭成功后仍需检查普通直连。'])];
 		if (this.busy || this.job) content.push(E('p', { role: 'status' }, ['后台操作处理中：' + (this.job ? show(this.job.method) + ' / ' + show(this.job.status) : '等待 RPC') + '。排队不表示完成；可重新读取接回等待。']));
 		if (this.statusError) content.push(E('p', { 'class': 'ar-alert ar-error', role: 'alert' }, ['实际状态读取失败，旧快照不可视为当前结果：' + this.statusError]));
 		if (this.jobError) content.push(E('p', { 'class': 'ar-alert ar-error', role: 'alert' }, ['后台任务未确认：' + this.jobError]));
 		if (this.readError) content.push(E('p', { 'class': 'ar-alert ar-error', role: 'alert' }, ['配置不可读：' + this.readError + '。独立关闭仍可使用。']));
 		if (this.message) content.push(E('p', { 'class': 'ar-alert ar-warning', role: 'status' }, [this.message]));
-		if (this.dirty) content.push(E('p', {}, ['有未保存修改；先保存再进行人工观察与应用。']));
+		if (this.dirty) content.push(E('p', {}, ['有未保存修改；先保存再应用已保存版本。']));
 		replace(this.statusNode, content);
 	},
 	paint: function() {
@@ -121,7 +118,7 @@ return view.extend({
 		this.inputs = inputs;
 		return E('section', { 'class': 'ar-section' }, [E('h3', {}, ['链路、来源与 DNS 草稿']),
 			E('p', {}, ['保存只更新版本，不改变网络。链路、来源或监听端口变化时须先关闭旧范围。设备地址与 MAC 必须现场核验，不使用历史 DHCP 猜测。']),
-			this.field('保存为开启', input('enabled', c.enabled, 'checkbox'), '勾选并保存后，还须完成观察并应用；取消勾选并保存不等于已经关闭。'),
+			this.field('保存为开启', input('enabled', c.enabled, 'checkbox'), '勾选并保存后，还须应用已保存版本；取消勾选并保存不等于已经关闭。'),
 			this.field('LAN L3 接口', input('interface', l.interface)),
 			this.field('路由器 IPv4', input('routerAddress', l.routerAddress)), this.field('外部网关 IPv4', input('gatewayAddress', l.gatewayAddress)),
 			this.field('外部网关 MAC', input('gatewayMac', l.gatewayMac)), this.field('终端 IPv4', input('clientAddress', client.address)),
@@ -132,7 +129,7 @@ return view.extend({
 			this.field('额外 IPv4 目的例外', list('bypass4', c.bypass4), '每行一个网络 CIDR，最多 32 条；例外不进入外部接管，请保持最小范围。'),
 			E('p', { 'class': 'ar-muted' }, ['固定策略：IPv4 / 故障阻断。受管终端公网 IPv6 阻断，本地管理保留；仅该终端的 UDP/TCP 53 转交，不宣称控制 DoH/DoT。']),
 			E('div', { 'class': 'ar-actions' }, [this.button('保存草稿', function() { return self.save(); }, { primary: true }),
-				this.button('人工观察并应用已保存版本', function() { self.openObservation(); }, { disabled: !c.enabled })])]);
+				this.button('应用已保存版本', function() { return self.apply(); })])]);
 	},
 	readDraft: function() {
 		var c = clone(this.config), i = this.inputs;
@@ -148,45 +145,10 @@ return view.extend({
 	},
 	save: function() { return this.operate('external_save', [this.config.revision, this.readDraft()]); },
 	disable: function() { return this.operate('external_disable', []); },
-	openObservation: function() {
-		if (this.readonly || this.busy || this.uncertain) return;
-		if (this.dirty) throw new Error('请先保存草稿；观察只对应已保存版本');
-		var self = this, c = this.config;
-		if (!c || !c.enabled || !c.link) throw new Error('请先保存完整的开启配置');
-		this.fieldId = 100;
-		var generation = E('input', { type: 'text', maxlength: 128 }), checks = {};
-		var feedback = E('p', { 'class': 'ar-alert ar-error', role: 'alert' });
-		var content = [E('p', {}, ['目标：' + c.link.gatewayAddress + '；已保存版本：' + c.revision + '。请在现场核验后填写，所有确认默认留空。观察不会发起自动跨设备探测。']),
-			this.field('网关 generation', generation, '填入实际运行代次（字母、数字、下划线或短横线），不能使用任意占位值。'),
-			E('p', {}, ['请先完成现场实测，再确认并立即提交。提交时读取路由器时钟，记录本次人工确认时刻；观察应用前后最多有效 30 秒。'])];
-		Object.keys(observations).forEach(function(key) {
-			checks[key] = E('input', { type: 'checkbox' }); content.push(self.field(observations[key], checks[key]));
-		});
-		content.push(E('p', { 'class': 'ar-muted' }, ['ping、端口可连或显式代理成功均不能代替上述观察。网关来源与同 LAN 回程必须实测；不得通过端间 SNAT 掩盖。端到端状态仍为未验证。']), feedback);
-		var submit = this.button('提交观察并应用', async function() {
-			try {
-				var peer = self.readObservation(c, generation, checks);
-				submit.disabled = true;
-				var runtime = await self.request('external_status');
-				var now = runtime.state && runtime.state.observedAt;
-				if (!Number.isSafeInteger(now) || now <= 0) throw new Error('路由器时钟不可用，不能提交人工观察；请重新读取');
-				peer.observedAt = now;
-				ui.hideModal();
-				await self.operate('external_apply', [c.revision, peer]);
-			} catch (error) { replace(feedback, [E('span', {}, [errorText(error)])]); }
-			submit.disabled = false;
-		}, { primary: true });
-		content.push(E('div', { 'class': 'ar-modal-actions' }, [this.button('取消', function() { ui.hideModal(); }), submit]));
-		ui.showModal('现场人工观察 · operator', content);
-	},
-	readObservation: function(c, generation, checks) {
-		if (!/^[A-Za-z0-9_-]{1,128}$/.test(generation.value.trim())) throw new Error('请填写有效的网关运行 generation');
-		var peer = { gateway: c.link.gatewayAddress, revision: c.revision, generation: generation.value.trim() };
-		Object.keys(observations).forEach(function(key) {
-			if (!checks[key].checked) throw new Error('尚未现场确认：' + observations[key]);
-			peer[key] = checks[key].checked;
-		});
-		return peer;
+	apply: function() {
+		if (this.dirty) throw new Error('请先保存草稿；应用只对应已保存版本');
+		if (!this.config) throw new Error('请先读取已保存配置');
+		return this.operate('external_apply', [this.config.revision]);
 	},
 	waitJob: async function(job) {
 		var started = Date.now(); this.job = job; this.paintStatus();
@@ -231,7 +193,7 @@ return view.extend({
 		if (this.inputs) Object.keys(this.inputs).forEach(function(key) { self.inputs[key].disabled = disabled || self.uncertain; });
 		if (this.root.querySelectorAll) this.root.querySelectorAll('button').forEach(function(button) {
 			var name = button.getAttribute('aria-label'), recovery = ['重新读取配置与状态', '关闭外部代理，恢复普通直连', '停止当前代理服务'].includes(name);
-			button.disabled = disabled || (self.readonly && name !== '重新读取配置与状态') || (self.uncertain && !recovery) || (name === '人工观察并应用已保存版本' && (!self.config || !self.config.enabled));
+			button.disabled = disabled || (self.readonly && name !== '重新读取配置与状态') || (self.uncertain && !recovery);
 		});
 	},
 	refreshStatus: async function(force) {
