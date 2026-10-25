@@ -19,7 +19,8 @@ class ExternalBuild(unittest.TestCase):
         (self.tree / 'include').mkdir()
         (self.tree / 'include/package.mk').write_text('# existing SDK fixture\n')
         self.config = ROOT / 'firmware/openwrt/external.config'
-        (self.tree / '.config').write_bytes(self.config.read_bytes())
+        self.reviewed_config = self.config.read_bytes() + b'\nCONFIG_BUSYBOX_DEFAULT_NSLOOKUP=y\nCONFIG_BUSYBOX_DEFAULT_FEATURE_NSLOOKUP_BIG=y\n'
+        (self.tree / '.config').write_bytes(self.reviewed_config)
         stage = build.staging()
         for name in build.PACKAGES:
             directory = self.tree / 'package' / name
@@ -40,12 +41,17 @@ class ExternalBuild(unittest.TestCase):
         self.assertEqual(set(identities), set(build.PACKAGES))
         self.assertFalse((tree / 'alwayroute-input').exists())
         self.assertFalse((tree / 'package/alwayroute-core').exists())
+        (tree / '.config').write_bytes(self.config.read_bytes() + b'\nCONFIG_BUSYBOX_CUSTOM=y\nCONFIG_BUSYBOX_CONFIG_NSLOOKUP=y\nCONFIG_BUSYBOX_CONFIG_FEATURE_NSLOOKUP_BIG=y\n')
+        self.assertEqual(build.inputs(tree)[0], tree)
 
     def test_local_package_selection_or_stale_shared_source_is_refused(self):
-        (self.tree / '.config').write_bytes(self.config.read_bytes() + b'\nCONFIG_PACKAGE_alwayroute-core=y\n')
+        (self.tree / '.config').write_bytes(self.reviewed_config + b'\nCONFIG_PACKAGE_alwayroute-core=y\n')
         with self.assertRaisesRegex(ValueError, 'local-mode'):
             build.inputs(self.tree)
-        (self.tree / '.config').write_bytes(self.config.read_bytes())
+        (self.tree / '.config').write_bytes(self.config.read_bytes() + b'\nCONFIG_BUSYBOX_DEFAULT_NSLOOKUP=y\n')
+        with self.assertRaisesRegex(ValueError, 'nslookup feature missing'):
+            build.inputs(self.tree)
+        (self.tree / '.config').write_bytes(self.reviewed_config)
         source = self.tree / 'package/alwayroute-manager/files/usr/share/ucode/alwayroute/external.uc'
         source.write_text('stale copied source')
         with self.assertRaisesRegex(ValueError, 'Shared package source differs'):

@@ -39,8 +39,12 @@ def inputs(tree):
     for name in FORBIDDEN:
         if any('CONFIG_PACKAGE_' + name + '=' + selection in lines for selection in ('y', 'm')):
             raise ValueError('Pure recipe refuses selected local-mode package: ' + name)
-    for feature in ('NSLOOKUP', 'FEATURE_NSLOOKUP_BIG', 'FEATURE_NSLOOKUP_LONG_OPTIONS', 'LONG_OPTS'):
-        if 'CONFIG_BUSYBOX_CONFIG_' + feature + '=y' not in lines:
+    # Non-custom OpenWrt BusyBox uses DEFAULT symbols; CONFIG symbols only
+    # exist under BUSYBOX_CUSTOM. Its BIG nslookup parses -port= itself and
+    # does not require the unrelated GNU-style long-option extension.
+    prefix = 'CONFIG_BUSYBOX_CONFIG_' if 'CONFIG_BUSYBOX_CUSTOM=y' in lines else 'CONFIG_BUSYBOX_DEFAULT_'
+    for feature in ('NSLOOKUP', 'FEATURE_NSLOOKUP_BIG'):
+        if prefix + feature + '=y' not in lines:
             raise ValueError('Reviewed nslookup feature missing: ' + feature)
     stage = staging()
     identities = {}

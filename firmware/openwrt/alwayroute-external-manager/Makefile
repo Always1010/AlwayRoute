@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-external-manager
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=MIT GPL-3.0-only
 PKGARCH:=all
 PKG_FILE_DEPENDS:=$(CURDIR)/payload.json $(CURDIR)/../alwayroute-external-manager/tools/stage-files.py $(foreach input,$(shell python3 $(CURDIR)/../alwayroute-external-manager/tools/stage-files.py --manifest $(CURDIR)/payload.json --list-sources),$(TOPDIR)/package/$(input))
@@ -13,7 +13,7 @@ define Package/alwayroute-external-manager
   SECTION:=net
   CATEGORY:=Network
   TITLE:=AlwayRoute optional external manager
-  DEPENDS:=+alwayroute-external-forwarding +rpcd-mod-ucode +ucode +ucode-mod-fs +ubus +dnsmasq +busybox +@BUSYBOX_CONFIG_NSLOOKUP +@BUSYBOX_CONFIG_FEATURE_NSLOOKUP_BIG +@BUSYBOX_CONFIG_FEATURE_NSLOOKUP_LONG_OPTIONS +@BUSYBOX_CONFIG_LONG_OPTS
+  DEPENDS:=+alwayroute-external-forwarding +rpcd-mod-ucode +ucode +ucode-mod-fs +ubus +dnsmasq +busybox
   CONFLICTS:=alwayroute-manager alwayroute-forwarding
 endef
 
