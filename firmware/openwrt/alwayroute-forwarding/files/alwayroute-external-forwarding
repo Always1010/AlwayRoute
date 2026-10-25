@@ -399,7 +399,7 @@ boot_guard() {
     # A disabled fw4 auto-include must not be reported as protected startup.
     # Install the live guard first, then fail activation if boot reinsertion
     # cannot be proven from the actual fw4 generated transaction.
-    /usr/libexec/alwayroute-timeout 5 fw4 print 2>/dev/null | grep -Fq 'include "/usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft"' || fail 'fw4 automatic early guard include is unavailable'
+    /usr/libexec/alwayroute-timeout 3 fw4 print 2>/dev/null | grep -Fq 'include "/usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft"' || fail 'fw4 automatic early guard include is unavailable'
 }
 boot_open() { boot_owned; [ "$BOOT_PRESENT" = 0 ] || nft flush table inet alwayroute_external_boot; }
 boot_stop() { boot_owned; [ "$BOOT_PRESENT" = 0 ] || nft delete table inet alwayroute_external_boot; }

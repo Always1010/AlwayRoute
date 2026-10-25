@@ -168,6 +168,31 @@ class ExternalForwardingTest(unittest.TestCase):
         self.run_adapter('legacy-clear', False)
         self.assertEqual((self.private / 'forwarding.owner').read_text(), 'legacy')
 
+    def test_boot_guard_executes_existing_timeout_with_fw4_include(self):
+        # Execute the shipped watchdog, rather than a command double that
+        # would accept limits the real wrapper rejects before starting fw4.
+        wrapper = self.root / 'alwayroute-timeout'
+        shutil.copyfile(ROOT / 'firmware/openwrt/alwayroute-manager/files/usr/libexec/alwayroute-timeout', wrapper)
+        wrapper.chmod(0o755)
+        persistent = self.root / 'persistent'
+        boot = persistent / 'external-boot'
+        persistent.mkdir(mode=0o700)
+        boot.mkdir(mode=0o700)
+        guard = boot / 'guard.nft'
+        guard.write_text('table inet alwayroute_external_boot { comment "alwayroute-external-boot v1"; }\n')
+        guard.chmod(0o600)
+        fw4_log = self.root / 'fw4.log'
+        fw4 = self.bin / 'fw4'
+        fw4.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$AR_EXTERNAL_FW4_LOG"\n'
+                       'printf \'%s\\n\' \'include "/usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft"\'\n')
+        fw4.chmod(0o755)
+        self.env['AR_EXTERNAL_FW4_LOG'] = str(fw4_log)
+        self.script.write_text(self.script.read_text().replace('/usr/libexec/alwayroute-timeout', wrapper.as_posix())
+                               .replace('/etc/alwayroute', persistent.as_posix()), encoding='utf-8')
+        self.run_adapter('boot-guard')
+        self.assertEqual(fw4_log.read_text().splitlines(), ['print'])
+        self.assertIn('alwayroute-external-boot v1', self.read_state()['nft_text'])
+
     def test_prepare_validates_without_activating_and_checks_topology(self):
         self.run_adapter("prepare")
         self.assertFalse(self.read_state().get("table"))
