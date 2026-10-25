@@ -5,7 +5,16 @@ USE_PROCD=1
 
 # This package is always external, including a fresh install with no mode file.
 start_service() { /usr/libexec/alwayroute-external reconcile; }
-stop_service() { /usr/libexec/alwayroute-external disable >/dev/null || exit 1; }
+stop_service() {
+ if [ "${AR_EXTERNAL_SHUTDOWN:-0}" = 1 ]; then
+  /usr/libexec/alwayroute-external shutdown >/dev/null || exit 1
+ else
+  /usr/libexec/alwayroute-external disable >/dev/null || exit 1
+ fi
+}
+# rc.common normally maps shutdown to stop. Preserve durable user intent and
+# retain the confirmed source guard until the base network is taken down.
+shutdown() { AR_EXTERNAL_SHUTDOWN=1; stop; }
 restart() { /usr/libexec/alwayroute-external reconcile; }
 reload_service() { /usr/libexec/alwayroute-external reconcile; }
 service_triggers() {

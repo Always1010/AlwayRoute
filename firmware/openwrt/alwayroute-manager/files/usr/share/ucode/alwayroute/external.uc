@@ -161,7 +161,7 @@ export function executeExternal(method,args,externalOnly) {
    return {network,dns:{running:extDnsRunning()},localCore:extService('alwayroute')};
   }
  });
- let action={external_get:'get',external_status:'status',external_save:'save',external_apply:'apply',external_disable:'disable',external_reconcile:'reconcile'}[method];
+ let action={external_get:'get',external_status:'status',external_save:'save',external_apply:'apply',external_disable:'disable',external_reconcile:'reconcile',external_shutdown:'shutdown'}[method];
  if(!action)extFail('UNSUPPORTED','不支持的外部代理操作');
  return engine[action](args ?? {});
 };

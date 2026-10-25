@@ -121,7 +121,7 @@ export function externalController(io) {
   io.write('good',config);remember('active',config,peer,null,gatewayDns);io.sync();removeJournal();
   return status();
  }
- function reconcile() {
+ function reconcile(args) {
   let desired=intent();
   // An explicit close always wins, including over a corrupt or committed journal.
   if(!desired.enabled)return disable();
@@ -138,7 +138,13 @@ export function externalController(io) {
    try{remember('fault',config,null,'EXTERNAL_RECOVERY_FAILED');io.sync();}catch(ignored){}
    externalError('EXTERNAL_RECOVERY_FAILED','外部启动或事件恢复未完成，请检查防护和残留');
   }
-  return status();
+  return args?.quiet?{ok:true,recovery:{status:'guarded',revision:config.revision}}:status();
  }
- return {get,status,save,apply,disable,reconcile};
+ function shutdown() {
+  if(!intent().enabled)return disable();
+  // Keep the confirmed source guard through base network shutdown. stop()
+  // would remove protection while normal forwarding can still be running.
+  return reconcile({quiet:true});
+ }
+ return {get,status,save,apply,disable,reconcile,shutdown};
 };

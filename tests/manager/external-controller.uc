@@ -94,3 +94,10 @@ fails(()=>engine.apply({expectedRevision:2}),'SCOPE_CHANGE_REQUIRES_DISABLE');
 check(network=='active' && files.good.clientMode=='lan','saving another scope does not alter the applied LAN scope');
 files.config='corrupt';files.good='corrupt';engine.disable();check(network=='inactive' && !dns && !files.intent.enabled,'whole-LAN independent disable remains available with corrupt saved state');
 print(sprintf('PASS external transaction and independent close: %d checks\n',checks));
+
+reset();save();apply();operations=[];engine.shutdown();
+check(files.intent.enabled && files.good.revision==1 && network=='guarded' && !dns && index(operations,'stop')<0,'shutdown preserves durable intent and confirmed guard until base network stops');
+engine.disable();engine.shutdown();check(!files.intent.enabled && network=='inactive','shutdown cannot revive explicit disable');
+
+reset();save();apply();files.config='corrupt';let protectedShutdown=engine.shutdown();
+check(protectedShutdown.ok && files.intent.enabled && network=='guarded','shutdown reads only confirmed state even when the newer saved draft is corrupt');

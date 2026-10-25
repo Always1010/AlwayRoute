@@ -4,7 +4,7 @@ import { executeExternal } from 'alwayroute.external';
 import { runManagerWorker } from 'alwayroute.job-worker';
 
 const JOB_TMP='/tmp/alwayroute';
-const EXTERNAL_ACTIONS=['external_apply','external_disable','external_reconcile'];
+const EXTERNAL_ACTIONS=['external_apply','external_disable','external_reconcile','external_shutdown'];
 function jobFail(code,message) {die('ALWAYROUTE:'+code+':'+message);}
 function jobPrivate(path,kind,mode) {let info=fs.lstat(path);return info?.type==kind && info.uid==0 && info.mode==mode;}
 function jobInit() {
