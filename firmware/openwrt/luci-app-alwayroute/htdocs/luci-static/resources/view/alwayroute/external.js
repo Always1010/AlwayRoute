@@ -68,7 +68,7 @@ return view.extend({
 	},
 	paintStatus: function() {
 		if (!this.statusNode) return;
-		var s = this.state || {}, phase = { active: '本地已应用', disabled: '自有资源已关闭', guarded: '来源阻断，等待重新核验', degraded: '异常或观察不可用', recovering: '事务待恢复', fault: '故障', unknown: '未知' };
+		var s = this.state || {}, phase = { active: '本地已应用', disabled: '自有资源已关闭', guarded: '来源阻断，等待重新核验', degraded: '异常或观察不可用', waiting: '来源阻断，等待自动恢复', recovering: '事务待恢复', fault: '故障', unknown: '未知' };
 		var forwarding = s.localForwarding || {}, dns = s.dns || {}, peer = s.peer || {}, gateway = s.gatewayDns || {};
 		var fields = [
 			['已保存版本', s.savedRevision], ['已保存开关', this.config ? (this.config.enabled ? '开启草稿' : '关闭草稿') : '无法读取 / 只读'],
@@ -80,6 +80,7 @@ return view.extend({
 			['网关 UDP DNS 可达性', (this.statusError ? '未知' : { reachable: '可达', unreachable: '查询失败', unknown: '未知' }[gateway.status] || '未知') + '；观察时间：' + show(gateway.observedAt) + '；观察年龄：' + show(gateway.ageSeconds) + ' 秒；最多缓存 ' + show(gateway.cacheSeconds) + ' 秒；仅证明 UDP 查询'],
 			['应用依据', { 'gateway-dns': '网关 UDP DNS 预检', operator: '人工观察（兼容接口）', unknown: '未知' }[s.applicationMethod] || '未知'],
 			['对端人工观察', (peer.status === 'reported' && !this.statusError ? '短期人工报告（operator），尚非独立探测' : '未知或观察已过期') + '；代次：' + show(peer.generation) + '；观察时间：' + show(peer.observedAt)],
+			['自动恢复', s.recovery ? '状态：' + show(s.recovery.status) + '；尝试：' + show(s.recovery.attempt) + '；下次检查（Unix 秒）：' + show(s.recovery.nextAttemptAt) + '；间隔：' + show(s.recovery.delaySeconds) + ' 秒' : '无恢复记录'],
 			['最近故障', s.lastError || '无已报告故障'], ['路由器检查时间（Unix 秒）', s.observedAt]
 		];
 		var content = [E('h3', {}, ['外部代理状态']), E('dl', {}, fields.reduce(function(nodes, row) {

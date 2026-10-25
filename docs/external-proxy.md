@@ -41,7 +41,7 @@
 
 ## 持久化与生命周期
 
-`/etc/alwayroute/` 中的 `external-config.json` 保存草稿，`external-intent.json` 保存应用意图，`external-lastgood.json` 保存确认配置，`external-journal.json` 是应用/提交恢复记录，`external-mode.json` 阻止旧核心路径重新启动。状态、运行配置、DNS 配置和资源归属仅存于 `/tmp/alwayroute/`。目录 root 0700，文件 root 0600；危险权限和符号链接拒绝使用，不自动修复。
+`/etc/alwayroute/` 中的 `external-config.json` 保存草稿，`external-intent.json` 保存应用意图，`external-lastgood.json` 保存确认配置，`external-journal.json` 是应用/提交恢复记录，`external-mode.json` 阻止旧核心路径重新启动。`external-stop-request.json` 是独立持久取消标记，显式应用仅确认其获取锁前捕获的请求代次；更新的关闭请求始终优先。`external-enable-token.json` 记录已确认代次，不删除关闭标记，避免比较与删除之间覆盖新的关闭请求。`external-boot/guard.nft` 是已进入事务的来源范围对应的持久早期阻断规则；其他状态、运行配置、DNS 配置和资源归属仅存于 `/tmp/alwayroute/`。目录 root 0700，文件 root 0600；危险权限和符号链接拒绝使用，不自动修复。
 
 安装/升级的既有 uci-defaults 流程先调用 `alwayroute-storage-init`：缺失的配置目录创建为 root 0700；仅将 root 所有的真实 `/etc/alwayroute/` 目录从已知旧版精确 0755 收紧为 0700，已有 0700 保持不变。链接、非 root 所有、可被组或其他用户写入及其他未知权限均拒绝，不修复未知资源。该迁移仅使用 ucode/fs，不读取或复制节点凭据，不启动代理核心；运行期继续严格要求私有目录。
 
@@ -57,13 +57,17 @@
 /usr/libexec/alwayroute-external reconcile
 ```
 
-这些入口通过同一个 manager 锁；已有事务持锁时返回 BUSY，不能并发改网络。`/etc/init.d/alwayroute stop` 在外部模式调用独立关闭；不递归获取相同 procd 服务锁。外部 restart、reload、接口和 firewall 事件按持久意图恢复 guard，不复用旧对端观察自动激活。关闭后重启不拉起本机代理。中断与事件恢复仍须在最终镜像上验收，包括开机阶段的实际规则建立时序。
+这些入口通过同一个 manager 锁；已有事务持锁时返回 BUSY，不能并发改网络。`/etc/init.d/alwayroute stop` 在外部模式调用独立关闭；不递归获取相同 procd 服务锁。纯外接包由 procd 监管单个恢复 worker；restart、reload、接口和 firewall 事件合并为待检查标记。worker 在相同 manager 锁下仅恢复 journal/lastgood 的确认配置，重新核验网关 UDP DNS、逻辑 LAN 范围及网关 MAC 后自动恢复；健康事件只检查，不重复重装。网关或链路未就绪持续按 1、2、4、8、16、30 秒退避，后续间隔最多 30 秒，无固定重试次数。BUSY 也保留事件并重试。新保存的草稿不会被自动应用。显式关闭在等待锁前先保存独立关闭请求，在途恢复激活前后复查，避免稍后的事件重新开启。正常 shutdown 暂停 worker、保留持久开启意图和来源阻断；显式 stop 才关闭意图。关闭后重启不拉起本机代理。中断与事件恢复仍须在最终镜像上验收，包括开机阶段的实际规则建立时序。
+
+纯外接包随包安装 `/usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft`，通过 fw4 默认自动 include 机制，在首次规则事务及每次 reload 中原子重建持久早期 guard；不等待 LAN 地址出现。正常活动恢复并确认本地资源后，仅清空早期专有表的规则；规则文件仍保留，下一次 fw4 reload 会重新阻断并触发恢复。关闭先移除持久文件，再清专有表，不改其他防火墙 include、基础 DNS 或全局路由。需要保持 fw4 的 `auto_includes=1`，首次部署应确认该 include 进入 `fw4 print`、通过实际 `nft -c`；若系统关闭自动 include 或手动绕过 fw4/提前开启转发，无法保证早期保护。整机冷启动的无直通窗口仍须在最终镜像与物理终端上测量，静态顺序不能替代该验收。
+
+恢复状态 `waiting` 表示来源阻断并等待自动恢复；`recovery` 提供尝试次数、最近/下次时间、退避间隔和错误码，BUSY 等 worker 错误也显示。`active` 仍只说明本地应用与有界 UDP DNS 观察，并非核心、出口、回程或真实终端端到端验证。
 
 专用 DNS 由 `alwayroute-external-dns` 单独监管，只绑定配置的路由器地址和专用端口。受管 LAN 或指定终端的 UDP/TCP 53 才被转交；本地域和无点名称交给原基础 DNS，公网交给外部 DNS，不写全局 DHCP/DNS UCI。停止会清理自有解析进程，现有 conntrack 不做全局清空。
 
 ## 资源与验证边界
 
-网络适配器仅拥有 `inet alwayroute_external`、路由表 20232、优先级 10232 与高字节 mark 0x42；创建前检查冲突、内部转发与 offload，退出只按完整表快照和精确路由归属清理。静态 MAC 仍需现场核验；本实现处理经路由器 L3 的流量，不建立桥 ACL，不改变 ARP 或 sysctl。
+网络适配器拥有 `inet alwayroute_external_boot`（专有注释校验）和 `inet alwayroute_external`、路由表 20232、优先级 10232 与高字节 mark 0x42；创建前检查冲突、内部转发与 offload，退出只按完整表快照和精确路由归属清理。激活要求邻居表确认网关 MAC 与配置一致，网关采用稳定 MAC 和 DHCP 保留；同一逻辑 LAN 桥内换物理端口不改变规则接口，换到其他 VLAN/桥或改变网关身份须先关闭并重新确认。本实现处理经路由器 L3 的流量，不建立桥 ACL，不改变 ARP 或 sysctl。
 
 如果进程在 nft 提交成功、安装快照写入之前中断，或外部程序修改了自有表，无法证明归属时会保守拒删，保留 owner/journal 并报残留，需要操作者审阅修复后重试。此类情况不能报告自动恢复或关闭成功。
 

@@ -27,7 +27,7 @@ class ExternalPackages(unittest.TestCase):
                     self.assertEqual((output / entry['path']).read_bytes(), (PACKAGES / entry['source']).read_bytes())
             modules = {p for p in all_files if p.startswith('usr/share/ucode/alwayroute/')}
             self.assertEqual(modules, {'usr/share/ucode/alwayroute/' + name for name in
-                ('store.uc', 'job-worker.uc', 'external.uc', 'external-controller.uc', 'external-model.uc')})
+                ('store.uc', 'job-worker.uc', 'external.uc', 'external-controller.uc', 'external-model.uc', 'external-boot.uc')})
             self.assertFalse(any('rules/' in p or 'policies/' in p or p.endswith('.srs') or 'sing-box' in p
                                  or 'scheduled' in p or 'fetch' in p or 'core-run' in p for p in all_files))
             self.assertNotIn('usr/libexec/alwayroute-forwarding', all_files)

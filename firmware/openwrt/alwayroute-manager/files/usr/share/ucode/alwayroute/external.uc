@@ -2,9 +2,10 @@
 import * as fs from 'fs';
 import { externalController } from 'alwayroute.external-controller';
 import { externalIPv4 } from 'alwayroute.external-model';
+import { externalBootRules } from 'alwayroute.external-boot';
 
 const EXT_DATA='/etc/alwayroute',EXT_TMP='/tmp/alwayroute';
-const EXT_FILES={config:'external-config.json',intent:'external-intent.json',good:'external-lastgood.json',journal:'external-journal.json',mode:'external-mode.json',state:'external-state.json',dnsProbe:'external-dns-probe.json'};
+const EXT_FILES={config:'external-config.json',intent:'external-intent.json',good:'external-lastgood.json',journal:'external-journal.json',mode:'external-mode.json',state:'external-state.json',dnsProbe:'external-dns-probe.json',cancel:'external-stop-request.json',permit:'external-enable-token.json',supervisor:'external-supervisor-state.json'};
 function extFail(code,message) {die('ALWAYROUTE:'+code+':'+message);}
 function extPrivate(path,kind,mode) {let st=fs.lstat(path);return st?.type==kind && st.uid==0 && st.mode==mode;}
 function extInit() {
@@ -13,7 +14,7 @@ function extInit() {
   if(!extPrivate(path,'directory',0700))extFail('STORAGE_ERROR','外部配置目录不是root私有真实目录');
  }
 };
-function extPath(key) {if(!EXT_FILES[key])extFail('STORAGE_ERROR','外部存储键无效');return (key=='state' || key=='dnsProbe'?EXT_TMP:EXT_DATA)+'/'+EXT_FILES[key];}
+function extPath(key) {if(!EXT_FILES[key])extFail('STORAGE_ERROR','外部存储键无效');return (key=='state' || key=='dnsProbe' || key=='supervisor'?EXT_TMP:EXT_DATA)+'/'+EXT_FILES[key];}
 function extRead(key) {
  let path=extPath(key),info=fs.lstat(path);if(!info)return null;
  if(!extPrivate(path,'file',0600) || info.size>32768)extFail('STORAGE_CORRUPT','外部配置文件不私有或超过大小限制');
@@ -77,6 +78,7 @@ function extService(name) {
  if(!('instances' in result[name]))return false;
  if(type(result[name]?.instances)!='object')return null;
  for(let id,instance in result[name].instances)if(instance.running===true) {
+  if(name=='alwayroute' && instance.command?.[0]=='/usr/libexec/alwayroute-external-supervisor')continue;
   if(name=='alwayroute-external-dns' && sprintf('%J',instance.command)!=sprintf('%J',['/usr/sbin/dnsmasq','-k','--conf-file='+EXT_TMP+'/external-dns.conf']))return null;
   return true;
  }
@@ -106,6 +108,26 @@ function extNetwork(action) {
  if(index(['prepare','guard','activate','stop'],action)<0 || !extCommand('/usr/libexec/alwayroute-external-forwarding '+action))extFail('EXTERNAL_NETWORK_FAILED','外部转发操作失败，请检查归属和预检条件');
 };
 function extRuntime(config) {extWritePath(EXT_TMP+'/external-runtime.json',sprintf('%J',config));}
+function extBootGuard(config) {
+ let directory=EXT_DATA+'/external-boot';
+ if(!fs.lstat(directory) && !fs.mkdir(directory,0700))extFail('STORAGE_ERROR','无法创建早期防护目录');
+ if(!extPrivate(directory,'directory',0700))extFail('STORAGE_ERROR','早期防护目录不是root私有目录');
+ let path=directory+'/guard.nft',rules=externalBootRules(config);
+ if(fs.lstat(path) && !extPrivate(path,'file',0600))extFail('STORAGE_ERROR','早期防护文件不安全');
+ if(fs.readfile(path)!=rules) {
+  extWritePath(path,rules);
+  if(system('/bin/sync')!=0)extFail('STORAGE_ERROR','早期防护未持久保存');
+ }
+ if(!extCommand('/usr/libexec/alwayroute-external-forwarding boot-guard'))extFail('EXTERNAL_BOOT_GUARD_FAILED','早期防护或fw4自动include尚未确认');
+}
+function extBootClear() {
+ let directory=EXT_DATA+'/external-boot';
+ if(fs.lstat(directory)) {
+  if(!extPrivate(directory,'directory',0700))extFail('STORAGE_ERROR','早期防护目录不安全');
+  extRemovePath(directory+'/guard.nft');extRemovePath(directory+'/guard.nft.new');
+ }
+ if(system('/bin/sync')!=0 || !extCommand('/usr/libexec/alwayroute-external-forwarding boot-stop'))extFail('EXTERNAL_BOOT_GUARD_FAILED','早期防护尚未清理');
+}
 function extDnsConfig(config) {
  let l=config.link,d=config.dns;
  let lines=['port='+d.listenPort,'listen-address='+l.routerAddress,'bind-interfaces','no-resolv','no-hosts','no-poll','cache-size=0','pid-file='+EXT_TMP+'/external-dns.pid','server='+l.gatewayAddress+'#'+d.gatewayPort,'server=//127.0.0.1#53'];
@@ -119,12 +141,39 @@ export function externalSelected() {
  for(let key in ['mode','intent','journal'])if(fs.lstat(extPath(key)))return true;
  return false;
 };
+export function cancelExternalRecovery() {
+ extInit();let nonce=trim(fs.readfile('/proc/sys/kernel/random/uuid') ?? '');
+ if(!match(nonce,/^[a-f0-9-]{36}$/))extFail('STORAGE_ERROR','无法生成关闭请求标识');
+ extWrite('cancel',{disabled:true,nonce});
+ if(system('/bin/sync')!=0)extFail('STORAGE_ERROR','关闭请求未持久保存');
+};
+export function externalCancelToken() {
+ extInit();let marker=extRead('cancel');if(marker==null)return null;
+ if(marker.disabled!==true || type(marker.nonce)!='string' || !match(marker.nonce,/^[a-f0-9-]{36}$/))extFail('STORAGE_CORRUPT','关闭请求标识损坏，请独立关闭');
+ return marker.nonce;
+};
+function extCancelled() {
+ try {let token=externalCancelToken();return token!=null && extRead('permit')?.token!==token;}catch(e){return true;}
+}
 export function executeExternal(method,args,externalOnly) {
  extInit();
  let engine=externalController({
   read:extRead,write:extWrite,remove:function(key){extRemovePath(extPath(key));},
+  cancelled:extCancelled,
+  permit:function(expected){
+   if(externalCancelToken()!==expected)return false;
+   // Acknowledging the captured generation never deletes a marker. A newer
+   // close can arrive between comparison and write and still remains pending.
+   extWrite('permit',{token:expected});return true;
+  },
+  needsStop:function(){
+   for(let path in [EXT_DATA+'/external-boot/guard.nft',extPath('good'),extPath('journal'),EXT_TMP+'/external-forwarding.owner',EXT_TMP+'/external-dns.conf'])if(fs.lstat(path))return true;
+   return false;
+  },
   now:time,
   gatewayDns:extGatewayDns,
+  bootGuard:extBootGuard,bootClear:extBootClear,
+  bootOpen:function(){if(!extCommand('/usr/libexec/alwayroute-external-forwarding boot-open'))extFail('EXTERNAL_BOOT_GUARD_FAILED','早期阻断尚未释放');},
   sync:function(){if(system('/bin/sync')!=0)extFail('STORAGE_ERROR','外部配置同步失败');},
   runtime:extRuntime,
   clearRuntime:function(){extRemovePath(EXT_TMP+'/external-runtime.json');extRemovePath(EXT_TMP+'/external-dns.conf');},
@@ -158,10 +207,12 @@ export function executeExternal(method,args,externalOnly) {
   },
   inspect:function() {
    let network=extJson('/usr/libexec/alwayroute-external-forwarding status') ?? {available:false,running:null,guarded:null,residual:null};
+   network.bootGuarded=extJson('/usr/libexec/alwayroute-external-forwarding boot-status')?.guarded ?? null;
    return {network,dns:{running:extDnsRunning()},localCore:extService('alwayroute')};
   }
  });
- let action={external_get:'get',external_status:'status',external_save:'save',external_apply:'apply',external_disable:'disable',external_reconcile:'reconcile',external_shutdown:'shutdown'}[method];
+ let action={external_get:'get',external_status:'status',external_save:'save',external_apply:'apply',external_disable:'disable',external_reconcile:'reconcile',external_shutdown:'shutdown',external_resume:'resume'}[method];
  if(!action)extFail('UNSUPPORTED','不支持的外部代理操作');
+ if(action=='apply' && !('cancelToken' in (args ?? {})))args={...(args ?? {}),cancelToken:externalCancelToken()};
  return engine[action](args ?? {});
 };

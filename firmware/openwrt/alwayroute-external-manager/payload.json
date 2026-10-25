@@ -71,6 +71,21 @@
       "source": "alwayroute-external-manager/files/usr/share/ucode/alwayroute/store.uc",
       "path": "usr/share/ucode/alwayroute/store.uc",
       "mode": "0644"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/share/ucode/alwayroute/external-boot.uc",
+      "path": "usr/share/ucode/alwayroute/external-boot.uc",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-external-manager/files/usr/libexec/alwayroute-external-supervisor",
+      "path": "usr/libexec/alwayroute-external-supervisor",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-external-manager/files/usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft",
+      "path": "usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft",
+      "mode": "0644"
     }
   ]
 }

@@ -68,6 +68,8 @@ elif name == 'ip':
     elif a[:3] == ['-4', 'route', 'get']:
         if s.get('offlink'): print(a[3]+' via 198.51.100.1 dev wan src 198.51.100.2')
         else: print(a[3]+' dev br-lan src 192.0.2.1 uid 0')
+    elif a[:4] == ['-4', 'neigh', 'show', 'to']:
+        if not s.get('missing_neighbour'): print(a[4]+' lladdr '+s.get('gateway_mac', '02:00:00:00:00:02')+' REACHABLE')
     elif a == ['-4', 'rule', 'show']:
         if s.get('legacy_rule'): print('10231: from all fwmark 0x41000000/0xff000000 lookup 20231')
         if s.get('foreign_rule'): print('10232: from all fwmark 0x43000000/0xff000000 lookup 20233')

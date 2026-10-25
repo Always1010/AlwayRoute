@@ -1,10 +1,10 @@
 'use strict';
 import * as fs from 'fs';
-import { executeExternal } from 'alwayroute.external';
+import { executeExternal, cancelExternalRecovery, externalCancelToken } from 'alwayroute.external';
 import { runManagerWorker } from 'alwayroute.job-worker';
 
 const JOB_TMP='/tmp/alwayroute';
-const EXTERNAL_ACTIONS=['external_apply','external_disable','external_reconcile','external_shutdown'];
+const EXTERNAL_ACTIONS=['external_apply','external_disable','external_reconcile','external_shutdown','external_resume'];
 function jobFail(code,message) {die('ALWAYROUTE:'+code+':'+message);}
 function jobPrivate(path,kind,mode) {let info=fs.lstat(path);return info?.type==kind && info.uid==0 && info.mode==mode;}
 function jobInit() {
@@ -67,16 +67,20 @@ export function call(method,args,inline) {
   if(method=='job_status')return externalJobStatus();
   if(index(['external_get','external_status'],method)>=0)return executeExternal(method,args,true);
   if(method!='external_save' && index(EXTERNAL_ACTIONS,method)<0)jobFail('UNSUPPORTED','纯外接包只支持外部配置、状态、应用与关闭');
+  // A close request must survive BUSY and cancel an in-flight recovery. Its
+  // separate durable marker never races the transaction's intent.new file.
+  if(method=='external_disable')cancelExternalRecovery();
+  let cancelToken=method=='external_apply'?(inline && 'cancelToken' in args?args.cancelToken:externalCancelToken()):null;
   lock=jobLock();
   if(!lock || !lock.lock('xn')) {lock?.close();return {ok:false,error:{code:'BUSY',message:'已有外接事务进行中，请稍后重试'}};}
   if(method=='external_apply') {
    let peer=args.peer ?? {};
    if(type(peer)!='object' || length(sprintf('%J',peer))>2048)jobFail('INPUT_LIMIT','对端观察须为不超过2KiB的对象');
-   args={expectedRevision:args.expectedRevision,peer};
+   args={expectedRevision:args.expectedRevision,peer,cancelToken};
   }else if(method=='external_save') {
    if(type(args.config)!='object' || length(sprintf('%J',args.config))>8192)jobFail('INPUT_LIMIT','外部配置须为不超过8KiB的对象');
    args={expectedRevision:args.expectedRevision,config:args.config};
-  }else args={};
+  }else args=method=='external_resume'?{event:args.event===true}:{};
   let pending=jobRead(JOB_TMP+'/job.json',null);
   if(!inline && pending?.status=='running')jobFail('BUSY','后台外接事务尚未完成');
   if(!inline && index(EXTERNAL_ACTIONS,method)>=0) {

@@ -1,15 +1,16 @@
 'use strict';
 // Exercises the real filesystem/command adapter with private in-memory paths.
-let runtimeFiles={},metadata={},networkMode='inactive',dnsLive=false,legacyLive=false,commands=[],dnsSocketMissing=false,registeredEmpty=false,gatewayReachable=true,probeLock=true,runtimeNow=100,cacheWriteFailure=false,legacyResidual=false;
+let runtimeFiles={},metadata={},networkMode='inactive',dnsLive=false,legacyLive=false,commands=[],dnsSocketMissing=false,registeredEmpty=false,gatewayReachable=true,probeLock=true,runtimeNow=100,cacheWriteFailure=false,legacyResidual=false,injectCancelOnPermit=false,uuidCounter=0,cancelFromMock=null;
 function time(){return runtimeNow;}
 let fs={
  access:function(path){return false;},
  lstat:function(path){return metadata[path] ?? null;},
  mkdir:function(path,mode){metadata[path]={type:'directory',uid:0,mode};return true;},
- readfile:function(path){return runtimeFiles[path] ?? null;},
+ readfile:function(path){if(path=='/proc/sys/kernel/random/uuid')return runtimeFiles[path] ?? sprintf('00000000-0000-4000-8000-%012d',++uuidCounter);return runtimeFiles[path] ?? null;},
  rename:function(from,to){runtimeFiles[to]=runtimeFiles[from];metadata[to]=metadata[from];delete runtimeFiles[from];delete metadata[from];return true;},
  unlink:function(path){delete runtimeFiles[path];delete metadata[path];return true;},
  open:function(path,mode,permissions){
+  if(injectCancelOnPermit && mode=='w' && index(path,'external-enable-token.json.new')>=0) {injectCancelOnPermit=false;runtimeFiles['/proc/sys/kernel/random/uuid']='00000000-0000-4000-8000-000000000003';cancelFromMock();}
   if(mode=='r')return {read:function(limit){return substr(runtimeFiles[path] ?? '',0,limit);},close:()=>true};
   if(mode=='w' && cacheWriteFailure && index(path,'external-dns-probe.json')>=0)return null;
   metadata[path]={type:'file',uid:0,mode:permissions};
@@ -18,7 +19,8 @@ let fs={
  },
  popen:function(command){
   push(commands,command);let body;
-  if(index(command,'alwayroute-external-forwarding status')>=0)body={available:true,running:networkMode=='active',guarded:networkMode=='guarded',residual:networkMode!='inactive'};
+  if(index(command,'alwayroute-external-forwarding boot-status')>=0)body={guarded:false};
+  else if(index(command,'alwayroute-external-forwarding status')>=0)body={available:true,running:networkMode=='active',guarded:networkMode=='guarded',residual:networkMode!='inactive'};
   else if(index(command,'ubus call service list')>=0) {
    body={};let name=index(command,'alwayroute-external-dns')>=0?'alwayroute-external-dns':'alwayroute';
    if(registeredEmpty)body[name]={};
@@ -44,6 +46,7 @@ function system(command) {
  return 0;
 }
 // EXTERNAL_RUNTIME_SOURCE
+cancelFromMock=cancelExternalRecovery;
 let checks=0;
 function check(ok,message){checks++;assert(ok,message);}
 registeredEmpty=true;
@@ -107,3 +110,21 @@ check(result.state.clientScope.mode=='lan' && result.state.clientScope.ipv4=='19
 check(runtimeFiles['/tmp/alwayroute/external-dns.conf']==dnsConfig,'whole LAN shares the same dedicated public/local DNS split');
 executeExternal('external_disable',{});check(networkMode=='inactive' && !dnsLive,'whole-LAN close removes forwarding and dedicated DNS');
 print(sprintf('PASS external runtime adapter: %d checks\n',checks));
+
+let bootRules=externalBootRules(lan);
+check(index(bootRules,'iifname != "br-lan" return')>=0 && index(bootRules,'ip saddr 192.0.2.0/24')>=0 && index(bootRules,'priority -153')>=0 && index(bootRules,'th dport 53 drop')>=0,'persistent early guard protects confirmed logical LAN and DNS before an address or physical port exists');
+check(index(bootRules,'flush ruleset')<0 && index(bootRules,'delete table inet alwayroute_external_boot')>=0 && index(bootRules,'hook forward priority -7')>=0,'early guard is an atomic dedicated table with IPv6 forwarding protection');
+
+commands=[];extBootGuard(lan);commands=[];extBootGuard(lan);
+check(length(filter(commands,c=>c=='/bin/sync'))==0,'unchanged persistent early guard is reused across recovery attempts without flash sync');
+
+cancelExternalRecovery();let capturedCancel=externalCancelToken();
+runtimeFiles['/proc/sys/kernel/random/uuid']='00000000-0000-4000-8000-000000000002';cancelExternalRecovery();
+let racedApply=executeExternal('external_apply',{expectedRevision:2,cancelToken:capturedCancel});
+check(racedApply.state.phase=='disabled' && networkMode=='inactive' && externalCancelToken()=='00000000-0000-4000-8000-000000000002','apply cannot acknowledge a newer close that arrived after it captured the lock-entry generation');
+capturedCancel=externalCancelToken();injectCancelOnPermit=true;
+racedApply=executeExternal('external_apply',{expectedRevision:2,cancelToken:capturedCancel});
+check(racedApply.state.phase=='disabled' && networkMode=='inactive' && externalCancelToken()=='00000000-0000-4000-8000-000000000003','close arriving between token comparison and acknowledgment remains pending and wins before activation');
+extBootGuard(lan);delete runtimeFiles['/tmp/alwayroute/external-state.json'];delete metadata['/tmp/alwayroute/external-state.json'];
+let rebootClose=executeExternal('external_resume',{event:true});
+check(rebootClose.state.phase=='disabled' && runtimeFiles['/etc/alwayroute/external-boot/guard.nft']==null,'reboot with durable close and no volatile state finishes persistent guard cleanup');

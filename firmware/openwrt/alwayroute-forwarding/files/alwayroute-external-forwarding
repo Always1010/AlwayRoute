@@ -136,6 +136,8 @@ check_environment() {
     route=$(ip -4 route get "$GATEWAY") || fail 'Gateway is not on-link'
     printf '%s\n' "$route" | grep -Eq "^$GATEWAY dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Gateway route does not match LAN'
     printf '%s\n' "$route" | grep -Eq '(^|[[:space:]])via[[:space:]]' && fail 'Gateway must be directly on-link'
+    neighbour=$(ip -4 neigh show to "$GATEWAY" dev "$LAN") || fail 'Cannot inspect gateway identity'
+    printf '%s\n' "$neighbour" | grep -Eiq "^$GATEWAY .*lladdr $GATEWAY_MAC ([[:space:]]|REACHABLE|STALE|DELAY|PROBE|PERMANENT)" || fail 'Gateway MAC is not confirmed on the logical LAN'
     if [ "$CLIENT_MAC" = lan ]; then
         [ "$CLIENT" = "$LAN_NETWORK" ] || fail 'LAN source CIDR must match the actual interface network'
     else
@@ -373,15 +375,41 @@ status() {
     has_table || fail 'Owned external nft table is absent'
     phase=$(cat "$PHASE")
     if [ "$phase" = active ] && owned_rule && owned_route; then
-        LAN=$SAVED_LAN ROUTER=$SAVED_ROUTER GATEWAY=$SAVED_GATEWAY CLIENT=$SAVED_CLIENT CLIENT_MAC=$SAVED_CLIENT_MAC
+        LAN=$SAVED_LAN ROUTER=$SAVED_ROUTER GATEWAY=$SAVED_GATEWAY CLIENT=$SAVED_CLIENT CLIENT_MAC=$SAVED_CLIENT_MAC GATEWAY_MAC=$SAVED_GATEWAY_MAC
         check_environment
         printf '%s\n' '{"available":true,"running":true,"guarded":false,"residual":true,"phase":"active","family":"ipv4","verification":"unverified","routerOriginated":"direct"}'
     elif [ "$phase" = guarded ]; then
         printf '%s\n' '{"available":true,"running":false,"guarded":true,"residual":true,"phase":"guarded","verification":"unverified"}'
     else fail 'External state is inconsistent'; fi
 }
+boot_owned() {
+    nft list tables >/dev/null || fail 'Cannot inspect early guard ownership'
+    if nft list table inet alwayroute_external_boot >/dev/null 2>&1; then
+        nft -s list table inet alwayroute_external_boot | grep -Fq 'comment "alwayroute-external-boot v1"' || fail 'Unowned early guard table'
+        BOOT_PRESENT=1
+    else BOOT_PRESENT=0; fi
+}
+boot_guard() {
+    boot_owned
+    private_path /etc/alwayroute directory 448 || fail 'Unsafe persistent directory'
+    private_path /etc/alwayroute/external-boot directory 448 || fail 'Unsafe early guard directory'
+    private_file /etc/alwayroute/external-boot/guard.nft || fail 'Unsafe early guard file'
+    nft --check --file /etc/alwayroute/external-boot/guard.nft || fail 'Invalid early guard'
+    nft --file /etc/alwayroute/external-boot/guard.nft || fail 'Cannot install early guard'
+    # A disabled fw4 auto-include must not be reported as protected startup.
+    # Install the live guard first, then fail activation if boot reinsertion
+    # cannot be proven from the actual fw4 generated transaction.
+    /usr/libexec/alwayroute-timeout 5 fw4 print 2>/dev/null | grep -Fq 'include "/usr/share/nftables.d/ruleset-pre/30-alwayroute-external.nft"' || fail 'fw4 automatic early guard include is unavailable'
+}
+boot_open() { boot_owned; [ "$BOOT_PRESENT" = 0 ] || nft flush table inet alwayroute_external_boot; }
+boot_stop() { boot_owned; [ "$BOOT_PRESENT" = 0 ] || nft delete table inet alwayroute_external_boot; }
+boot_status() {
+    boot_owned
+    if [ "$BOOT_PRESENT" = 1 ] && nft -s list table inet alwayroute_external_boot | grep -Eq '(^|[[:space:]])drop([[:space:]]|$)'; then printf '{"guarded":true}\n'; else printf '{"guarded":false}\n'; fi
+}
 init
 case "${1:-}" in
+    boot-guard) boot_guard;; boot-open) boot_open;; boot-stop) boot_stop;; boot-status) boot_status;;
     prepare) prepare;; guard) guard;; activate) activate;; stop) stop;; status) status;; legacy-clear) legacy_clear;;
     *) fail 'Usage: alwayroute-external-forwarding {prepare|guard|activate|stop|status}';;
 esac

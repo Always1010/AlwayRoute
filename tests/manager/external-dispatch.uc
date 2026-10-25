@@ -31,3 +31,11 @@ check(call('external_disable',{},true).ok,'pure dispatcher closes despite corrup
 metadata['/tmp/alwayroute/manager.lock'].mode=0644;
 check(call('external_disable',{},true).error.code=='STORAGE_ERROR','unsafe lock is rejected without permission repair');
 print('PASS pure external dispatcher: fresh install, shared jobs, private locks and migration refusal\n');
+
+metadata['/tmp/alwayroute/manager.lock'].mode=0600;
+runtimeFiles['/etc/alwayroute/external-config.json']=sprintf('%J',{...config,revision:1});
+check(call('external_apply',{expectedRevision:1},true).ok,'explicit apply can clear an earlier durable cancellation');
+probeLock=false;let busyClose=call('external_disable',{},true);
+check(!busyClose.ok && busyClose.error.code=='BUSY' && metadata['/etc/alwayroute/external-stop-request.json']!=null,'close intent persists even while the manager lock is BUSY');
+probeLock=true;let resumeAfterBusy=call('external_resume',{event:true},true);
+check(resumeAfterBusy.ok && networkMode=='inactive' && !json(runtimeFiles['/etc/alwayroute/external-intent.json']).enabled,'single worker performs the pending close once the busy transaction releases');

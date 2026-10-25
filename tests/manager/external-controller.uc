@@ -1,24 +1,26 @@
 'use strict';
 // EXTERNAL_SOURCE
 
-let files={},network='inactive',dns=false,localCore=false,now=100,operations=[],failAt=null,failWrite=null,failRemove=null,failSequence=[],guardedConfig=null,gatewayReachable=true;
+let files={},network='inactive',dns=false,localCore=false,now=100,operations=[],failAt=null,failWrite=null,failRemove=null,failSequence=[],guardedConfig=null,gatewayReachable=true,cancelled=false,cancelAt=null,persistentWrites=0;
 function copy(value) {return value==null?null:json(sprintf('%J',value));}
-function operation(name) {push(operations,name);if(name==failSequence[0]){shift(failSequence);die('injected sequential failure');}if(name==failAt){failAt=null;die('injected operational failure');}}
+function operation(name) {push(operations,name);if(name==cancelAt)cancelled=true;if(name==failSequence[0]){shift(failSequence);die('injected sequential failure');}if(name==failAt){failAt=null;die('injected operational failure');}}
 let io={
+ cancelled:()=>cancelled,permit:function(){return !cancelled;},
+ bootGuard:function(config){operation('bootGuard');},bootOpen:()=>operation('bootOpen'),bootClear:()=>operation('bootClear'),
  read:function(key){let value=files[key];if(value=='corrupt')die('corrupt file');return copy(value);},
- write:function(key,value){if(key==failWrite){failWrite=null;die('injected storage failure');}files[key]=copy(value);},
+ write:function(key,value){if(key!='state')persistentWrites++;if(key==failWrite){failWrite=null;die('injected storage failure');}files[key]=copy(value);},
  remove:function(key){if(key==failRemove){failRemove=null;die('injected unlink failure');}delete files[key];},
  now:()=>now,sync:()=>operation('sync'),runtime:function(config){operation('runtime');},clearRuntime:()=>operation('clear'),localCore:()=>localCore,
  gatewayDns:function(config,force){operation('gatewayDns');return {gateway:config.link.gatewayAddress,port:config.dns.gatewayPort,reachable:gatewayReachable,observedAt:now};},
  prepare:function(config){operation('prepare');},guard:function(config){operation('guard');network='guarded';guardedConfig=copy(config);},
  startDns:function(config){operation('dns');dns=true;},activate:function(config){operation('activate');network='active';},
  stopDns:function(){operation('stopDns');dns=false;},stop:function(){operation('stop');network='inactive';dns=false;localCore=false;},
- inspect:()=>({network:{available:true,running:network=='active',guarded:network=='guarded',residual:network!='inactive'},dns:{running:dns},localCore})
+ inspect:()=>({network:{bootGuarded:false,available:true,running:network=='active',guarded:network=='guarded',residual:network!='inactive'},dns:{running:dns},localCore})
 };
 let engine=externalController(io),checks=0;
 function check(ok,message) {checks++;assert(ok,message);}
 function fails(callback,code) {let error=null;try{callback();}catch(e){error=e.message;}check(error!=null && (code==null || index(error,'ALWAYROUTE:'+code+':')==0),'expected '+(code ?? 'failure')+', got '+(error ?? 'success'));}
-function reset() {files={};network='inactive';dns=false;localCore=false;now=100;operations=[];failAt=null;failWrite=null;failRemove=null;failSequence=[];guardedConfig=null;gatewayReachable=true;}
+function reset() {files={};network='inactive';dns=false;localCore=false;now=100;operations=[];failAt=null;failWrite=null;failRemove=null;failSequence=[];guardedConfig=null;gatewayReachable=true;cancelled=false;cancelAt=null;persistentWrites=0;}
 function config() {return {schema:1,revision:0,enabled:true,family:'ipv4',faultPolicy:'block',link:{interface:'br-lan',routerAddress:'192.0.2.1',gatewayAddress:'192.0.2.2',gatewayMac:'02:00:00:00:00:02'},clients:[{address:'192.0.2.3',mac:'02:00:00:00:00:03'}],dns:{gatewayPort:1053,listenPort:1053,localDomains:['lan']},bypass4:[]};}
 function save() {return engine.save({expectedRevision:0,config:config()});}
 function peer() {return {gateway:'192.0.2.2',revision:files.config.revision,generation:'synthetic-generation',observedAt:now,coreReady:true,captureReady:true,dnsReady:true,egressViaRouter:true,returnViaRouter:true,sourcePreserved:true};}
@@ -99,5 +101,33 @@ reset();save();apply();operations=[];engine.shutdown();
 check(files.intent.enabled && files.good.revision==1 && network=='guarded' && !dns && index(operations,'stop')<0,'shutdown preserves durable intent and confirmed guard until base network stops');
 engine.disable();engine.shutdown();check(!files.intent.enabled && network=='inactive','shutdown cannot revive explicit disable');
 
+reset();save();apply();let draft=copy(files.config);draft.revision=1;draft.dns.gatewayPort=2053;engine.save({expectedRevision:1,config:draft});
+engine.shutdown();persistentWrites=0;now=200;gatewayReachable=false;let waiting=engine.resume({event:true});
+check(waiting.recovery.status=='waiting' && files.intent.enabled && network=='guarded' && files.good.dns.gatewayPort==1053,'late gateway waits under guard using confirmed configuration, never the newer draft');
+for(let i=0;i<8;i++){now=waiting.recovery.nextAttemptAt;waiting=engine.resume({});}
+check(persistentWrites==0,'ordinary gateway retries never rewrite durable intent or lastgood');
+check(waiting.recovery.delaySeconds==30 && waiting.recovery.attempt==9,'recovery retries indefinitely with a thirty second interval cap');
+now=waiting.recovery.nextAttemptAt;gatewayReachable=true;engine.resume({});
+check(network=='active' && files.good.revision==1 && files.config.revision==2,'gateway readiness restores lastgood without applying draft');
+operations=[];for(let i=0;i<50;i++)engine.resume({event:true});
+check(length(filter(operations,x=>x=='activate'))==0,'event storm only checks healthy state and never repeats network activation');
+engine.shutdown();cancelAt='dns';engine.resume({event:true});
+check(!files.intent.enabled && network=='inactive' && files.good==null,'durable cancellation during recovery wins before activation');
+now+=100;engine.resume({event:true});check(network=='inactive','delayed recovery cannot revive a completed disable');
+reset();save();apply();files.journal={schema:1,phase:'committed',target:copy(files.good),previous:null};engine.shutdown();now=200;engine.resume({event:true});
+check(files.journal==null && network=='active' && files.good.revision==1,'committed journal recovers automatically through fresh preflight');
+print(sprintf('PASS lifecycle recovery: %d cumulative checks\n',checks));
+
 reset();save();apply();files.config='corrupt';let protectedShutdown=engine.shutdown();
 check(protectedShutdown.ok && files.intent.enabled && network=='guarded','shutdown reads only confirmed state even when the newer saved draft is corrupt');
+reset();save();apply();failAt='bootClear';fails(()=>engine.disable(),'EXTERNAL_STOP_FAILED');
+check(!files.intent.enabled && network=='inactive' && files.state.phase=='fault','failed early-guard cleanup still retires ordinary resources and never reports disabled success');
+engine.disable();check(files.state.phase=='disabled','independent close can retry early guard cleanup');
+
+reset();save();operations=[];cancelAt='prepare';engine.apply({expectedRevision:1});
+check(!files.intent.enabled && network=='inactive' && index(operations,'activate')<0,'new close arriving during apply preflight is not cleared by its later enable acknowledgment');
+reset();save();apply();cancelled=true;delete files.state;network='guarded';dns=false;engine.resume({event:true});
+check(!files.intent.enabled && network=='inactive' && files.good==null,'durable cancellation before reboot closes residual guard even when volatile state is absent');
+reset();save();apply();network='inactive';dns=false;failSequence=['bootGuard','bootGuard'];
+let unprotected=engine.resume({event:true});
+check(unprotected.recovery.status=='error' && files.state.phase=='fault','failed guard establishment never reports a confirmed source block while retrying');

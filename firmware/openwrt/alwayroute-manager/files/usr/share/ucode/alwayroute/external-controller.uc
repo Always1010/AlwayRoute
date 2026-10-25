@@ -7,6 +7,7 @@ function externalError(code,message) {die('ALWAYROUTE:'+code+':'+message);}
 export function externalController(io) {
  function readConfig() {return validateExternal(io.read('config') ?? emptyExternal());}
  function intent() {
+  if(io.cancelled?.())return {enabled:false,revision:null};
   let value=io.read('intent');
   if(value==null)return {enabled:false,revision:null};
   if(type(value)!='object' || type(value.enabled)!='bool' || value.revision!=null && (type(value.revision)!='int' || value.revision<0))externalError('STORAGE_CORRUPT','外部启用意图损坏，请显式关闭');
@@ -31,8 +32,8 @@ export function externalController(io) {
   }
   let dnsFresh=gatewayDns!=null && type(gatewayDns.observedAt)=='int' && gatewayDns.observedAt<=io.now() && io.now()-gatewayDns.observedAt<60;
   if(phase=='active' && (method=='operator' && !fresh || method=='gateway-dns' && (!dnsFresh || gatewayDns.reachable!==true)))phase='degraded';
-  if(inspection && phase=='active' && desired.enabled && (inspection.network?.running!==true || inspection.dns?.running!==true))phase='degraded';
-  return {clientScope:runtime.clientScope ?? null,savedRevision:config.revision,desiredEnabled:desired.enabled,desiredRevision:desired.revision,appliedRevision:pending?null:(runtime.appliedRevision ?? null),phase,applicationMethod:method,localForwarding:inspection?.network ?? {status:'unknown'},dns:inspection?.dns ?? {status:'unknown'},gatewayDns:{method:'udp-query',status:dnsFresh && gatewayDns.reachable!=null?(gatewayDns.reachable===true?'reachable':'unreachable'):'unknown',observedAt:gatewayDns?.observedAt ?? null,ageSeconds:gatewayDns?.observedAt!=null && gatewayDns.observedAt<=io.now()?io.now()-gatewayDns.observedAt:null,cacheSeconds:60},peer:peer?{method:'operator',generation:peer.generation,observedAt:peer.observedAt,status:fresh?'reported':'unknown'}:{status:'unknown'},lastError:runtime.lastError ?? null,observedAt:inspection?io.now():null,endToEnd:'unverified',baseConnectivity:'unverified'};
+  if(inspection && phase=='active' && desired.enabled && (inspection.network?.running!==true || inspection.network?.bootGuarded===true || inspection.dns?.running!==true))phase='degraded';
+  return {recovery:io.read('supervisor') ?? runtime.recovery ?? null,clientScope:runtime.clientScope ?? null,savedRevision:config.revision,desiredEnabled:desired.enabled,desiredRevision:desired.revision,appliedRevision:pending?null:(runtime.appliedRevision ?? null),phase,applicationMethod:method,localForwarding:inspection?.network ?? {status:'unknown'},dns:inspection?.dns ?? {status:'unknown'},gatewayDns:{method:'udp-query',status:dnsFresh && gatewayDns.reachable!=null?(gatewayDns.reachable===true?'reachable':'unreachable'):'unknown',observedAt:gatewayDns?.observedAt ?? null,ageSeconds:gatewayDns?.observedAt!=null && gatewayDns.observedAt<=io.now()?io.now()-gatewayDns.observedAt:null,cacheSeconds:60},peer:peer?{method:'operator',generation:peer.generation,observedAt:peer.observedAt,status:fresh?'reported':'unknown'}:{status:'unknown'},lastError:runtime.lastError ?? null,observedAt:inspection?io.now():null,endToEnd:'unverified',baseConnectivity:'unverified'};
  }
  function get() {return {ok:true,config:readConfig(),state:state()};}
  function status() {return {ok:true,state:state(io.inspect())};}
@@ -53,9 +54,10 @@ export function externalController(io) {
   let durable=true;
   try{io.write('mode',{schema:1,backend:'external'});io.write('intent',{enabled:false,revision:null});io.sync();}catch(e){durable=false;}
   try {
+   let bootFailed=false;try{io.bootClear?.();}catch(e){bootFailed=true;}
    io.stop();
    let actual=io.inspect();
-   if(actual.network?.running!==false || actual.network?.guarded!==false || actual.network?.residual!==false || actual.dns?.running!==false || actual.localCore!==false)externalError('EXTERNAL_STOP_FAILED','外部资源或本机核心仍未确认停止');
+   if(bootFailed || actual.network?.bootGuarded===true || actual.network?.running!==false || actual.network?.guarded!==false || actual.network?.residual!==false || actual.dns?.running!==false || actual.localCore!==false)externalError('EXTERNAL_STOP_FAILED','外部资源或本机核心仍未确认停止');
    if(!durable)externalError('STORAGE_ERROR','关闭已尝试，但停止意图尚未持久保存');
    io.write('state',{phase:'disabled',appliedRevision:null,peer:null,lastError:null});
    io.remove('journal');io.remove('good');io.clearRuntime();io.sync();
@@ -68,11 +70,11 @@ export function externalController(io) {
  function restore(previous) {
   if(previous?.enabled) {
    // No old peer observation is re-used after a failed or interrupted apply.
-   io.guard(previous);io.stopDns();
+   io.bootGuard?.(previous);io.guard(previous);io.stopDns();
    io.write('intent',{enabled:true,revision:previous.revision});
    io.write('good',previous);remember('guarded',previous,null,'RECONFIRM_REQUIRED');
   }else {
-   io.stop();io.clearRuntime();io.write('intent',{enabled:false,revision:null});
+   io.bootClear?.();io.stop();io.clearRuntime();io.write('intent',{enabled:false,revision:null});
    io.remove('good');io.write('state',{phase:'disabled',appliedRevision:null,peer:null,lastError:null});
   }
   io.sync();
@@ -96,15 +98,21 @@ export function externalController(io) {
   }
   // Preflight can prepare private files but cannot commit network state.
   try{io.prepare(config);}catch(e){if(previous?.enabled)io.runtime(previous);else io.clearRuntime();externalError('EXTERNAL_PREFLIGHT_FAILED','外部网络或专用DNS预检失败，原状态保持');}
+  if(io.permit && io.permit(args.cancelToken)===false)return disable();
   let pending={schema:1,phase:'applying',target:config,previous};
   io.write('mode',{schema:1,backend:'external'});io.write('journal',pending);io.sync();
   try {
+   io.bootGuard?.(config);
    io.write('intent',{enabled:true,revision:config.revision});io.sync();
-   io.guard(config);io.startDns(config);io.activate(config);
+   io.guard(config);io.startDns(config);
+   if(io.cancelled?.())return disable();
+   io.activate(config);
+   if(io.cancelled?.())return disable();
    // A slow activation may outlive its observation. Never commit stale proof.
    if(!automated)peer=validateExternalPeer(args.peer,config,io.now());
    let actual=io.inspect();
    if(actual.network?.running!==true || actual.network?.guarded!==false || actual.dns?.running!==true || actual.localCore!==false)externalError('EXTERNAL_CONFIRM_FAILED','外部本地应用未确认');
+   io.bootOpen?.();
   }catch(e) {
    try{restore(previous);removeJournal();}catch(ignored) {
     try{io.guard(previous?.enabled?previous:config);}catch(guardError){}
@@ -131,7 +139,7 @@ export function externalController(io) {
    if(!config?.enabled)return disable();
   }else config=validateExternal(io.read('good'));
   try {
-   io.guard(config);io.stopDns();
+   io.bootGuard?.(config);io.guard(config);io.stopDns();
    io.write('intent',{enabled:true,revision:config.revision});io.write('good',config);
    remember('guarded',config,null,'RECONFIRM_REQUIRED');io.sync();removeJournal();
   }catch(e) {
@@ -142,9 +150,66 @@ export function externalController(io) {
  }
  function shutdown() {
   if(!intent().enabled)return disable();
-  // Keep the confirmed source guard through base network shutdown. stop()
-  // would remove protection while normal forwarding can still be running.
+  // Reconcile installs the confirmed guard and retires the policy route. Do
+  // not call stop(): deleting the guard here opens a shutdown forwarding gap.
   return reconcile({quiet:true});
  }
- return {get,status,save,apply,disable,reconcile,shutdown};
+ function resume(args) {
+  let desired=intent();
+  // No lastgood/journal/draft read on the disabled path. An explicit close
+  // supersedes every delayed event and retry, including a corrupt journal.
+  if(!desired.enabled) {
+   let runtime=io.read('state');
+   if(runtime?.phase=='disabled' && !args?.event && !io.needsStop?.())return {ok:true,recovery:{enabled:false}};
+   let actual=io.inspect();
+   if(io.needsStop?.() || runtime && runtime.phase!='disabled' || actual.network?.running!==false || actual.network?.guarded!==false || actual.network?.residual!==false || actual.network?.bootGuarded!==false || actual.dns?.running!==false || actual.localCore!==false)return disable();
+   return {ok:true,recovery:{enabled:false}};
+  }
+  let runtime=io.read('state') ?? {},retry=runtime.recovery ?? {};
+  if(!args?.event && retry.nextAttemptAt>io.now())return {ok:true,recovery:retry};
+  let pending=journal(),config;
+  if(pending) {
+   config=pending.phase=='committed'?pending.target:pending.previous;
+   if(!config?.enabled)return disable();
+  }else config=validateExternal(io.read('good'));
+  if(runtime.phase=='active' && !pending) {
+   let actual=io.inspect(),observed=io.gatewayDns(config,false);
+   if(actual.network?.running===true && actual.network?.guarded===false && actual.network?.bootGuarded===false && actual.dns?.running===true && actual.localCore===false && observed?.reachable===true) {
+    let recovery={attempt:0,lastAttemptAt:io.now(),nextAttemptAt:io.now()+10,delaySeconds:10,status:'monitoring'};
+    runtime.recovery=recovery;io.write('state',runtime);return {ok:true,recovery};
+   }
+  }
+  let attempt=(retry.attempt ?? 0)+1;
+  try {
+   // Always restore the confirmed scope before any availability probe. A
+   // late gateway or lost LAN address can never turn recovery into direct WAN.
+   io.bootGuard?.(config);io.guard(config);io.stopDns();
+   if(io.cancelled?.())return disable();
+   if(pending) {
+    io.write('good',config);io.write('intent',{enabled:true,revision:config.revision});io.sync();removeJournal();
+   }
+   if(io.localCore())externalError('LOCAL_CORE_ACTIVE','本机核心仍在运行');
+   let observed=io.gatewayDns(config,true);
+   if(observed?.reachable!==true)externalError('GATEWAY_WAIT','等待网关 UDP DNS 可达');
+   io.prepare(config);io.startDns(config);
+   if(io.cancelled?.())return disable();
+   io.activate(config);
+   if(io.cancelled?.())return disable();
+   let actual=io.inspect();
+   if(actual.network?.running!==true || actual.network?.guarded!==false || actual.dns?.running!==true || actual.localCore!==false)externalError('EXTERNAL_CONFIRM_FAILED','恢复后的本地资源未确认');
+   io.bootOpen?.();remember('active',config,null,null,observed);
+   let recovery={attempt:0,lastAttemptAt:io.now(),nextAttemptAt:io.now()+10,delaySeconds:10,status:'monitoring'};
+   let state=io.read('state');state.recovery=recovery;io.write('state',state);
+   return {ok:true,recovery};
+  }catch(e) {
+   try{io.bootGuard?.(config);io.guard(config);io.stopDns();}catch(guardError){}
+   let message=e.message ?? '',code=index(message,'ALWAYROUTE:')==0?split(substr(message,11),':')[0]:'EXTERNAL_RECOVERY_FAILED';
+   let delay=attempt>5?30:2 ** (attempt-1);
+   let guardConfirmed=false;try{let actual=io.inspect();guardConfirmed=actual.network?.guarded===true || actual.network?.bootGuarded===true;}catch(ignored){}
+   let recovery={attempt,lastAttemptAt:io.now(),nextAttemptAt:io.now()+delay,delaySeconds:delay,status:guardConfirmed?'waiting':'error',error:code};
+   remember(guardConfirmed?'waiting':'fault',config,null,code);let state=io.read('state');state.recovery=recovery;io.write('state',state);
+   return {ok:true,recovery};
+  }
+ }
+ return {get,status,save,apply,disable,reconcile,shutdown,resume};
 };

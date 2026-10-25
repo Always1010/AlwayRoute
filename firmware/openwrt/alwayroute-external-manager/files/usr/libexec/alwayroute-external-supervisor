@@ -1,0 +1,40 @@
+#!/usr/bin/ucode
+'use strict';
+import * as fs from 'fs';
+import { call } from 'alwayroute.store';
+
+const DIRECTORY='/tmp/alwayroute',EVENT=DIRECTORY+'/external-recovery.event',PAUSE=DIRECTORY+'/external-recovery.pause',STATE=DIRECTORY+'/external-supervisor-state.json';
+function privatePath(path,kind,mode) {let s=fs.lstat(path);return s?.type==kind && s.uid==0 && s.mode==mode;}
+if(!fs.lstat(DIRECTORY))fs.mkdir(DIRECTORY,0700);
+if(!privatePath(DIRECTORY,'directory',0700))exit(1);
+for(let path in [EVENT,PAUSE])if(fs.lstat(path) && !privatePath(path,'file',0600))exit(1);
+if(ARGV[0]=='pause' || ARGV[0]=='event') {
+ let file=fs.open(ARGV[0]=='pause'?PAUSE:EVENT,'w',0600);if(!file)exit(1);file.close();exit(0);
+}
+if(ARGV[0]=='start') {if(fs.lstat(PAUSE))fs.unlink(PAUSE);let file=fs.open(EVENT,'w',0600);if(!file)exit(1);file.close();exit(0);}
+if(length(ARGV))exit(2);
+// procd owns exactly one worker. Each call uses manager.lock, so job workers,
+// manual operations and event bursts cannot run concurrent network changes.
+let busyDelay=1,busyUntil=0;
+function report(value) {
+ for(let path in [STATE,STATE+'.new'])if(fs.lstat(path) && !privatePath(path,'file',0600))return;
+ if(value==null) {if(fs.lstat(STATE))fs.unlink(STATE);return;}
+ let file=fs.open(STATE+'.new','w',0600);if(!file)return;
+ file.write(sprintf('%J',value));file.flush();file.close();fs.rename(STATE+'.new',STATE);
+}
+while(true) {
+ if(!fs.lstat(PAUSE) && time()>=busyUntil) {
+  let event=privatePath(EVENT,'file',0600);if(event)fs.unlink(EVENT);
+  let result=call('external_resume',{event},true);
+  if(result.ok) {busyDelay=1;busyUntil=0;report(null);}
+  else {
+   busyUntil=time()+busyDelay;
+   report({status:'waiting',error:result.error?.code ?? 'INTERNAL_ERROR',nextAttemptAt:busyUntil,delaySeconds:busyDelay});
+   busyDelay=busyDelay>=16?30:busyDelay*2;
+   // Keep one pending event after BUSY or a storage failure, including when
+   // no future netifd/firewall event is emitted.
+   let file=fs.open(EVENT,'w',0600);file?.close();
+  }
+ }
+ system('/bin/sleep 1');
+}

@@ -99,10 +99,15 @@ with tempfile.TemporaryDirectory(prefix="alwayroute-init-") as directory:
     assert 'external-mode.json' not in pure, 'pure external lifecycle cannot depend on a mode marker'
     events.write_text('')
     script.write_text('set -eu\n' + '\n'.join(pure.splitlines()[1:]).replace(
+        '/usr/libexec/alwayroute-external-supervisor', helper.as_posix()).replace(
         '/usr/libexec/alwayroute-external', helper.as_posix()) +
-        '\nstop() { stop_service; }\nstart_service\nstop_service\nrestart\nreload_service\nshutdown\n', encoding='utf-8')
+        '\nprocd_open_instance() { :; }\nprocd_set_param() { :; }\nprocd_close_instance() { :; }\n'
+        'start() { start_service; }\nstop() { stop_service; }\n'
+        'start_service\nstop_service\nrestart\nreload_service\nshutdown\n', encoding='utf-8')
     result = subprocess.run([shell, script.as_posix()], env={**os.environ, 'EVENTS_LOG': events.as_posix()}, capture_output=True)
     assert result.returncode == 0, result.stderr.decode(errors='replace')
-    assert events.read_text().splitlines() == ['reconcile', 'disable', 'reconcile', 'reconcile', 'shutdown']
+    assert events.read_text().splitlines() == ['start', 'disable', 'start', 'event', 'pause', 'shutdown'], (
+        'pure lifecycle registers one worker, coalesces events and preserves shutdown intent')
+
 
 print("PASS init: legacy credential registration and independent external lifecycle")
