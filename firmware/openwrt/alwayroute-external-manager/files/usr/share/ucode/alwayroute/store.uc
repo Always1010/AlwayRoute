@@ -63,7 +63,7 @@ export function call(method,args,inline) {
  let lock=null,response;
  try {
   jobInit();args=args ?? {};
-  if(method=='capabilities')return {ok:true,schema:1,backend:'external',externalOnly:true,protocols:[],subscriptionFormats:[],logs:false,externalProxy:{schema:1,family:'ipv4',maxClients:1,faultPolicy:'block',gatewayObservation:'udp-dns',peerObservation:'operator',endToEnd:'unverified'}};
+  if(method=='capabilities')return {ok:true,schema:1,backend:'external',externalOnly:true,protocols:[],subscriptionFormats:[],logs:false,externalProxy:{schema:1,family:'ipv4',clientModes:['selected','lan'],selectedMaxClients:1,faultPolicy:'block',gatewayObservation:'udp-dns',peerObservation:'operator',endToEnd:'unverified'}};
   if(method=='job_status')return externalJobStatus();
   if(index(['external_get','external_status'],method)>=0)return executeExternal(method,args,true);
   if(method!='external_save' && index(EXTERNAL_ACTIONS,method)<0)jobFail('UNSUPPORTED','纯外接包只支持外部配置、状态、应用与关闭');

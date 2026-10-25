@@ -412,7 +412,7 @@ function checkNodes(args,m) {
 function execute(method,args) {
  if(index(['external_get','external_status','external_save','external_apply','external_disable','external_reconcile'],method)>=0)return executeExternal(method,args);
  if(externalSelected()) {
-  if(method=='capabilities')return {ok:true,schema:1,backend:'external',protocols:[],subscriptionFormats:[],forwarding:'unverified',nodeCheck:false,subscriptionCheck:false,batchCheck:false,allNodesCheck:false,retryFailedCheck:false,logs:true,policyPresets:[],externalProxy:{schema:1,family:'ipv4',maxClients:1,faultPolicy:'block',gatewayObservation:'udp-dns',peerObservation:'operator',endToEnd:'unverified'}};
+  if(method=='capabilities')return {ok:true,schema:1,backend:'external',protocols:[],subscriptionFormats:[],forwarding:'unverified',nodeCheck:false,subscriptionCheck:false,batchCheck:false,allNodesCheck:false,retryFailedCheck:false,logs:true,policyPresets:[],externalProxy:{schema:1,family:'ipv4',clientModes:['selected','lan'],selectedMaxClients:1,faultPolicy:'block',gatewayObservation:'udp-dns',peerObservation:'operator',endToEnd:'unverified'}};
   if(method=='service' && args.action=='stop')return executeExternal('external_disable',{});
   if(method=='status')return executeExternal('external_status',{});
   if(method=='traffic')return {ok:true,available:false,upload:null,download:null,reason:'external-backend'};

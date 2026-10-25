@@ -5,6 +5,8 @@ commands=[];dnsSocketMissing=false;probeLock=true;cacheWriteFailure=false;legacy
 check(call('external_get',{}).config.enabled===false,'fresh pure external get defaults off without any legacy model');
 check(call('external_status',{}).state.phase=='disabled','fresh pure external status needs no legacy configuration');
 check(call('capabilities',{}).externalOnly===true,'pure external identity does not depend on mode files');
+let capability=call('capabilities',{}).externalProxy;
+check(sprintf('%J',capability.clientModes)==sprintf('%J',['selected','lan']) && capability.selectedMaxClients===1 && !('maxClients' in capability),'capability distinguishes whole LAN from the compatibility selected-client limit');
 check(!call('service',{action:'start'}).ok && !call('get',{}).ok,'pure dispatcher cannot reach legacy operations');
 let closed=call('external_disable',{},true);
 check(closed.ok && closed.state.phase=='disabled' && runtimeFiles['/etc/alwayroute/service.json']==null,'fresh close never writes legacy service intent');
