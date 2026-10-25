@@ -4,7 +4,7 @@
 
 ## 范围与责任
 
-- 首轮是一台明确来源的终端、IPv4 TCP/UDP、真实地址 DNS。终端默认网关和 DNS 入口保持为路由器；公网 IPv6 对受管终端阻断，本地管理保留，其他终端不受影响。
+- 支持显式整个接入 LAN 或兼容单台指定终端，覆盖 IPv4 TCP/UDP、真实地址 DNS。终端默认网关和 DNS 入口保持为路由器；公网 IPv6 对受管终端阻断，本地管理保留，范围外接口和终端不受影响。
 - 路由器选择来源并保留原 IPv4 地址交付网关；网关完成接管、分流和新建出站连接。网关出站经过路由器 WAN，回程经过路由器；同 LAN 的来源 MAC、连接跟踪与回程必须实测，不增加端间 SNAT 掩盖问题。
 - 路由器管理自己的 nft、策略路由和专用 DNS 进程；网关管理自己的核心、接管、出口和解析。任一端不得修改对方配置。
 - 已确认故障策略为 `block`：开启后对端、核心或 DNS 故障，不自动改为直连。保留开启意图、报告异常；用户显式关闭后撤销自有接管和防护，恢复普通直连。初次开启在预检失败时保持原状态。
@@ -26,15 +26,21 @@
     "gatewayAddress": "192.0.2.2",
     "gatewayMac": "02:00:00:00:00:02"
   },
-  "clients": [{"address": "192.0.2.3", "mac": "02:00:00:00:00:03"}],
+  "clientMode": "lan",
+  "clientCIDR": "192.0.2.0/24",
+  "clients": [],
   "dns": {"gatewayPort": 1053, "listenPort": 1053, "localDomains": ["lan"]},
   "bypass4": []
 }
 ```
 
-示例为合成地址，不是部署参数。`link.interface` 是实际 L3 接口；三个地址和两个 MAC 必须互异。网关稳定地址和 MAC 由管理员核验，不能从历史 DHCP 记录推断。`bypass4` 是明确的额外目的 CIDR 例外，标准私网、保留与广播/组播范围另由适配器保护。例外意味着不进入外部接管，应按最小范围设置。
+示例为合成地址，不是部署参数。`link.interface` 是实际 L3 接口；路由器与网关须为不同的可用主机地址。网关稳定地址和 MAC 由管理员核验，不能从历史 DHCP 记录推断。`bypass4` 是明确的额外目的 CIDR 例外，标准私网、保留与广播/组播范围另由适配器保护。例外意味着不进入外部接管，应按最小范围设置。
 
-`dns.listenPort` 是路由器的独立监听，不能占用基础 DNS 53；`gatewayPort` 是网关受限 UDP/TCP DNS 入口。仅选中终端的 UDP/TCP 53 转到专用解析器；本地域后缀和无点名称交给路由器基础 DNS，公网查询交给网关。不改所有终端共用的 dnsmasq 上游。网关 bootstrap 使用独立基础解析，不能返回本条公网转发链。DoH/DoT 按业务流量处理，不由 53 重定向冒充控制。
+`clientMode:lan` 必须显式提供 `clientCIDR`（规范网络 CIDR，前缀 1–30）和空 `clients`。路由器与网关都须位于该网络内且不能是网络地址或广播地址；应用时还须读取实际 `link.interface` 上路由器地址的掩码，要求 CIDR 完全相同。网关配置的来源范围也须与其相同。仅配置接口接收的该 IPv4 来源被接管，不接管 WAN 或其他 LAN/VLAN。DHCP 新设备或地址变化自动由该范围覆盖，无须逐一填地址、MAC、手动代理或终端证书。路由器本机与外部网关的地址/MAC 不参与接管；网关以其他 LAN 客户端源地址回送的包会被拒绝，公网源地址的正常回包可经路由器返回。
+
+缺省 `clientMode` 或显式 `selected` 保留旧单终端语义：`clients` 必须恰有一个 `{address,mac}`，且不能带 `clientCIDR`。旧 `enabled:true, clients:[]` 始终无效，绝不被解释为整个 LAN。范围、模式或监听变化必须先独立关闭，再保存、应用；保存草稿不改变现有接管。
+
+`dns.listenPort` 是路由器的独立监听，不能占用基础 DNS 53；`gatewayPort` 是网关受限 UDP/TCP DNS 入口。受管来源的 UDP/TCP 53 统一转到专用解析器；本地域后缀和无点名称交给路由器基础 DNS，公网查询交给网关。不改所有终端共用的 dnsmasq 上游。网关 bootstrap 使用独立基础解析，不能返回本条公网转发链。DoH/DoT 按业务流量处理，不由 53 重定向冒充控制。
 
 ## 管理与状态
 
@@ -46,7 +52,7 @@ UDP 查询成功仅证明当时该入口能回答这次 UDP DNS 查询，不证�
 
 兼容保留非空 `peer` 的人工观察路径：必须匹配 gateway、所请求 revision 和对端 generation，携带 `observedAt`，应用前后最多 30 秒。`coreReady`、`captureReady`、`dnsReady`、`egressViaRouter`、`returnViaRouter`、`sourcePreserved` 均需基于实测为 true。此路径标记为 `operator`，不会描述为机器独立证实或终端已验收；网页的正常保存/应用流程不要求填写此表。
 
-状态区分 `savedRevision`、`desiredEnabled`、`appliedRevision`、`phase`、`applicationMethod`、`localForwarding`、`dns`、`gatewayDns`、`peer` 和 `lastError`。`applicationMethod:gateway-dns` 与 `operator` 分别记录应用依据；本地应用、专用 DNS 进程/监听、网关 UDP DNS 观察和端到端出口分开报告。`gatewayDns` 带 `method:udp-query`、`status`（`reachable` / `unreachable` / `unknown`）、`observedAt`、`ageSeconds` 和 `cacheSeconds:60`。`external_status` 仅对正常活动的 DNS 应用模式观察已应用配置，独立 `/tmp` 私有缓存每 60 秒至多发起一次新观察并刷新缓存，轮询不改事务状态；缓存过期而锁忙或缓存不可用时报告 unknown，不能沿用旧值声称当前健康。缓存损坏或不安全不阻止显式应用/关闭，不修复未知权限或链接。`external_get` 只返回已有快照，不发出查询。
+状态的 `clientScope` 标记实际已应用/阻断的模式与 IPv4 范围，不能用新保存的草稿冒充已应用。状态区分 `savedRevision`、`desiredEnabled`、`appliedRevision`、`phase`、`applicationMethod`、`localForwarding`、`dns`、`gatewayDns`、`peer` 和 `lastError`。`applicationMethod:gateway-dns` 与 `operator` 分别记录应用依据；本地应用、专用 DNS 进程/监听、网关 UDP DNS 观察和端到端出口分开报告。`gatewayDns` 带 `method:udp-query`、`status`（`reachable` / `unreachable` / `unknown`）、`observedAt`、`ageSeconds` 和 `cacheSeconds:60`。`external_status` 仅对正常活动的 DNS 应用模式观察已应用配置，独立 `/tmp` 私有缓存每 60 秒至多发起一次新观察并刷新缓存，轮询不改事务状态；缓存过期而锁忙或缓存不可用时报告 unknown，不能沿用旧值声称当前健康。缓存损坏或不安全不阻止显式应用/关闭，不修复未知权限或链接。`external_get` 只返回已有快照，不发出查询。
 
 `phase:active` 只表示本地应用及该模式的有界观察符合条件，绝不代表完整路径通过。DNS 模式不受人工观察的 30 秒期限影响；DNS 失败/未知或本地检查失败报告 degraded，保留开启意图与转发。兼容人工观察过期仍报告 unknown/degraded。`endToEnd` 与 `baseConnectivity` 始终为 `unverified`，由实际终端验收证明，不能由 RPC 写成通过。重启与事件恢复仍先阻断、再显式重新应用，不复用旧观察自动激活。
 
@@ -60,4 +66,4 @@ UDP 查询成功仅证明当时该入口能回答这次 UDP DNS 查询，不证�
 
 ## 联合验收门槛
 
-固定双方源码/安装版本、核心版本、来源范围、超时与观察方式；单终端验证 TCP/UDP、DNS、本地域、来源、实际 WAN 出口、回程、防循环、IPv6 边界和未受管终端。对端离线仍可关闭；核心/DNS 故障、重复开关、损坏配置、应用中断、部分清理失败与重启分别验收。规则生成和模拟适配器测试不等于内核与终端验收。
+固定双方源码/安装版本、核心版本、来源范围、超时与观察方式；整个 LAN 验收至少两台普通终端同时使用，并覆盖后续 DHCP 新终端、租约变化、TCP/UDP、UDP/TCP DNS、本地域、管理连接、原始来源、实际 WAN 出口、经路由器回程、防循环、IPv6 边界和范围外接口；兼容单源另行回归。对端离线仍可关闭；核心/DNS 故障、重复开关、损坏配置、应用中断、部分清理失败与重启分别验收。规则生成和模拟适配器测试不等于内核与终端验收。

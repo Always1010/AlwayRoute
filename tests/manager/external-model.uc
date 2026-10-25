@@ -13,6 +13,13 @@ let bad=json(sprintf('%J',config));bad.clients[0].address=config.link.gatewayAdd
 bad=json(sprintf('%J',config));bad.clients[0].mac='01:00:00:00:00:03';rejects(()=>validateExternal(bad));
 bad=json(sprintf('%J',config));bad.dns.listenPort=53;rejects(()=>validateExternal(bad));
 bad=json(sprintf('%J',config));bad.dns.localDomains=['lan\nserver=bad'];rejects(()=>validateExternal(bad));
+let lan=json(sprintf('%J',config));lan.clientMode='lan';lan.clientCIDR='192.0.2.0/24';lan.clients=[];
+check(validateExternal(lan).clientCIDR=='192.0.2.0/24','explicit entire LAN scope permits DHCP clients without identities');
+for(let value in ['192.0.2.1/24','192.0.3.0/24','192.0.2.0/32','192.0.2.0/31','192.0.2.0/024','0.0.0.0/0']) {let bad=json(sprintf('%J',lan));bad.clientCIDR=value;rejects(()=>validateExternal(bad));}
+bad=json(sprintf('%J',lan));bad.clients=config.clients;rejects(()=>validateExternal(bad));
+bad=json(sprintf('%J',lan));bad.clientMode='all';rejects(()=>validateExternal(bad));
+bad=json(sprintf('%J',lan));delete bad.clientMode;rejects(()=>validateExternal(bad));
+bad=json(sprintf('%J',config));bad.clients=[];rejects(()=>validateExternal(bad));
 let peer={gateway:config.link.gatewayAddress,revision:2,generation:'synthetic-generation',observedAt:100,coreReady:true,captureReady:true,dnsReady:true,egressViaRouter:true,returnViaRouter:true,sourcePreserved:true};
 check(validateExternalPeer(peer,config,110).method=='operator','manual observation explicitly labeled');
 rejects(()=>validateExternalPeer(peer,config,131));rejects(()=>validateExternalPeer(peer,config,99));

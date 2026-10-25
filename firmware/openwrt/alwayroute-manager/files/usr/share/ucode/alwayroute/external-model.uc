@@ -12,14 +12,28 @@ export function externalIPv4(value) {
  return int(octets[0])>0 && int(octets[0])<224 && int(octets[0])!=127 && value!='255.255.255.255';
 };
 function mac(value) {return type(value)=='string' && match(value,/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/) && index(['0','2','4','6','8','a','c','e'],substr(value,1,1))>=0 && value!='00:00:00:00:00:00';}
+function number4(value) {let n=0;for(let part in split(value,'.'))n=n*256+int(part);return n;}
+export function externalClientCIDR(value,link) {
+ if(type(value)!='string' || !link)return false;
+ let parts=split(value,'/');
+ if(length(parts)!=2 || !externalIPv4(parts[0]) || !match(parts[1],/^([1-9]|[12][0-9]|30)$/))return false;
+ let network=number4(parts[0]),size=2 ** (32-int(parts[1]));
+ if(network%size!=0)return false;
+ for(let host in [link.routerAddress,link.gatewayAddress]) {if(!externalIPv4(host))return false;let n=number4(host);if(n<=network || n>=network+size-1)return false;}
+ return true;
+};
 function port(value) {return type(value)=='int' && value>=1 && value<=65535;}
 export function emptyExternal() {
  return {schema:1,revision:0,enabled:false,family:'ipv4',faultPolicy:'block',link:null,clients:[],dns:{gatewayPort:1053,listenPort:1053,localDomains:['lan']},bypass4:[]};
 };
 export function validateExternal(value) {
- objectFields(value,['schema','revision','enabled','family','faultPolicy','link','clients','dns','bypass4']);
+ objectFields(value,['schema','revision','enabled','family','faultPolicy','link','clients','dns','bypass4','clientMode','clientCIDR']);
  if(value.schema!==1 || type(value.revision)!='int' || value.revision<0 || value.revision>2147483645 || type(value.enabled)!='bool' || value.family!='ipv4' || value.faultPolicy!='block')invalid('外部配置版本、开关或故障策略无效');
- if(type(value.clients)!='array' || length(value.clients)>1 || type(value.bypass4)!='array' || length(value.bypass4)>32)invalid('首版只允许一台测试终端及最多32个目的例外');
+ let mode=value.clientMode ?? 'selected';
+ if(index(['selected','lan'],mode)<0 || 'clientMode' in value && type(value.clientMode)!='string')invalid('来源模式无效');
+ if(type(value.clients)!='array' || length(value.clients)>1 || type(value.bypass4)!='array' || length(value.bypass4)>32)invalid('指定来源最多一台，目的例外最多32个');
+ if(mode=='lan' && (length(value.clients)!=0 || !externalClientCIDR(value.clientCIDR,value.link)))invalid('整个LAN接管需要明确网络CIDR与空的指定终端列表');
+ if(mode=='selected' && 'clientCIDR' in value)invalid('指定终端模式不能带LAN来源CIDR');
  if(value.link!=null) {
   objectFields(value.link,['interface','routerAddress','gatewayAddress','gatewayMac']);
   let l=value.link;
@@ -29,7 +43,7 @@ export function validateExternal(value) {
   objectFields(client,['address','mac']);
   if(!externalIPv4(client.address) || !mac(client.mac) || !value.link || client.address==value.link.routerAddress || client.address==value.link.gatewayAddress || client.mac==value.link.gatewayMac)invalid('测试终端身份无效或与网关冲突');
  }
- if(value.enabled && (!value.link || length(value.clients)!=1))invalid('开启需要完整链路与一台测试终端');
+ if(value.enabled && (!value.link || mode=='selected' && length(value.clients)!=1))invalid('开启需要完整链路与明确来源范围');
  objectFields(value.dns,['gatewayPort','listenPort','localDomains']);
  if(!port(value.dns.gatewayPort) || !port(value.dns.listenPort) || value.dns.listenPort==53 || type(value.dns.localDomains)!='array' || length(value.dns.localDomains)<1 || length(value.dns.localDomains)>16)invalid('专用DNS端口或本地域无效');
  let seen={};

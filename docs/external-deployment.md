@@ -2,7 +2,7 @@
 
 AlwayRoute 是 Coproxy 可选的路由器适配实现。Coproxy 可独立部署；满足交付、来源保留、回程与故障策略能力的原厂或其他路由器，不因没有 AlwayRoute、AR RPC 或本文的 DNS 预检而被排除。本文只说明选择 AlwayRoute 后的 OpenWrt 包与操作条件，不要求所有 Coproxy 用户安装 AlwayRoute 或刷 OpenWrt。
 
-**当前实现硬性只接受一台明确 IPv4 地址及 MAC 的终端。** 不支持把配置改为第二终端、整个 LAN 或 CIDR 来源后继续使用。受管 IPv4 TCP/UDP 和 DNS 需要验收，公网 IPv6 阻断；其他终端保留基础网络。网关完成代理核心与策略，路由器仅管理来源交付、专用 DNS、阻断和独立关闭。
+**当前支持显式接管整个接入 LAN，并保留旧单终端配置兼容。** 整个 LAN 使用 `clientMode:lan`、精确接口网络 `clientCIDR` 和空 `clients`；普通设备加入该 LAN / Wi-Fi 后自动纳入来源范围。旧配置缺省仍是单终端，必须先关闭旧接管再切换，空终端列表不会自动扩大范围。受管 IPv4 TCP/UDP 和 DNS 需要验收，公网 IPv6 阻断；路由器本机、外部网关与范围外接口保留基础网络。网关完成代理核心与策略，路由器仅管理来源交付、专用 DNS、阻断和独立关闭。
 
 ## 包选择与能力
 
@@ -18,7 +18,7 @@ AlwayRoute 是 Coproxy 可选的路由器适配实现。Coproxy 可独立部署�
 
 脚本资源为 `all`，仍须匹配目标 OpenWrt 的包管理器、用户空间 ABI、内核模块、LuCI/rpcd/procd 与签名策略。支持标准 OpenWrt 包系统的既有源码树或 SDK，可构建本文三包；不据此宣称所有版本或架构已实测。现有完整固件 CI 仍走原本机核心配方，没有被改为纯外接整机矩阵。
 
-内核须支持 nft/FIB、inet DNAT、IPv4 策略路由与相应模块；LAN L3 接口必须直接到达网关及唯一终端。活动 `flow add` offload 被拒绝，未知厂商加速、多 LAN/VLAN 需另验。基础 LAN/WAN、DNS 和独立管理通道应先正常。nslookup 必须实际支持 `-port=`；包选择会要求相应 BusyBox 功能，不能只检查命令名存在。没有本机 TProxy 核心依赖。
+内核须支持 nft/FIB、inet DNAT、IPv4 策略路由与相应模块；LAN L3 接口必须直接到达网关及受管终端，整个 LAN CIDR 必须与接口实际前缀和网关接管来源完全一致。活动 `flow add` offload 被拒绝，未知厂商加速、多 LAN/VLAN 需另验。基础 LAN/WAN、DNS 和独立管理通道应先正常。nslookup 必须实际支持 `-port=`；包选择会要求相应 BusyBox 功能，不能只检查命令名存在。没有本机 TProxy 核心依赖。
 
 原厂系统只有在用户选择本 AlwayRoute/OpenWrt 实现且缺少其运行环境时，才需要另行评估匹配硬件的 OpenWrt 安装和恢复方式；这里没有跨型号刷机命令。已有设备镜像只能用于对应精确硬件，不可拿来替代其他设备的能力验证。
 
@@ -63,7 +63,7 @@ python3 firmware/tools/build-external.py --tree "$OPENWRT_TREE" --inspect
 
 链路、来源、MAC、端口与本地域按角色核验，字段示例见 [external v1](../contracts/external-v1.md)。Coproxy 为网关时，路由器 `gatewayPort` 应与其受限网关 DNS 入口一致，路由器与网关分别核对自己的 L3 接口、地址与 MAC；两台主机的路由表编号/mark 不要求相同。三方同链路可达、保留真实来源和经过路由器回程是当前适配器条件，不增加端间 SNAT 掩盖问题。
 
-登录 LuCI，填写并保存开启草稿，再应用已保存版本。日常应用以新的 3 秒有界 UDP DNS 查询预检，不填写人工 generation/六项确认；它只证明 UDP DNS 可达，不证明核心、接管、来源、出站/回程或端到端出口。保存只更新版本，待同一 job id 终态后重新核对本地状态。RPC 和页面细节见[外接后端](external-proxy.md)。
+登录 LuCI，新建空配置默认选择“全部接入设备（整个 LAN）”；旧配置会明确显示仅一台指定终端，切换前须使用页面顶部独立关闭。核验 LAN 网络与网关来源一致，填写并保存开启草稿，再应用已保存版本。日常应用以新的 3 秒有界 UDP DNS 查询预检，不填写人工 generation/六项确认；它只证明 UDP DNS 可达，不证明核心、接管、来源、出站/回程或端到端出口。保存只更新版本，待同一 job id 终态后重新核对本地状态。RPC 和页面细节见[外接后端](external-proxy.md)。
 
 独立关闭无需网关在线、peer、缓存或配置可读。先关闭交付、确认后台 job 与自有资源清理并实测普通直连，再升级/卸载包。不要使用全局 autoremove/purge 或递归删除清理未知资料；具体 conffiles 保留行为由目标包管理器和批次说明明确。两端分别管理自己的服务和资料，一端卸载不会自动操作另一端。
 
@@ -72,4 +72,4 @@ python3 firmware/tools/build-external.py --tree "$OPENWRT_TREE" --inspect
 /usr/libexec/alwayroute-external disable
 ```
 
-固定包集、核心及唯一来源，分别验收 IPv4 TCP/UDP、UDP/TCP DNS、LAN 名称/管理 HTTPS、来源保留、WAN 出口、回程、防循环、IPv6 边界和未受管终端。验证核心/DNS 故障阻断、网关仍停止时路由器独立关闭、重复开关与新连接。boot/断电、长时间负载和新增 ABI 需另验。`active`、DNS 可达、包构建和一次网页成功各有自己的证据边界；端到端仍为 `unverified`。
+固定包集、核心及明确来源范围；整个 LAN 至少以两台并发终端和后续 DHCP 新终端/地址变化验收，分别检查 IPv4 TCP/UDP、UDP/TCP DNS、LAN 名称/管理 HTTPS、来源保留、WAN 出口、回程、防循环、IPv6 边界和未受管终端。验证核心/DNS 故障阻断、网关仍停止时路由器独立关闭、重复开关与新连接。boot/断电、长时间负载和新增 ABI 需另验。`active`、DNS 可达、包构建和一次网页成功各有自己的证据边界；端到端仍为 `unverified`。

@@ -32,7 +32,7 @@ export function externalController(io) {
   let dnsFresh=gatewayDns!=null && type(gatewayDns.observedAt)=='int' && gatewayDns.observedAt<=io.now() && io.now()-gatewayDns.observedAt<60;
   if(phase=='active' && (method=='operator' && !fresh || method=='gateway-dns' && (!dnsFresh || gatewayDns.reachable!==true)))phase='degraded';
   if(inspection && phase=='active' && desired.enabled && (inspection.network?.running!==true || inspection.dns?.running!==true))phase='degraded';
-  return {savedRevision:config.revision,desiredEnabled:desired.enabled,desiredRevision:desired.revision,appliedRevision:pending?null:(runtime.appliedRevision ?? null),phase,applicationMethod:method,localForwarding:inspection?.network ?? {status:'unknown'},dns:inspection?.dns ?? {status:'unknown'},gatewayDns:{method:'udp-query',status:dnsFresh && gatewayDns.reachable!=null?(gatewayDns.reachable===true?'reachable':'unreachable'):'unknown',observedAt:gatewayDns?.observedAt ?? null,ageSeconds:gatewayDns?.observedAt!=null && gatewayDns.observedAt<=io.now()?io.now()-gatewayDns.observedAt:null,cacheSeconds:60},peer:peer?{method:'operator',generation:peer.generation,observedAt:peer.observedAt,status:fresh?'reported':'unknown'}:{status:'unknown'},lastError:runtime.lastError ?? null,observedAt:inspection?io.now():null,endToEnd:'unverified',baseConnectivity:'unverified'};
+  return {clientScope:runtime.clientScope ?? null,savedRevision:config.revision,desiredEnabled:desired.enabled,desiredRevision:desired.revision,appliedRevision:pending?null:(runtime.appliedRevision ?? null),phase,applicationMethod:method,localForwarding:inspection?.network ?? {status:'unknown'},dns:inspection?.dns ?? {status:'unknown'},gatewayDns:{method:'udp-query',status:dnsFresh && gatewayDns.reachable!=null?(gatewayDns.reachable===true?'reachable':'unreachable'):'unknown',observedAt:gatewayDns?.observedAt ?? null,ageSeconds:gatewayDns?.observedAt!=null && gatewayDns.observedAt<=io.now()?io.now()-gatewayDns.observedAt:null,cacheSeconds:60},peer:peer?{method:'operator',generation:peer.generation,observedAt:peer.observedAt,status:fresh?'reported':'unknown'}:{status:'unknown'},lastError:runtime.lastError ?? null,observedAt:inspection?io.now():null,endToEnd:'unverified',baseConnectivity:'unverified'};
  }
  function get() {return {ok:true,config:readConfig(),state:state()};}
  function status() {return {ok:true,state:state(io.inspect())};}
@@ -44,7 +44,7 @@ export function externalController(io) {
   next.revision++;io.write('config',next);io.sync();return get();
  }
  function remember(phase,config,peer,error,gatewayDns) {
-  io.write('state',{phase,appliedRevision:phase=='active'?config.revision:null,applicationMethod:gatewayDns?'gateway-dns':peer?'operator':'unknown',gatewayDns:gatewayDns ?? null,peer:peer ?? null,lastError:error ?? null});
+  io.write('state',{phase,clientScope:{mode:config.clientMode ?? 'selected',ipv4:config.clientCIDR ?? config.clients[0]?.address ?? null},appliedRevision:phase=='active'?config.revision:null,applicationMethod:gatewayDns?'gateway-dns':peer?'operator':'unknown',gatewayDns:gatewayDns ?? null,peer:peer ?? null,lastError:error ?? null});
  }
  function removeJournal() {io.remove('journal');io.sync();}
  function disable() {
@@ -87,8 +87,8 @@ export function externalController(io) {
   let peer=automated?null:validateExternalPeer(args.peer,config,io.now()),gatewayDns=null;
   let previous=io.read('good');if(previous!=null)previous=validateExternal(previous);
   if(io.read('state')?.lastError=='EXTERNAL_STOP_FAILED')externalError('RECOVERY_REQUIRED','上次关闭未完成，请先重试关闭');
-  function scope(c) {return sprintf('%J',[c.link.interface,c.link.routerAddress,c.link.gatewayAddress,c.link.gatewayMac,c.clients,c.dns.listenPort]);}
-  if(previous?.enabled && scope(previous)!=scope(config))externalError('SCOPE_CHANGE_REQUIRES_DISABLE','变更链路或终端前须先显式关闭旧接管范围');
+  function scope(c) {return sprintf('%J',[c.link.interface,c.link.routerAddress,c.link.gatewayAddress,c.link.gatewayMac,c.clientMode ?? 'selected',c.clientCIDR ?? null,c.clients,c.dns.listenPort]);}
+  if(previous?.enabled && scope(previous)!=scope(config))externalError('SCOPE_CHANGE_REQUIRES_DISABLE','变更链路或来源范围前须先显式关闭旧接管范围');
   if(io.localCore())externalError('LOCAL_CORE_ACTIVE','请先显式停止本机代理，再启用外部代理');
   if(automated) {
    gatewayDns=io.gatewayDns(config,true);

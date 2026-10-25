@@ -215,6 +215,53 @@ class ExternalForwardingTest(unittest.TestCase):
         forward = nft.split('chain selected_forward {', 1)[1]
         self.assertLess(forward.index('ether saddr != 02:00:00:00:00:03 return'), forward.index('meta nfproto ipv6'))
 
+    def test_entire_lan_uses_dynamic_source_prefix_and_preserves_gateway_paths(self):
+        lan = copy.deepcopy(CONFIG)
+        lan.update(clientMode="lan", clientCIDR="192.0.2.0/24", clients=[])
+        self.write_config(lan)
+        self.run_adapter("activate")
+        self.assertTrue(json.loads(self.run_adapter("status").stdout)["running"])
+        nft = self.read_state()["nft_text"]
+        # Prefix membership covers both existing clients and later DHCP leases;
+        # no per-device address or MAC is emitted into the LAN source selector.
+        self.assertIn('ip saddr 192.0.2.0/24 meta l4proto { tcp, udp } th dport 53 dnat ip to 192.0.2.1:1053', nft)
+        self.assertNotIn(CONFIG["clients"][0]["mac"], nft)
+        self.assertIn('ip saddr { 192.0.2.0, 192.0.2.255 } drop', nft)
+        forward = nft.split('chain selected_forward {', 1)[1]
+        self.assertLess(forward.index('iifname != "br-lan" return'), forward.index('ip saddr 192.0.2.0/24'))
+        self.assertLess(forward.index('ether saddr 02:00:00:00:00:02 return'), forward.index('meta nfproto ipv6 reject'))
+        self.assertIn('ether saddr 02:00:00:00:00:02 ip saddr 192.0.2.0/24 ip saddr != 192.0.2.2 drop', nft)
+        self.assertIn('ip saddr { 192.0.2.1, 192.0.2.2 } return', nft)
+        self.assertIn('meta nfproto ipv4 ip saddr != 192.0.2.0/24 return', nft)
+        self.assertIn('meta nfproto ipv6 meta l4proto { tcp, udp } th dport { 53, 1053 } reject', nft)
+        self.assertNotIn('masquerade', nft)
+        self.assertNotIn('snat', nft)
+        self.run_adapter("guard")
+        guarded = self.read_state()["nft_text"]
+        self.assertNotIn('chain selected_dns', guarded)
+        self.assertIn('meta l4proto { tcp, udp } th dport 53 drop', guarded)
+        self.assertTrue(json.loads(self.run_adapter("status").stdout)["guarded"])
+        self.runtime.write_text('corrupt unused configuration')
+        self.run_adapter("stop")
+        self.assertFalse(self.read_state()["table"])
+        self.assertFalse(self.read_state().get("rule") or self.read_state().get("route"))
+
+    def test_lan_scope_must_match_real_interface_and_requires_explicit_migration(self):
+        lan = copy.deepcopy(CONFIG)
+        lan.update(clientMode="lan", clientCIDR="192.0.2.0/24", clients=[])
+        self.write_config(lan)
+        self.update(router_prefix=25)
+        self.run_adapter("prepare", False)
+        self.assertFalse(self.read_state().get("table"))
+        self.update(router_prefix=24)
+        self.run_adapter("activate")
+        before = self.read_state()["nft_text"]
+        self.write_config(CONFIG)
+        self.run_adapter("prepare", False)
+        self.run_adapter("guard", False)
+        self.assertEqual(self.read_state()["nft_text"], before)
+        self.run_adapter("stop")
+
     def test_guard_survives_address_loss_and_stop_ignores_runtime(self):
         self.run_adapter("activate")
         self.update(router_prefix=25)

@@ -86,4 +86,11 @@ gatewayReachable=true;check(engine.status().state.phase=='active','fresh DNS suc
 dns=false;check(engine.status().state.phase=='degraded' && network=='active','local DNS fault also degrades without opening direct access');
 files.config='corrupt';files.good='corrupt';operations=[];engine.disable();
 check(network=='inactive' && index(operations,'gatewayDns')<0,'independent close never probes gateway or reads the applied configuration');
+reset();let lan=config();lan.clientMode='lan';lan.clientCIDR='192.0.2.0/24';lan.clients=[];
+engine.save({expectedRevision:0,config:lan});let whole=engine.apply({expectedRevision:1});
+check(whole.state.clientScope.mode=='lan' && whole.state.clientScope.ipv4=='192.0.2.0/24','applied status reports the complete LAN scope');
+let single=config();single.revision=1;engine.save({expectedRevision:1,config:single});
+fails(()=>engine.apply({expectedRevision:2}),'SCOPE_CHANGE_REQUIRES_DISABLE');
+check(network=='active' && files.good.clientMode=='lan','saving another scope does not alter the applied LAN scope');
+files.config='corrupt';files.good='corrupt';engine.disable();check(network=='inactive' && !dns && !files.intent.enabled,'whole-LAN independent disable remains available with corrupt saved state');
 print(sprintf('PASS external transaction and independent close: %d checks\n',checks));

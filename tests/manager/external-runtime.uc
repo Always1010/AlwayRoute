@@ -100,4 +100,10 @@ commands=[];let injection=json(sprintf('%J',config));injection.link.gatewayAddre
 check(extGatewayDns(injection,true)==null && length(commands)==0,'probe rejects shell injection before command execution');
 executeExternal('external_disable',{});
 check(networkMode=='inactive' && length(filter(commands,c=>index(c,' nslookup ')>=0))==0,'independent close ignores corrupt cache and never queries gateway');
+metadata['/tmp/alwayroute/external-dns-probe.json'].mode=0600;metadata['/tmp/alwayroute/external-dns-probe.lock']={type:'file',uid:0,mode:0600};
+let lan=json(sprintf('%J',config));lan.revision=1;lan.clientMode='lan';lan.clientCIDR='192.0.2.0/24';lan.clients=[];
+executeExternal('external_save',{expectedRevision:1,config:lan});result=executeExternal('external_apply',{expectedRevision:2});
+check(result.state.clientScope.mode=='lan' && result.state.clientScope.ipv4=='192.0.2.0/24','production adapter applies an explicit whole-LAN source without per-device identities');
+check(runtimeFiles['/tmp/alwayroute/external-dns.conf']==dnsConfig,'whole LAN shares the same dedicated public/local DNS split');
+executeExternal('external_disable',{});check(networkMode=='inactive' && !dnsLive,'whole-LAN close removes forwarding and dedicated DNS');
 print(sprintf('PASS external runtime adapter: %d checks\n',checks));

@@ -34,7 +34,7 @@ read_config() {
     context=$(ucode -e '
 import * as fs from "fs";
 function need(ok) { if(!ok) die("Invalid external forwarding configuration\n"); }
-function fields(o, names) { need(type(o)=="object"); for(let k in o) need(index(names,k)>=0); for(let k in names) need(k in o); }
+function fields(o, names, optional) { need(type(o)=="object"); for(let k in o) need(index(names,k)>=0 || index(optional ?? [],k)>=0); for(let k in names) need(k in o); }
 function address(v) {
  if(type(v)!="string" || !match(v,/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/))return false;
  let a=split(v,"."); for(let n in a)if(int(n)>255 || sprintf("%d",int(n))!=n)return false;
@@ -42,13 +42,25 @@ function address(v) {
 }
 function mac(v) { return type(v)=="string" && match(v,/^[0-9a-f][02468ace](:[0-9a-f]{2}){5}$/) && v!="00:00:00:00:00:00"; }
 let raw=fs.readfile("/tmp/alwayroute/external-runtime.json");need(type(raw)=="string" && length(raw)<=8192);let c=json(raw);
-fields(c,["schema","revision","enabled","link","clients","dns","bypass4","faultPolicy","family"]);
+fields(c,["schema","revision","enabled","link","clients","dns","bypass4","faultPolicy","family"],["clientMode","clientCIDR"]);
 need(c.schema===1 && type(c.revision)=="int" && c.revision>=0 && c.revision<=2147483645 && c.enabled===true && c.family=="ipv4" && c.faultPolicy=="block");
 fields(c.link,["interface","routerAddress","gatewayAddress","gatewayMac"]);
 need(type(c.link.interface)=="string" && length(c.link.interface)<=15 && match(c.link.interface,/^[A-Za-z0-9_][A-Za-z0-9_.:-]*$/));
 need(address(c.link.routerAddress) && address(c.link.gatewayAddress) && c.link.routerAddress!=c.link.gatewayAddress && mac(c.link.gatewayMac));
-need(type(c.clients)=="array" && length(c.clients)==1); fields(c.clients[0],["address","mac"]);
-let client=c.clients[0];need(address(client.address) && mac(client.mac) && client.address!=c.link.routerAddress && client.address!=c.link.gatewayAddress && client.mac!=c.link.gatewayMac);
+let mode=c.clientMode ?? "selected",client,reserved="";
+need(index(["selected","lan"],mode)>=0 && (!("clientMode" in c) || type(c.clientMode)=="string") && type(c.clients)=="array");
+if(mode=="lan") {
+ need(length(c.clients)==0 && type(c.clientCIDR)=="string");let parts=split(c.clientCIDR,"/");
+ need(length(parts)==2 && address(parts[0]) && match(parts[1],/^([1-9]|[12][0-9]|30)$/));
+ function number(v){let n=0;for(let part in split(v,"."))n=n*256+int(part);return n;}
+ let network=number(parts[0]),size=2 ** (32-int(parts[1]));need(network%size==0);
+ for(let host in [c.link.routerAddress,c.link.gatewayAddress])need(number(host)>network && number(host)<network+size-1);
+ let last=network+size-1;reserved=parts[0]+", "+sprintf("%d.%d.%d.%d",int(last/16777216),int(last/65536)%256,int(last/256)%256,last%256);
+ client={address:c.clientCIDR,mac:"lan"};
+}else {
+ need(!("clientCIDR" in c) && length(c.clients)==1);fields(c.clients[0],["address","mac"]);client=c.clients[0];
+ need(address(client.address) && mac(client.mac) && client.address!=c.link.routerAddress && client.address!=c.link.gatewayAddress && client.mac!=c.link.gatewayMac);
+}
 fields(c.dns,["listenPort","gatewayPort","localDomains"]);
 for(let p in [c.dns.listenPort,c.dns.gatewayPort])need(type(p)=="int" && p>=1 && p<=65535);
 need(c.dns.listenPort!=53 && type(c.dns.localDomains)=="array" && length(c.dns.localDomains)>=1 && length(c.dns.localDomains)<=16);
@@ -62,9 +74,9 @@ for(let cidr in c.bypass4) {
  need(type(cidr)=="string");let a=split(cidr,"/");need(length(a)==2 && address(a[0]) && match(a[1],/^([1-9]|[12][0-9]|3[0-2])$/) && !seen[cidr]);
  let number=0;for(let n in split(a[0],"."))number=number*256+int(n);need(number % (2 ** (32-int(a[1])))==0);seen[cidr]=true;
 }
-print(join("|",[c.link.interface,c.link.routerAddress,c.link.gatewayAddress,client.address,client.mac,c.link.gatewayMac,c.dns.listenPort,join(", ",c.bypass4)]));
+print(join("|",[c.link.interface,c.link.routerAddress,c.link.gatewayAddress,client.address,client.mac,c.link.gatewayMac,c.dns.listenPort,join(", ",c.bypass4),reserved]));
 ') || fail 'Invalid configuration'
-    IFS='|' read -r LAN ROUTER GATEWAY CLIENT CLIENT_MAC GATEWAY_MAC DNS_PORT EXTRA <<EOF
+    IFS='|' read -r LAN ROUTER GATEWAY CLIENT CLIENT_MAC GATEWAY_MAC DNS_PORT EXTRA LAN_RESERVED <<EOF
 $context
 EOF
 }
@@ -124,8 +136,12 @@ check_environment() {
     route=$(ip -4 route get "$GATEWAY") || fail 'Gateway is not on-link'
     printf '%s\n' "$route" | grep -Eq "^$GATEWAY dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Gateway route does not match LAN'
     printf '%s\n' "$route" | grep -Eq '(^|[[:space:]])via[[:space:]]' && fail 'Gateway must be directly on-link'
-    route=$(ip -4 route get "$CLIENT") || fail 'Client is not on-link'
-    printf '%s\n' "$route" | grep -Eq "^$CLIENT dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Client route does not match LAN'
+    if [ "$CLIENT_MAC" = lan ]; then
+        [ "$CLIENT" = "$LAN_NETWORK" ] || fail 'LAN source CIDR must match the actual interface network'
+    else
+        route=$(ip -4 route get "$CLIENT") || fail 'Client is not on-link'
+        printf '%s\n' "$route" | grep -Eq "^$CLIENT dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Client route does not match LAN'
+    fi
 }
 legacy_clear() {
     # Read-only migration boundary. Never delete resources belonging to the
@@ -149,6 +165,16 @@ begin_owner() {
 }
 render() {
     phase=$1
+    if [ "$CLIENT_MAC" = lan ]; then
+        # The CIDR is verified against the actual L3 interface before activation.
+        # Keep the gateway's own egress and public-source return traffic outside
+        # interception; packets spoofing a LAN client from that MAC are blocked.
+        SOURCE="ether saddr != $GATEWAY_MAC ip saddr != { $ROUTER, $GATEWAY } ip saddr $CLIENT"
+        INPUT_SOURCE=$SOURCE
+    else
+        SOURCE="ether saddr $CLIENT_MAC ip saddr $CLIENT"
+        INPUT_SOURCE="ether saddr $CLIENT_MAC"
+    fi
     cat <<EOF
 table inet alwayroute_external {
     comment "alwayroute-external $TOKEN"
@@ -161,11 +187,24 @@ table inet alwayroute_external {
     chain selected_prerouting {
         type filter hook prerouting priority -152; policy accept;
         iifname != "$LAN" return
+EOF
+    if [ "$CLIENT_MAC" = lan ]; then
+        cat <<EOF
+        ether saddr $GATEWAY_MAC ip saddr $CLIENT ip saddr != $GATEWAY drop
+        ether saddr $GATEWAY_MAC return
+        ip saddr { $ROUTER, $GATEWAY } return
+        meta nfproto != ipv4 return
+        ip saddr != $CLIENT return
+        ip saddr { $LAN_RESERVED } drop
+EOF
+    else
+        cat <<EOF
         ether saddr $GATEWAY_MAC ip saddr $CLIENT drop
         ether saddr != $CLIENT_MAC return
         meta nfproto != ipv4 return
         ip saddr != $CLIENT return
 EOF
+    fi
     if [ "$phase" = active ]; then
         cat <<EOF
         meta l4proto { tcp, udp } th dport 53 return
@@ -193,16 +232,29 @@ EOF
         type filter hook input priority -6; policy accept;
 EOF
     if [ "$phase" = guarded ]; then
-        printf '        iifname "%s" ether saddr %s meta l4proto { tcp, udp } th dport { 53, %s } reject\n' "$LAN" "$CLIENT_MAC" "$DNS_PORT"
+        printf '        iifname "%s" %s meta l4proto { tcp, udp } th dport { 53, %s } reject\n' "$LAN" "$INPUT_SOURCE" "$DNS_PORT"
     else
         # Existing conntrack DNS entries may predate our DNAT. Never let these
         # continue querying the base resolver or a former direct destination.
-        printf '        iifname "%s" ether saddr %s meta l4proto { tcp, udp } th dport 53 reject\n' "$LAN" "$CLIENT_MAC"
+        printf '        iifname "%s" %s meta l4proto { tcp, udp } th dport 53 reject\n' "$LAN" "$INPUT_SOURCE"
     fi
     cat <<EOF
         iifname != "lo" meta l4proto { tcp, udp } th dport $DNS_PORT iifname != "$LAN" reject
+EOF
+    if [ "$CLIENT_MAC" = lan ]; then
+        cat <<EOF
+        iifname "$LAN" ether saddr != $GATEWAY_MAC meta nfproto ipv6 meta l4proto { tcp, udp } th dport { 53, $DNS_PORT } reject
+        iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ether saddr $GATEWAY_MAC reject
+        iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ip saddr { $ROUTER, $GATEWAY, $LAN_RESERVED } reject
+        iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ip saddr != $CLIENT reject
+EOF
+    else
+        cat <<EOF
         iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ether saddr != $CLIENT_MAC reject
         iifname "$LAN" meta l4proto { tcp, udp } th dport $DNS_PORT ip saddr != $CLIENT reject
+EOF
+    fi
+    cat <<EOF
     }
     chain selected_output {
         type filter hook output priority -6; policy accept;
@@ -211,8 +263,21 @@ EOF
     chain selected_forward {
         type filter hook forward priority -6; policy accept;
         iifname != "$LAN" return
+EOF
+    if [ "$CLIENT_MAC" = lan ]; then
+        cat <<EOF
+        ether saddr $GATEWAY_MAC ip saddr $CLIENT ip saddr != $GATEWAY drop
+        ether saddr $GATEWAY_MAC return
+        ip saddr { $ROUTER, $GATEWAY } return
+        meta nfproto ipv4 ip saddr != $CLIENT return
+EOF
+    else
+        cat <<EOF
         ether saddr $GATEWAY_MAC ip saddr $CLIENT drop
         ether saddr != $CLIENT_MAC return
+EOF
+    fi
+    cat <<EOF
         meta l4proto { tcp, udp } th dport 53 reject
         meta nfproto ipv6 ip6 daddr { fc00::/7, fe80::/10, ff00::/8 } return
         meta nfproto ipv6 reject with icmpv6 type admin-prohibited
@@ -232,7 +297,7 @@ EOF
         cat <<EOF
     chain selected_dns {
         type nat hook prerouting priority -101; policy accept;
-        iifname "$LAN" ether saddr $CLIENT_MAC ip saddr $CLIENT meta l4proto { tcp, udp } th dport 53 dnat ip to $ROUTER:$DNS_PORT
+        iifname "$LAN" $SOURCE meta l4proto { tcp, udp } th dport 53 dnat ip to $ROUTER:$DNS_PORT
     }
 EOF
     fi
@@ -308,7 +373,7 @@ status() {
     has_table || fail 'Owned external nft table is absent'
     phase=$(cat "$PHASE")
     if [ "$phase" = active ] && owned_rule && owned_route; then
-        LAN=$SAVED_LAN ROUTER=$SAVED_ROUTER GATEWAY=$SAVED_GATEWAY CLIENT=$SAVED_CLIENT
+        LAN=$SAVED_LAN ROUTER=$SAVED_ROUTER GATEWAY=$SAVED_GATEWAY CLIENT=$SAVED_CLIENT CLIENT_MAC=$SAVED_CLIENT_MAC
         check_environment
         printf '%s\n' '{"available":true,"running":true,"guarded":false,"residual":true,"phase":"active","family":"ipv4","verification":"unverified","routerOriginated":"direct"}'
     elif [ "$phase" = guarded ]; then

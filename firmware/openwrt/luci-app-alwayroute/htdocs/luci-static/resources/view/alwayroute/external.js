@@ -73,6 +73,7 @@ return view.extend({
 		var fields = [
 			['已保存版本', s.savedRevision], ['已保存开关', this.config ? (this.config.enabled ? '开启草稿' : '关闭草稿') : '无法读取 / 只读'],
 			['持久期望', s.desiredEnabled === true ? '开启' : s.desiredEnabled === false ? '关闭' : '未知'], ['期望版本', s.desiredRevision],
+			['实际来源范围', s.clientScope ? (s.clientScope.mode === 'lan' ? '整个 LAN：' : '指定终端：') + s.clientScope.ipv4 : '未确认'],
 			['实际应用版本', s.appliedRevision], ['实际阶段', (phase[s.phase] || '未知') + ' (' + (s.phase || 'unknown') + ')'],
 			['本地转发检查', '转发：' + flag(forwarding.running, '运行', '未运行') + '；来源防护：' + flag(forwarding.guarded, '阻断', '未阻断') + '；残留：' + flag(forwarding.residual, '存在', '未发现')],
 			['专用 DNS 检查', flag(dns.running, '本地进程及 UDP/TCP 监听已确认', '未运行')],
@@ -97,8 +98,8 @@ return view.extend({
 		this.statusNode = E('section', { 'class': 'ar-section', 'aria-live': 'polite' });
 		var content = [E('div', { 'class': 'ar-heading' }, [E('h2', {}, ['AlwayRoute · 外部代理']),
 			this.button('重新读取配置与状态', function() { return self.reload(); }, { icon: '↻', readonly: true, recovery: true })]),
-			E('p', {}, ['首轮仅管理一台 IPv4 终端。故障保留开启意图并阻断，不自动直连；手动关闭后撤销自有接管与防护。']), this.statusNode,
-			E('div', { 'class': 'ar-actions' }, [this.button('关闭外部代理，恢复普通直连', function() { return self.disable(); }, { recovery: true })])];
+			E('p', {}, ['可接管整个接入 LAN 的 IPv4 终端，新设备无需逐台登记。故障保留开启意图并阻断，不自动直连；手动关闭后撤销自有接管与防护。']),
+			E('div', { 'class': 'ar-actions' }, [this.button('关闭外部代理，恢复普通直连', function() { return self.disable(); }, { recovery: true })]), this.statusNode];
 		if (this.config && !this.readonly) content.push(this.configForm());
 		else if (this.readonly) content.push(E('p', {}, ['当前账户仅可查看状态，未读取管理配置。']));
 		if (!this.readonly && !this.externalOnly) content.push(E('details', { 'class': 'ar-details' }, [E('summary', {}, ['首次从本机代理切换']),
@@ -108,6 +109,8 @@ return view.extend({
 	},
 	configForm: function() {
 		var self = this, c = this.config, l = c.link || {}, client = c.clients[0] || {}, inputs = {};
+		var mode = c.clientMode || (!c.link && !c.clients.length ? 'lan' : 'selected'), scopeRows = { lan: [], selected: [] };
+		function scopeField(kind, label, node, hint) { var row = self.field(label, node, hint); scopeRows[kind].push(row); row.hidden = kind !== mode; return row; }
 		function input(name, value, type) {
 			var node = E('input', { type: type || 'text', value: value == null ? '' : value, checked: type === 'checkbox' && value || undefined,
 				disabled: self.busy || self.uncertain || undefined, input: function() { self.dirty = true; self.paintStatus(); } });
@@ -119,17 +122,22 @@ return view.extend({
 		}
 		this.inputs = inputs;
 		return E('section', { 'class': 'ar-section' }, [E('h3', {}, ['链路、来源与 DNS 草稿']),
-			E('p', {}, ['保存只更新版本，不改变网络。链路、来源或监听端口变化时须先关闭旧范围。设备地址与 MAC 必须现场核验，不使用历史 DHCP 猜测。']),
+			E('p', {}, ['保存只更新版本，不改变网络。链路、来源或监听端口变化时须先关闭旧范围。网关地址与 MAC 必须现场核验。']),
+			mode === 'selected' && c.clients.length ? E('p', { 'class': 'ar-alert ar-warning' }, ['当前配置只接管一台指定终端。要让所有新接入设备自动代理，请先关闭外部代理，再切换为全部接入设备，填写并核验 LAN 网络范围后保存、应用。']) : E('p', {}, ['全部接入设备模式按 LAN 网络范围接管，普通设备接入该 LAN / Wi-Fi 即可，无需逐台登记 IP 或 MAC。']),
 			this.field('保存为开启', input('enabled', c.enabled, 'checkbox'), '勾选并保存后，还须应用已保存版本；取消勾选并保存不等于已经关闭。'),
+			this.field('来源范围', inputs.clientMode = E('select', { disabled: self.busy || self.uncertain || undefined, change: function() { var selectedMode = inputs.clientMode.value; Object.keys(scopeRows).forEach(function(kind) { scopeRows[kind].forEach(function(row) { row.hidden = kind !== selectedMode; }); }); self.dirty = true; self.paintStatus(); } }, [
+				E('option', { value: 'lan', selected: mode === 'lan' || undefined }, ['全部接入设备（整个 LAN）']),
+				E('option', { value: 'selected', selected: mode !== 'lan' || undefined }, ['指定终端（兼容）'])]), '整个 LAN 自动涵盖该接口内新增或变更 DHCP 地址的设备；不包含外部网关和路由器。'),
+			scopeField('lan', 'LAN IPv4 网络 CIDR', input('clientCIDR', c.clientCIDR), '整个 LAN 模式必填，如 192.0.2.0/24；须与接口实际前缀及网关来源范围一致。'),
 			this.field('LAN L3 接口', input('interface', l.interface)),
 			this.field('路由器 IPv4', input('routerAddress', l.routerAddress)), this.field('外部网关 IPv4', input('gatewayAddress', l.gatewayAddress)),
-			this.field('外部网关 MAC', input('gatewayMac', l.gatewayMac)), this.field('终端 IPv4', input('clientAddress', client.address)),
-			this.field('终端 MAC', input('clientMac', client.mac)),
+			this.field('外部网关 MAC', input('gatewayMac', l.gatewayMac)), scopeField('selected', '指定终端 IPv4', input('clientAddress', client.address)),
+			scopeField('selected', '指定终端 MAC', input('clientMac', client.mac), '仅指定终端模式使用；整个 LAN 模式无需逐台填写。'),
 			this.field('网关 DNS 端口', input('gatewayPort', c.dns.gatewayPort, 'number'), '网关受限 UDP/TCP DNS 入口。'),
 			this.field('路由器专用 DNS 端口', input('listenPort', c.dns.listenPort, 'number'), '不能使用基础 DNS 的 53 端口。'),
 			this.field('本地域后缀', list('localDomains', c.dns.localDomains), '每行一个后缀；本地域和无点名称交给基础 DNS。'),
 			this.field('额外 IPv4 目的例外', list('bypass4', c.bypass4), '每行一个网络 CIDR，最多 32 条；例外不进入外部接管，请保持最小范围。'),
-			E('p', { 'class': 'ar-muted' }, ['固定策略：IPv4 / 故障阻断。受管终端公网 IPv6 阻断，本地管理保留；仅该终端的 UDP/TCP 53 转交，不宣称控制 DoH/DoT。']),
+			E('p', { 'class': 'ar-muted' }, ['固定策略：IPv4 / 故障阻断。受管终端公网 IPv6 阻断，本地管理保留；受管来源的 UDP/TCP 53 统一转交，不宣称控制 DoH/DoT。']),
 			E('div', { 'class': 'ar-actions' }, [this.button('保存草稿', function() { return self.save(); }, { primary: true }),
 				this.button('应用已保存版本', function() { return self.apply(); })])]);
 	},
@@ -141,7 +149,9 @@ return view.extend({
 		c.enabled = i.enabled.checked;
 		var linkFields = ['interface', 'routerAddress', 'gatewayAddress', 'gatewayMac'];
 		c.link = linkFields.some(function(k) { return value(k); }) ? Object.fromEntries(linkFields.map(function(k) { return [k, value(k)]; })) : null;
-		c.clients = value('clientAddress') || value('clientMac') ? [{ address: value('clientAddress'), mac: value('clientMac') }] : [];
+		c.clientMode = value('clientMode');
+		if (c.clientMode === 'lan') { c.clientCIDR = value('clientCIDR'); c.clients = []; }
+		else { delete c.clientCIDR; c.clients = value('clientAddress') || value('clientMac') ? [{ address: value('clientAddress'), mac: value('clientMac') }] : []; }
 		c.dns = { gatewayPort: port('gatewayPort'), listenPort: port('listenPort'), localDomains: lines('localDomains') }; c.bypass4 = lines('bypass4');
 		return c;
 	},
