@@ -24,7 +24,7 @@ const empty = () => ({ schema: 1, policyVersion: 1, revision: 0, mode: 'rule', d
 const node = (id = 'n1', source = null) => ({ id, source, name: '节点', type: 'vmess', enabled: true, server: 'example.test', port: 443,
   uuid: '00000000-0000-4000-8000-000000000000', security: 'auto', alterId: 0 });
 
-function harness(call, writable = true) {
+function harness(call, writable = true, module = 'view/alwayroute/app.js') {
   // Minimal DOM surface exercises rendering without requiring npm/browser installs.
   class Element {
     constructor(tag, attrs = {}, children = []) {
@@ -34,11 +34,22 @@ function harness(call, writable = true) {
       if (attrs.click) this.events.click = attrs.click;
       children.forEach(c => this.appendChild(c));
       if (tag === 'select') this.value = (children.find(c => c.attrs.selected != null) || children[0] || { attrs: {} }).attrs.value || '';
+      if (tag === 'textarea') this.value = children.join('');
     }
     appendChild(child) { this.children.push(child); return child; }
     removeChild(child) { this.children.splice(this.children.indexOf(child), 1); }
     addEventListener(event, fn) { this.events[event] = fn; }
     setAttribute(key, value) { this.attrs[key] = value; }
+    getAttribute(key) { return this.attrs[key]; }
+    querySelectorAll(tag) {
+      const nodes = [];
+      for (const child of this.children) {
+        if (!child || typeof child !== 'object') continue;
+        if (child.tag === tag) nodes.push(child);
+        if (child.querySelectorAll) nodes.push(...child.querySelectorAll(tag));
+      }
+      return nodes;
+    }
     remove() {}
     get firstChild() { return this.children[0]; }
   }
@@ -51,7 +62,7 @@ function harness(call, writable = true) {
     removeEventListener(name, fn) { if (this.events[name] === fn) delete this.events[name]; }, setTimeout, clearTimeout };
   const poll = { add() {}, remove() {} };
   const ui = { showModal(title, children) { ui.modal = { title, children }; }, hideModal() { ui.modal = null; } };
-  const view = loadModule(read('view/alwayroute/app.js'), ['view', 'ui', 'poll', 'api', 'model', 'E', 'L', 'window', 'document'],
+  const view = loadModule(read(module), ['view', 'ui', 'poll', 'api', 'model', 'E', 'L', 'window', 'document'],
     [BaseClass, ui, poll, { call }, model, E, { env: { resource_version: 'test-refresh' }, resource: x => x, hasViewPermission: () => writable }, window, document]);
   view.draft = empty(); view.state = { savedRevision: 0, appliedRevision: null, healthy: 'unverified' };
   view.revision = 0; view.capabilities = {}; view.checks = {}; view.logs = []; view.tab = 'overview'; view.root = E('div');
@@ -74,6 +85,140 @@ function fieldInput(fields, label) {
   const field = find({ children: fields }, n => n.attrs && n.attrs.class === 'cbi-value ar-field' && text(n.children[0]) === label);
   return find(field, n => ['input', 'select', 'textarea'].includes(n.tag));
 }
+
+const externalConfig = () => ({ schema: 1, revision: 4, enabled: true, family: 'ipv4', faultPolicy: 'block',
+  link: { interface: 'br-lan', routerAddress: '192.0.2.1', gatewayAddress: '192.0.2.2', gatewayMac: '02:00:00:00:00:02' },
+  clients: [{ address: '192.0.2.3', mac: '02:00:00:00:00:03' }],
+  dns: { gatewayPort: 1053, listenPort: 1053, localDomains: ['lan'] }, bypass4: [] });
+function externalHarness(call, writable = true, data = {}) {
+  const h = harness(call, writable, 'view/alwayroute/external.js');
+  h.view.render({ config: writable ? externalConfig() : undefined, state: { savedRevision: 4, desiredEnabled: false, phase: 'disabled', observedAt: 100 }, ...data });
+  return h;
+}
+
+test('external API names and argument ordering match authenticated RPC', async () => {
+  const declarations = [];
+  const api = loadModule(read('alwayroute/api.js'), ['rpc'], [{ declare: spec => { declarations.push(spec); return async () => ({ ok: true }); } }]);
+  for (const [method, params] of Object.entries({ external_get: [], external_status: [], external_save: ['expectedRevision', 'config'], external_apply: ['expectedRevision', 'peer'], external_disable: [] })) {
+    assert.deepEqual(declarations.find(d => d.method === method).params, params);
+    await api.call(method);
+  }
+});
+
+test('external readonly load never requests private or legacy configuration', async () => {
+  const calls = [];
+  const { view } = externalHarness(async method => { calls.push(method); return method === 'external_status' ? { state: { phase: 'active', endToEnd: 'verified' } } : { busy: false }; }, false);
+  const data = await view.load(); view.render(data);
+  assert.deepEqual(calls.sort(), ['external_status', 'job_status']);
+  assert.match(text(view.root), /端到端出口：未验证/);
+  assert.match(text(view.root), /未读取管理配置/);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '关闭外部代理，恢复普通直连').disabled, true);
+});
+
+test('external saves draft without applying and keeps saved intent separate from actual state', async () => {
+  const calls = [];
+  const { view } = externalHarness(async (method, args) => {
+    calls.push([method, args]);
+    if (method === 'external_save') return { config: { ...args[1], revision: 5 }, state: { savedRevision: 5 } };
+    if (method === 'external_status') return { state: { savedRevision: 5, desiredEnabled: false, phase: 'disabled' } };
+    throw new Error('unexpected action');
+  });
+  view.inputs.gatewayPort.value = '2053'; view.inputs.gatewayPort.attrs.input();
+  await view.save();
+  assert.deepEqual(calls.map(c => c[0]), ['external_save', 'external_status']);
+  assert.equal(calls[0][1][0], 4); assert.equal(calls[0][1][1].dns.gatewayPort, 2053);
+  assert.equal(view.config.revision, 5); assert.equal(view.config.enabled, true); assert.equal(view.state.desiredEnabled, false);
+  assert.equal(view.dirty, false); assert.match(text(view.root), /草稿已保存，网络未改变/);
+});
+
+test('external operator observation starts empty and never fabricates confirmations', () => {
+  const { view, ui } = externalHarness(async () => { throw new Error('no RPC expected'); });
+  view.openObservation();
+  const fields = ui.modal.children, all = { children: fields };
+  assert.equal(fieldInput(fields, '网关 generation').value, '');
+  const checkboxes = [];
+  function visit(n) { if (!n || typeof n !== 'object') return; if (n.tag === 'input' && n.attrs.type === 'checkbox') checkboxes.push(n); (n.children || []).forEach(visit); }
+  visit(all); assert.equal(checkboxes.length, 6); assert.ok(checkboxes.every(n => n.checked === false));
+  const checks = Object.fromEntries(['coreReady', 'captureReady', 'dnsReady', 'egressViaRouter', 'returnViaRouter', 'sourcePreserved'].map((key, i) => [key, checkboxes[i]]));
+  assert.throws(() => view.readObservation(view.config, { value: 'actual-generation' }, checks), /尚未现场确认/);
+  checkboxes.forEach(n => { n.checked = true; });
+  const peer = view.readObservation(view.config, { value: 'actual-generation' }, checks);
+  assert.equal(peer.gateway, '192.0.2.2'); assert.equal(peer.revision, 4); assert.equal(peer.observedAt, undefined);
+  assert.equal(peer.method, undefined); // Server stamps operator; frontend cannot claim automatic evidence.
+  view.dirty = true; assert.throws(() => view.openObservation(), /先保存/);
+});
+
+test('external observation refuses missing router clock before submitting apply', async () => {
+  const calls = [];
+  const { view, ui } = externalHarness(async method => { calls.push(method); return { state: { observedAt: null } }; });
+  view.openObservation();
+  const fields = ui.modal.children;
+  fieldInput(fields, '网关 generation').value = 'g1';
+  const boxes = { children: fields };
+  function checkAll(n) { if (!n || typeof n !== 'object') return; if (n.tag === 'input' && n.attrs.type === 'checkbox') n.checked = true; (n.children || []).forEach(checkAll); }
+  checkAll(boxes);
+  find(boxes, n => n.attrs && n.attrs['aria-label'] === '提交观察并应用').events.click({ preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, ['external_status']); assert.ok(ui.modal); assert.match(text(boxes), /路由器时钟不可用/);
+});
+
+test('external explicit operator submission stamps fresh router clock and binds saved target', async () => {
+  const calls = [];
+  const { view, ui } = externalHarness(async (method, args) => {
+    calls.push([method, args]);
+    return { state: { savedRevision: 4, appliedRevision: method === 'external_apply' ? 4 : null, observedAt: 1000, phase: 'active' } };
+  });
+  view.openObservation();
+  fieldInput(ui.modal.children, '网关 generation').value = 'live-generation-7';
+  function confirm(n) { if (!n || typeof n !== 'object') return; if (n.tag === 'input' && n.attrs.type === 'checkbox') n.checked = true; (n.children || []).forEach(confirm); }
+  const modal = { children: ui.modal.children }; confirm(modal);
+  find(modal, n => n.attrs && n.attrs['aria-label'] === '提交观察并应用').events.click({ preventDefault() {} });
+  await new Promise(setImmediate);
+  assert.deepEqual(calls.map(c => c[0]), ['external_status', 'external_apply', 'external_status']);
+  const [revision, peer] = calls[1][1];
+  assert.equal(revision, 4); assert.equal(peer.revision, 4); assert.equal(peer.gateway, '192.0.2.2');
+  assert.equal(peer.observedAt, 1000); assert.equal(peer.generation, 'live-generation-7');
+  assert.equal(peer.sourcePreserved, true); assert.equal(peer.returnViaRouter, true);
+  assert.equal(ui.modal, null); assert.match(text(view.root), /端到端出口：未验证/);
+});
+
+test('external independent disable survives unreadable config and waits for matching job completion', async () => {
+  const calls = [];
+  const { view, window } = externalHarness(async method => {
+    calls.push(method);
+    if (method === 'external_get' || method === 'external_status') throw new Error('corrupt external storage');
+    if (method === 'external_disable') return { job: { id: 'close-1', status: 'running' } };
+    if (method === 'job_status') return { job: { id: 'close-1', status: 'succeeded', state: { desiredEnabled: false, phase: 'disabled' } } };
+    throw new Error('unexpected RPC');
+  });
+  view.render(await view.load());
+  assert.equal(view.config, null); assert.ok(find(view.root, n => n.attrs['aria-label'] === '关闭外部代理，恢复普通直连'));
+  window.setTimeout = fn => { setImmediate(fn); return 0; }; view.request = async (method, args) => {
+    // Reuse synthetic call, avoid making request timeout timers instant.
+    calls.push(method);
+    if (method === 'external_disable') return { job: { id: 'close-1', status: 'running' } };
+    if (method === 'job_status') return { job: { id: 'close-1', status: 'succeeded', state: { desiredEnabled: false, phase: 'disabled' } } };
+    if (method === 'external_status') throw new Error('corrupt external storage');
+    throw new Error('unexpected RPC');
+  };
+  calls.length = 0; await view.disable();
+  assert.deepEqual(calls, ['external_disable', 'job_status', 'external_status']);
+  assert.equal(view.state.phase, 'disabled'); assert.equal(view.config, null);
+  assert.match(text(view.root), /实际状态读取失败/); assert.match(text(view.root), /基础直连：未验证/);
+});
+
+test('external failed jobs retain input and block repeated apply while leaving independent disable available', async () => {
+  const { view, window } = externalHarness(async () => ({}));
+  window.setTimeout = fn => { setImmediate(fn); return 0; };
+  view.request = async method => method === 'external_apply' ? { job: { id: 'apply-1', status: 'running' } } :
+    { job: { id: 'apply-1', status: 'failed', error: { code: 'EXTERNAL_APPLY_FAILED', message: 'failed' } } };
+  view.inputs.gatewayAddress.value = '192.0.2.20';
+  await view.operate('external_apply', [4, {}]);
+  assert.equal(view.uncertain, true); assert.equal(view.inputs.gatewayAddress.value, '192.0.2.20');
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '人工观察并应用已保存版本').disabled, true);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '关闭外部代理，恢复普通直连').disabled, false);
+  assert.match(text(view.root), /EXTERNAL_APPLY_FAILED/);
+});
 
 test('rendered styles share the current LuCI document resource version', () => {
   const { view, window } = harness(async () => ({ ok: true }));

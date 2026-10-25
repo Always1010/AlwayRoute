@@ -3,6 +3,8 @@
 'require rpc';
 
 var definitions = {
+	external_get: [], external_status: [], external_save: ['expectedRevision', 'config'],
+	external_apply: ['expectedRevision', 'peer'], external_disable: [],
 	capabilities: [], get: [], save: ['expectedRevision', 'model'], configure: ['expectedRevision', 'model'], import: ['expectedRevision', 'content', 'activate'],
 	refresh: ['expectedRevision', 'subscriptionId', 'content', 'activate'],
 	apply: ['expectedRevision'], select: ['expectedRevision', 'group', 'nodeId'],

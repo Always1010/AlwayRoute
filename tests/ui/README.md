@@ -1,5 +1,7 @@
 # UI 检查与离线浏览器预览
 
+`feat/external-proxy` 的实际 LuCI 入口已经切到独立 `view/alwayroute/external.js`。`ui.test.cjs` 同时保留旧节点 UI 回归，并检查外接 RPC 参数、只读边界、草稿保存、显式人工观察、路由器时钟、任务失败和配置损坏时的独立关闭。以下离线 HTML 预览仍针对保留的旧 `app.js`，不能作为外接页面预览或验收；外接操作步骤见 [外接说明](../../docs/external-proxy.md)。
+
 直接使用现有 Node，不安装依赖：
 
 ```powershell

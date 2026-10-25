@@ -6,7 +6,7 @@ import { readfile } from 'fs';
 
 http.header('Cache-Control', 'no-store');
 include('view', {
-	view: 'alwayroute/app',
+	view: 'alwayroute/external',
 	pkgs_update_time: 'alwayroute-' + trim(readfile('/proc/sys/kernel/random/uuid'))
 });
 %}
