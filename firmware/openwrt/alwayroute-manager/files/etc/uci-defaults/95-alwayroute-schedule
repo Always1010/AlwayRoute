@@ -1,4 +1,6 @@
 #!/bin/sh
+# Upgrade only the known legacy directory before enabling scheduled work.
+/usr/libexec/alwayroute-storage-init || exit 1
 # BusyBox crond reads root's crontab. Preserve unrelated entries.
 mkdir -p /etc/crontabs
 touch /etc/crontabs/root

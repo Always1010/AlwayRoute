@@ -1,0 +1,20 @@
+#!/usr/bin/ucode
+'use strict';
+import * as fs from 'fs';
+
+// Installation-only migration. Never open or copy stored node credentials.
+function prepareExternalStorage() {
+ let path='/etc/alwayroute',before=fs.lstat(path);
+ if(before==null) {
+  if(!fs.mkdir(path,0700))die('Cannot create private AlwayRoute configuration directory');
+ }else {
+  if(before.type!='directory' || before.uid!==0 || index([0700,0755],before.mode)<0)
+   die('Refusing unknown or unsafe AlwayRoute configuration directory');
+  // Only this exact root-owned legacy mode is a recognized upgrade input.
+  if(before.mode==0755 && !fs.chmod(path,0700))die('Cannot secure legacy AlwayRoute configuration directory');
+ }
+ let after=fs.lstat(path);
+ if(after?.type!='directory' || after.uid!==0 || after.mode!=0700)
+  die('AlwayRoute configuration directory is not root-private after installation');
+}
+prepareExternalStorage();

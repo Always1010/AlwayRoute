@@ -37,6 +37,8 @@
 
 `/etc/alwayroute/` 中的 `external-config.json` 保存草稿，`external-intent.json` 保存应用意图，`external-lastgood.json` 保存确认配置，`external-journal.json` 是应用/提交恢复记录，`external-mode.json` 阻止旧核心路径重新启动。状态、运行配置、DNS 配置和资源归属仅存于 `/tmp/alwayroute/`。目录 root 0700，文件 root 0600；危险权限和符号链接拒绝使用，不自动修复。
 
+安装/升级的既有 uci-defaults 流程先调用 `alwayroute-storage-init`：缺失的配置目录创建为 root 0700；仅将 root 所有的真实 `/etc/alwayroute/` 目录从已知旧版精确 0755 收紧为 0700，已有 0700 保持不变。链接、非 root 所有、可被组或其他用户写入及其他未知权限均拒绝，不修复未知资源。该迁移仅使用 ucode/fs，不读取或复制节点凭据，不启动代理核心；运行期继续严格要求私有目录。
+
 旧 Rule/Global/Direct 不自动迁移为外部启用。首次外部应用要求本机代理已显式停止。外部模式的旧节点应用、检测和核心启动会被拒绝，capabilities 如实关闭这些能力；包安装依赖暂时保留，最终镜像再精简。
 
 应用顺序为：预检 → 持久 journal → guard → 专用 DNS → 外部路由/nft → 本地确认 → committed journal → 元数据提交与清理。committed 是提交点，后续元数据错误不会把已提交目标当作未提交回滚。旧状态开启而应用失败时恢复原来源阻断，重新观察后显式应用。链路、来源、LAN 前缀或 DNS 监听端口变化必须先关闭旧范围。
