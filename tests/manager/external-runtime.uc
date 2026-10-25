@@ -1,8 +1,9 @@
 'use strict';
 // Exercises the real filesystem/command adapter with private in-memory paths.
-let runtimeFiles={},metadata={},networkMode='inactive',dnsLive=false,legacyLive=false,commands=[],dnsSocketMissing=false,registeredEmpty=false,gatewayReachable=true,probeLock=true,runtimeNow=100,cacheWriteFailure=false;
+let runtimeFiles={},metadata={},networkMode='inactive',dnsLive=false,legacyLive=false,commands=[],dnsSocketMissing=false,registeredEmpty=false,gatewayReachable=true,probeLock=true,runtimeNow=100,cacheWriteFailure=false,legacyResidual=false;
 function time(){return runtimeNow;}
 let fs={
+ access:function(path){return false;},
  lstat:function(path){return metadata[path] ?? null;},
  mkdir:function(path,mode){metadata[path]={type:'directory',uid:0,mode};return true;},
  readfile:function(path){return runtimeFiles[path] ?? null;},
@@ -29,6 +30,7 @@ let fs={
 };
 function system(command) {
  push(commands,command);
+ if(index(command,'alwayroute-external-forwarding legacy-clear')>=0)return legacyResidual?1:0;
  if(index(command,' nslookup ')>=0)return gatewayReachable?0:1;
  if(index(command,'alwayroute-external-forwarding guard')>=0)networkMode='guarded';
  if(index(command,'alwayroute-external-forwarding activate')>=0)networkMode='active';

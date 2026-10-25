@@ -105,11 +105,20 @@ test('external API names and argument ordering match authenticated RPC', async (
   }
 });
 
+test('external-only capability hides local-core migration without exposing legacy actions', async () => {
+  const { view } = externalHarness(async method => method === 'external_get' ? { config: externalConfig() } :
+    method === 'capabilities' ? { externalOnly: true } : method === 'job_status' ? { busy: false } : { state: { phase: 'disabled' } });
+  view.render(await view.load());
+  assert.doesNotMatch(text(view.root), /首次从本机代理切换/);
+  assert.equal(find(view.root, n => n.attrs['aria-label'] === '停止当前代理服务'), null);
+  assert.ok(find(view.root, n => n.attrs['aria-label'] === '应用已保存版本'));
+});
+
 test('external readonly load never requests private or legacy configuration', async () => {
   const calls = [];
   const { view } = externalHarness(async method => { calls.push(method); return method === 'external_status' ? { state: { phase: 'active', endToEnd: 'verified' } } : { busy: false }; }, false);
   const data = await view.load(); view.render(data);
-  assert.deepEqual(calls.sort(), ['external_status', 'job_status']);
+  assert.deepEqual(calls.sort(), ['capabilities', 'external_status', 'job_status']);
   assert.match(text(view.root), /端到端出口：未验证/);
   assert.match(text(view.root), /未读取管理配置/);
   assert.equal(find(view.root, n => n.attrs['aria-label'] === '关闭外部代理，恢复普通直连').disabled, true);

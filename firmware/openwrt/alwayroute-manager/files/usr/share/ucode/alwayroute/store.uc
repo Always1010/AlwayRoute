@@ -1,5 +1,6 @@
 'use strict';
 import * as fs from 'fs';
+import { runManagerWorker } from 'alwayroute.job-worker';
 import { sha256 } from 'digest';
 import { fail, clone, empty, normalize, validate, effective, generateRuntimeValidated, policyCatalog, modelLimits } from 'alwayroute.model';
 import { parse } from 'alwayroute.subscription';
@@ -561,32 +562,7 @@ export function call(method,args,inline) {
  }
  lock.lock('u');lock.close();return response;
 };
-export function work() {
- init();let lock=fs.open(TMP+'/manager.lock','ae',0600),owned=false;
- if(!lock)return;
- for(let i=0;i<4;i++){if(lock.lock('xn')){owned=true;break;}system('/bin/sleep 1');}
- if(!owned){lock.close();return;}
- let request=null,job=null,claimed=false;
- try {
-  request=read(TMP+'/job.request.json',null);job=read(TMP+'/job.json',null);
-  if(request && job && request.id==job.id && index(['refresh','apply','rollback','check','service','configure','import','external_apply','external_disable','external_reconcile'],request.method)>=0) {
-   if(job.status!='running')fs.unlink(TMP+'/job.request.json');
-   else {job.pid=int(split(fs.readfile('/proc/self/stat') ?? '0',' ')[0]);write(TMP+'/job.json',job);claimed=true;}
-  }
- }catch(e){}
- // call() acquires manager.lock itself, so release the claim before execution.
- lock.lock('u');lock.close();
- if(!claimed)return;
- let response;
- if(request.method=='check'){request.args=request.args ?? {};request.args._jobId=job.id;}
- for(let i=0;i<4;i++){response=call(request.method,request.args,true);if(response.error?.code!='BUSY')break;system('/bin/sleep 1');}
- let latest=read(TMP+'/job.json',null);if(latest?.id==job.id)job=latest;
- job.status=response.ok?(response.cancelled?'cancelled':'succeeded'):'failed';job.finished=time();
- if(response.ok) {job.state=response.state ?? state();if(request.method=='check')job.result=response;}
- else job.error=response.error;
- write(TMP+'/job.json',job);fs.unlink(TMP+'/job.request.json');fs.unlink(TMP+'/subscription.body');
- if(request.method=='check')fs.unlink(TMP+'/check-cancel-'+job.id);
-};
+export function work() {return runManagerWorker({init,read,write,call,state,legacyCleanup:true,methods:['refresh','apply','rollback','check','service','configure','import','external_apply','external_disable','external_reconcile']});};
 export function boot() {
  // External init uses call(external_reconcile) under manager.lock. Never run
  // its network recovery through this legacy, unlocked core preparation path.

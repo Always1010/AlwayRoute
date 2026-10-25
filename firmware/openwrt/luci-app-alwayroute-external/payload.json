@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "package": "luci-app-alwayroute-external",
+  "files": [
+    {
+      "source": "luci-app-alwayroute/root/usr/share/luci/menu.d/luci-app-alwayroute.json",
+      "path": "usr/share/luci/menu.d/luci-app-alwayroute.json",
+      "mode": "0644"
+    },
+    {
+      "source": "luci-app-alwayroute/ucode/template/alwayroute/app.ut",
+      "path": "usr/share/ucode/luci/template/alwayroute/app.ut",
+      "mode": "0644"
+    },
+    {
+      "source": "luci-app-alwayroute/htdocs/luci-static/resources/alwayroute/api.js",
+      "path": "www/luci-static/resources/alwayroute/api.js",
+      "mode": "0644"
+    },
+    {
+      "source": "luci-app-alwayroute/htdocs/luci-static/resources/alwayroute/style.css",
+      "path": "www/luci-static/resources/alwayroute/style.css",
+      "mode": "0644"
+    },
+    {
+      "source": "luci-app-alwayroute/htdocs/luci-static/resources/view/alwayroute/external.js",
+      "path": "www/luci-static/resources/view/alwayroute/external.js",
+      "mode": "0644"
+    }
+  ]
+}

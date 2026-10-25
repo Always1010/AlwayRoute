@@ -1,0 +1,4 @@
+#!/bin/sh
+# Private storage only. No subscription cron, network activation or core startup.
+/usr/libexec/alwayroute-storage-init || exit 1
+exit 0

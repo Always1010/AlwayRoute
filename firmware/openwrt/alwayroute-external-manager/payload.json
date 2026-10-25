@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "package": "alwayroute-external-manager",
+  "files": [
+    {
+      "source": "alwayroute-external-manager/files/etc/init.d/alwayroute",
+      "path": "etc/init.d/alwayroute",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-manager/files/etc/init.d/alwayroute-external-dns",
+      "path": "etc/init.d/alwayroute-external-dns",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-external-manager/files/etc/uci-defaults/95-alwayroute-external",
+      "path": "etc/uci-defaults/95-alwayroute-external",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/libexec/alwayroute-external",
+      "path": "usr/libexec/alwayroute-external",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/libexec/alwayroute-job",
+      "path": "usr/libexec/alwayroute-job",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/libexec/alwayroute-storage-init",
+      "path": "usr/libexec/alwayroute-storage-init",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/libexec/alwayroute-timeout",
+      "path": "usr/libexec/alwayroute-timeout",
+      "mode": "0755"
+    },
+    {
+      "source": "alwayroute-external-manager/files/usr/share/rpcd/acl.d/alwayroute.json",
+      "path": "usr/share/rpcd/acl.d/alwayroute.json",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-external-manager/files/usr/share/rpcd/ucode/alwayroute",
+      "path": "usr/share/rpcd/ucode/alwayroute",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/share/ucode/alwayroute/external-controller.uc",
+      "path": "usr/share/ucode/alwayroute/external-controller.uc",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/share/ucode/alwayroute/external-model.uc",
+      "path": "usr/share/ucode/alwayroute/external-model.uc",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/share/ucode/alwayroute/external.uc",
+      "path": "usr/share/ucode/alwayroute/external.uc",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-manager/files/usr/share/ucode/alwayroute/job-worker.uc",
+      "path": "usr/share/ucode/alwayroute/job-worker.uc",
+      "mode": "0644"
+    },
+    {
+      "source": "alwayroute-external-manager/files/usr/share/ucode/alwayroute/store.uc",
+      "path": "usr/share/ucode/alwayroute/store.uc",
+      "mode": "0644"
+    }
+  ]
+}

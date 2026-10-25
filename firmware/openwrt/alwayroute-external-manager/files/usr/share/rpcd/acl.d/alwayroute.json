@@ -1,0 +1,7 @@
+{
+  "luci-app-alwayroute": {
+    "description": "AlwayRoute authenticated external management",
+    "read": {"ubus": {"alwayroute": ["capabilities", "job_status", "external_status"]}},
+    "write": {"ubus": {"alwayroute": ["external_get", "external_save", "external_apply", "external_disable"]}}
+  }
+}

@@ -23,14 +23,16 @@ return view.extend({
 		return Promise.all([
 			writable ? this.request('external_get').catch(function(error) { return { readError: errorText(error) }; }) : Promise.resolve({}),
 			this.request('external_status').catch(function(error) { return { statusError: errorText(error) }; }),
-			this.request('job_status').catch(function(error) { return { jobError: errorText(error) }; })
+			this.request('job_status').catch(function(error) { return { jobError: errorText(error) }; }),
+			this.request('capabilities').catch(function() { return {}; })
 		]).then(function(data) {
 			return { config: data[0].config, readError: data[0].readError, state: data[1].state,
-				statusError: data[1].statusError, jobError: data[2].jobError, job: data[2].busy ? data[2].job : null };
+				statusError: data[1].statusError, jobError: data[2].jobError, job: data[2].busy ? data[2].job : null, externalOnly: data[3].externalOnly === true };
 		});
 	},
 	render: function(data) {
 		this.readonly = !L.hasViewPermission(); this.busy = false; this.dirty = false;
+		this.externalOnly = data.externalOnly === true;
 		this.config = data.config ? clone(data.config) : null;
 		this.state = data.state || {}; this.statusError = data.statusError;
 		this.readError = data.readError; this.jobError = data.jobError; this.job = data.job;
@@ -99,7 +101,7 @@ return view.extend({
 			E('div', { 'class': 'ar-actions' }, [this.button('关闭外部代理，恢复普通直连', function() { return self.disable(); }, { recovery: true })])];
 		if (this.config && !this.readonly) content.push(this.configForm());
 		else if (this.readonly) content.push(E('p', {}, ['当前账户仅可查看状态，未读取管理配置。']));
-		if (!this.readonly) content.push(E('details', { 'class': 'ar-details' }, [E('summary', {}, ['首次从本机代理切换']),
+		if (!this.readonly && !this.externalOnly) content.push(E('details', { 'class': 'ar-details' }, [E('summary', {}, ['首次从本机代理切换']),
 			E('p', {}, ['外部开启要求本机核心已停止。此操作只显式停止当前服务，不会启动外部代理；若当前已处于外部模式，也会关闭外部接管。']),
 			this.button('停止当前代理服务', function() { return self.operate('service', ['stop']); }, { recovery: true })]));
 		replace(this.root, content); this.paintStatus();

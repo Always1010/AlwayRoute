@@ -119,7 +119,7 @@ export function externalSelected() {
  for(let key in ['mode','intent','journal'])if(fs.lstat(extPath(key)))return true;
  return false;
 };
-export function executeExternal(method,args) {
+export function executeExternal(method,args,externalOnly) {
  extInit();
  let engine=externalController({
   read:extRead,write:extWrite,remove:function(key){extRemovePath(extPath(key));},
@@ -130,6 +130,7 @@ export function executeExternal(method,args) {
   clearRuntime:function(){extRemovePath(EXT_TMP+'/external-runtime.json');extRemovePath(EXT_TMP+'/external-dns.conf');},
   localCore:function(){let value=extService('alwayroute');if(value==null)extFail('EXTERNAL_PREFLIGHT_FAILED','无法确认本机核心状态');return value;},
   prepare:function(config) {
+   if(externalOnly && !extCommand('/usr/libexec/alwayroute-external-forwarding legacy-clear'))extFail('EXTERNAL_PREFLIGHT_FAILED','旧模式资源仍存在或无法核验，请先清理旧模式');
    extRuntime(config);extNetwork('prepare');extDnsConfig(config);
    if(!extCommand('/usr/sbin/dnsmasq --test --conf-file='+EXT_TMP+'/external-dns.conf'))extFail('EXTERNAL_PREFLIGHT_FAILED','专用DNS配置检查失败');
   },
@@ -146,10 +147,14 @@ export function executeExternal(method,args) {
    extNetwork('stop');extStopDns();
    // rc.common stop already holds this service's procd lock. Delete through
    // ubus directly rather than recursively invoking its init script/lock.
-   if(!extCommand('/usr/libexec/alwayroute-forwarding stop'))extFail('EXTERNAL_STOP_FAILED','本机旧转发未确认停止');
+   if(externalOnly) {
+    // Pure external packages never own legacy resources. An absent old helper
+    // cannot prove that an interrupted package migration removed its rules.
+    if(!extCommand('/usr/libexec/alwayroute-external-forwarding legacy-clear'))extFail('EXTERNAL_STOP_FAILED','旧模式转发仍存在或无法核验，请先使用旧包清理');
+   }else if(!extCommand('/usr/libexec/alwayroute-forwarding stop'))extFail('EXTERNAL_STOP_FAILED','本机旧转发未确认停止');
    let local=extService('alwayroute');
-   if(local==null || local===true && !extCommand("ubus call service delete '{\"name\":\"alwayroute\"}'") || extService('alwayroute')!==false)extFail('EXTERNAL_STOP_FAILED','本机旧核心未确认停止');
-   extWritePath(EXT_DATA+'/service.json',sprintf('%J',{enabled:false}));
+   if(local==null || externalOnly && local===true || !externalOnly && local===true && !extCommand("ubus call service delete '{\"name\":\"alwayroute\"}'") || extService('alwayroute')!==false)extFail('EXTERNAL_STOP_FAILED','本机旧核心未确认停止');
+   if(!externalOnly)extWritePath(EXT_DATA+'/service.json',sprintf('%J',{enabled:false}));
   },
   inspect:function() {
    let network=extJson('/usr/libexec/alwayroute-external-forwarding status') ?? {available:false,running:null,guarded:null,residual:null};

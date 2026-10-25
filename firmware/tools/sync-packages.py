@@ -20,7 +20,26 @@ from build_context import build_context
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGES = ('alwayroute-core', 'alwayroute-manager', 'alwayroute-forwarding', 'luci-app-alwayroute')
+PACKAGES = ('alwayroute-core', 'alwayroute-manager', 'alwayroute-forwarding', 'luci-app-alwayroute',
+            'alwayroute-external-manager', 'alwayroute-external-forwarding', 'luci-app-alwayroute-external')
+
+
+def source_packages(names):
+    """Shared sources are copied for building, never selected as runtime packages."""
+    result = set(names)
+    pending = list(names)
+    while pending:
+        name = pending.pop()
+        manifest = ROOT / 'firmware/openwrt' / name / 'payload.json'
+        if not manifest.is_file():
+            continue
+        value = json.loads(manifest.read_text(encoding='utf-8'))
+        dependencies = {'alwayroute-external-manager'} | {entry['source'].split('/', 1)[0] for entry in value['files']}
+        if not dependencies <= set(PACKAGES):
+            raise PackageSyncError('Unknown shared package source')
+        for dependency in dependencies - result:
+            result.add(dependency); pending.append(dependency)
+    return sorted(result)
 
 
 class PackageSyncError(ValueError):
@@ -94,7 +113,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         context = build_context(args.env)  # Uses load_environment's shared schema validation.
-        names = sorted({name for group in args.package for name in group})
+        names = source_packages({name for group in args.package for name in group})
         plan = (args.plan or ROOT / '.local/runs/package-sync-plan.json').resolve()
         if not plan.is_relative_to((ROOT / '.local').resolve()):
             raise PackageSyncError('Package sync plan must stay inside this repository .local directory')

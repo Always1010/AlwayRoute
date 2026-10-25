@@ -1,0 +1,11 @@
+'use strict';
+import { call } from 'alwayroute.store';
+const methods={};
+for(let method,args in {
+ capabilities:{},job_status:{},external_get:{},external_status:{},
+ external_save:{expectedRevision:0,config:{}},external_apply:{expectedRevision:0,peer:{}},external_disable:{}
+}) {
+ let name=method;
+ methods[name]={args,call:function(request){return call(name,request.args);}};
+}
+return {alwayroute:methods};

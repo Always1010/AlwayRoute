@@ -94,4 +94,15 @@ with tempfile.TemporaryDirectory(prefix="alwayroute-init-") as directory:
     assert events.read_text().splitlines() == ['reconcile', 'disable', 'reconcile', 'reconcile'], (
         'external stop must close independently and restart/reload preserve intent')
 
+    pure = (ROOT / 'firmware/openwrt/alwayroute-external-manager/files/etc/init.d/alwayroute').read_text(encoding='utf-8')
+    assert 'alwayroute-boot' not in pure and 'sing-box' not in pure
+    assert 'external-mode.json' not in pure, 'pure external lifecycle cannot depend on a mode marker'
+    events.write_text('')
+    script.write_text('set -eu\n' + '\n'.join(pure.splitlines()[1:]).replace(
+        '/usr/libexec/alwayroute-external', helper.as_posix()) +
+        '\nstart_service\nstop_service\nrestart\nreload_service\n', encoding='utf-8')
+    result = subprocess.run([shell, script.as_posix()], env={**os.environ, 'EVENTS_LOG': events.as_posix()}, capture_output=True)
+    assert result.returncode == 0, result.stderr.decode(errors='replace')
+    assert events.read_text().splitlines() == ['reconcile', 'disable', 'reconcile', 'reconcile']
+
 print("PASS init: legacy credential registration and independent external lifecycle")

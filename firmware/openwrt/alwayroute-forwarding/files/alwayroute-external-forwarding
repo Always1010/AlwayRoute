@@ -127,6 +127,17 @@ check_environment() {
     route=$(ip -4 route get "$CLIENT") || fail 'Client is not on-link'
     printf '%s\n' "$route" | grep -Eq "^$CLIENT dev $LAN .*src $ROUTER([[:space:]]|$)" || fail 'Client route does not match LAN'
 }
+legacy_clear() {
+    # Read-only migration boundary. Never delete resources belonging to the
+    # local-core package, and never treat a failed query as an absent resource.
+    legacy_tables=$(nft list tables) || fail 'Cannot inspect legacy nft tables'
+    printf '%s\n' "$legacy_tables" | grep -Eq '^table inet alwayroute[[:space:]]*$' && fail 'Legacy nft table remains'
+    legacy_rules=$(ip -4 rule show) || fail 'Cannot inspect legacy policy rules'
+    printf '%s\n' "$legacy_rules" | grep -Eq '^10231:' && fail 'Legacy routing priority remains'
+    legacy_routes=$(ip -N -4 route show table all) || fail 'Cannot inspect legacy routes'
+    printf '%s\n' "$legacy_routes" | grep -Eq '(^|[[:space:]])table 20231([[:space:]]|$)' && fail 'Legacy routing table remains'
+    [ ! -e "$STATE/forwarding.owner" ] && [ ! -L "$STATE/forwarding.owner" ] || fail 'Legacy ownership marker remains'
+}
 begin_owner() {
     if [ -f "$OWNER" ]; then
         [ "$SAVED_LAN|$SAVED_ROUTER|$SAVED_GATEWAY|$SAVED_CLIENT|$SAVED_CLIENT_MAC|$SAVED_GATEWAY_MAC|$SAVED_NETWORK|$SAVED_DNS_PORT" = "$LAN|$ROUTER|$GATEWAY|$CLIENT|$CLIENT_MAC|$GATEWAY_MAC|$LAN_NETWORK|$DNS_PORT" ] || fail 'Disable previous external scope before changing link, client or DNS listener'
@@ -306,6 +317,6 @@ status() {
 }
 init
 case "${1:-}" in
-    prepare) prepare;; guard) guard;; activate) activate;; stop) stop;; status) status;;
+    prepare) prepare;; guard) guard;; activate) activate;; stop) stop;; status) status;; legacy-clear) legacy_clear;;
     *) fail 'Usage: alwayroute-external-forwarding {prepare|guard|activate|stop|status}';;
 esac

@@ -1,0 +1,31 @@
+// Runs after the real runtime adapter suite; all filesystem/process IO is fake.
+// EXTERNAL_DISPATCH_SOURCE
+runtimeFiles={};metadata={};networkMode='inactive';dnsLive=false;legacyLive=false;
+commands=[];dnsSocketMissing=false;probeLock=true;cacheWriteFailure=false;legacyResidual=false;
+check(call('external_get',{}).config.enabled===false,'fresh pure external get defaults off without any legacy model');
+check(call('external_status',{}).state.phase=='disabled','fresh pure external status needs no legacy configuration');
+check(call('capabilities',{}).externalOnly===true,'pure external identity does not depend on mode files');
+check(!call('service',{action:'start'}).ok && !call('get',{}).ok,'pure dispatcher cannot reach legacy operations');
+let closed=call('external_disable',{},true);
+check(closed.ok && closed.state.phase=='disabled' && runtimeFiles['/etc/alwayroute/service.json']==null,'fresh close never writes legacy service intent');
+check(length(filter(commands,c=>index(c,'/usr/libexec/alwayroute-forwarding ')>=0 || index(c,'ubus call service delete')>=0))==0,'pure close never invokes or deletes legacy services');
+legacyResidual=true;
+check(!call('external_disable',{},true).ok,'legacy residue prevents false independent close success');
+legacyResidual=false;check(call('external_disable',{},true).ok,'close retries after explicit legacy cleanup');
+legacyLive=true;
+check(!call('external_disable',{},true).ok && legacyLive,'pure close refuses a remaining legacy core without deleting its service');
+legacyLive=false;check(call('external_disable',{},true).ok,'pure close retries after legacy core was stopped separately');
+let saved=call('external_save',{expectedRevision:0,config});
+check(saved.ok && saved.config.revision==1,'pure dispatcher saves the shared external model');
+let queued=call('external_apply',{expectedRevision:1});
+check(queued.ok && queued.job.status=='running' && networkMode=='inactive','pure apply queues without claiming application');
+check(!call('external_save',{expectedRevision:1,config}).ok,'pending external job blocks concurrent mutation');
+work();
+let finished=call('job_status',{});
+check(finished.ok && finished.job.status=='succeeded' && finished.job.state.phase=='active','shared worker dispatches pure external apply without legacy modules');
+check(call('external_reconcile',{},true).state.phase=='guarded','pure boot/reconcile retains existing explicit reapply semantics');
+runtimeFiles['/etc/alwayroute/external-config.json']='corrupt';
+check(call('external_disable',{},true).ok,'pure dispatcher closes despite corrupt external configuration');
+metadata['/tmp/alwayroute/manager.lock'].mode=0644;
+check(call('external_disable',{},true).error.code=='STORAGE_ERROR','unsafe lock is rejected without permission repair');
+print('PASS pure external dispatcher: fresh install, shared jobs, private locks and migration refusal\n');

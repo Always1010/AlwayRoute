@@ -26,6 +26,11 @@ storage = '\n'.join(line for line in storage.splitlines() if not line.startswith
 suites.append((ROOT / 'tests/manager/external-storage.uc').read_text(encoding='utf-8').replace('// EXTERNAL_STORAGE_SOURCE', storage))
 suites.append((ROOT / 'tests/manager/external-runtime.uc').read_text(encoding='utf-8').replace(
     '// EXTERNAL_RUNTIME_SOURCE', bundle(['external-model.uc', 'external-controller.uc', 'external.uc'])))
+dispatcher = ROOT / 'firmware/openwrt/alwayroute-external-manager/files/usr/share/ucode/alwayroute/store.uc'
+if dispatcher.is_file():
+    source = '\n'.join(line for line in dispatcher.read_text(encoding='utf-8').splitlines() if not line.startswith('import ')).replace('export function ', 'function ')
+    suites.append(suites[-1] + '\n' + (ROOT / 'tests/manager/external-dispatch.uc').read_text(encoding='utf-8').replace(
+        '// EXTERNAL_DISPATCH_SOURCE', bundle(['job-worker.uc']) + '\n' + source))
 for suite in suites:
     result = subprocess.run(command, input=suite.encode('utf-8'), check=False)
     if result.returncode:

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "package": "alwayroute-external-forwarding",
+  "files": [
+    {
+      "source": "alwayroute-forwarding/files/alwayroute-external-forwarding",
+      "path": "usr/libexec/alwayroute-external-forwarding",
+      "mode": "0755"
+    }
+  ]
+}

@@ -37,6 +37,7 @@ if name == 'nft':
     if a[:1] == ['-s']: a = a[1:]
     if a == ['list', 'tables']:
         rc = 1 if s.get('query_failed') else 0
+        if s.get('internal'): print('table inet alwayroute')
     elif a[:3] == ['list', 'table', 'inet']:
         present = s.get('internal') if a[-1] == 'alwayroute' else s.get('table')
         if present: print(s.get('nft_text', 'foreign table'))
@@ -59,6 +60,7 @@ if name == 'nft':
         else: s['table'] = False
     else: raise AssertionError(a)
 elif name == 'ip':
+    if a[:1] == ['-N']: a = a[1:]
     if a[:3] == ['link', 'show', 'dev']:
         rc = 1 if s.get('missing_lan') else 0
     elif a[:5] == ['-4', '-o', 'addr', 'show', 'dev']:
@@ -67,9 +69,11 @@ elif name == 'ip':
         if s.get('offlink'): print(a[3]+' via 198.51.100.1 dev wan src 198.51.100.2')
         else: print(a[3]+' dev br-lan src 192.0.2.1 uid 0')
     elif a == ['-4', 'rule', 'show']:
+        if s.get('legacy_rule'): print('10231: from all fwmark 0x41000000/0xff000000 lookup 20231')
         if s.get('foreign_rule'): print('10232: from all fwmark 0x43000000/0xff000000 lookup 20233')
         elif s.get('rule'): print('10232:\tfrom all fwmark 0x42000000/0xff000000 lookup 20232')
     elif a[:4] == ['-4', 'route', 'show', 'table']:
+        if a[-1] == 'all' and s.get('legacy_route'): print('local default dev lo table 20231 scope host')
         if s.get('foreign_route'): print('default via 198.51.100.1 dev wan onlink'+s.get('route_suffix', ''))
         elif s.get('route'):
             print('default via 192.0.2.2 dev br-lan onlink'+s.get('route_suffix', ''))
@@ -148,6 +152,19 @@ class ExternalForwardingTest(unittest.TestCase):
         else:
             self.assertNotEqual(result.returncode, 0, result.stdout)
         return result
+
+    def test_pure_migration_check_is_read_only_and_rejects_each_legacy_resource(self):
+        self.runtime.write_text('corrupt unused external config')
+        self.run_adapter('legacy-clear')
+        for fault in ('internal', 'legacy_rule', 'legacy_route', 'query_failed'):
+            self.state.write_text(json.dumps({fault: True}))
+            before = self.read_state()
+            self.run_adapter('legacy-clear', False)
+            self.assertEqual(self.read_state(), before)
+        self.state.write_text('{}')
+        (self.private / 'forwarding.owner').write_text('legacy')
+        self.run_adapter('legacy-clear', False)
+        self.assertEqual((self.private / 'forwarding.owner').read_text(), 'legacy')
 
     def test_prepare_validates_without_activating_and_checks_topology(self):
         self.run_adapter("prepare")

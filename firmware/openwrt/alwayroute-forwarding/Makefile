@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=alwayroute-forwarding
 PKG_VERSION:=1
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 PKG_LICENSE:=MIT
 PKGARCH:=all
 
@@ -13,6 +13,7 @@ define Package/alwayroute-forwarding
   CATEGORY:=Network
   TITLE:=AlwayRoute LAN forwarding adapter
   DEPENDS:=+alwayroute-core +firewall4 +jsonfilter +ip-full +ubus +ucode +ucode-mod-fs
+  CONFLICTS:=alwayroute-external-forwarding alwayroute-external-manager
 endef
 
 define Build/Compile
